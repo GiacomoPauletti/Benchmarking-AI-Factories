@@ -1,0 +1,26 @@
+name: postgres
+category: storage
+description: "PostgreSQL relational database server"
+version: "15"
+image: "postgres:15-alpine"
+ports:
+  - 5432
+environment:
+  POSTGRES_DB: "aidb"
+  POSTGRES_USER: "aiuser"
+  POSTGRES_PASSWORD: "aipassword"
+  POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+resources:
+  cpu: "2"
+  memory: "8Gi"
+  storage: "50Gi"
+deployment_config:
+  replicas: 1
+  storage_class: "standard"
+  persistence: true
+  backup_schedule: "0 2 * * *"
+health_check:
+  command: ["pg_isready", "-U", "aiuser", "-d", "aidb"]
+  interval: 30
+  timeout: 10
+  retries: 3

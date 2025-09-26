@@ -1,0 +1,26 @@
+name: vllm
+category: inference
+description: "vLLM high-performance inference server for large language models"
+version: "0.2.0"
+image: "vllm/vllm-openai:latest"
+ports:
+  - 8000
+environment:
+  VLLM_API_KEY: ""
+  VLLM_HOST: "0.0.0.0"
+  VLLM_PORT: "8000"
+resources:
+  cpu: "4"
+  memory: "16Gi"
+  gpu: "1"
+  gpu_memory: "40Gi"
+deployment_config:
+  replicas: 1
+  model_path: "/models"
+  tensor_parallel_size: 1
+  max_model_len: 4096
+health_check:
+  endpoint: "/health"
+  interval: 30
+  timeout: 10
+  retries: 3
