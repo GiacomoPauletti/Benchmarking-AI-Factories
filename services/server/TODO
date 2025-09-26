@@ -1,0 +1,2 @@
+- Integrate Apptainer into the SLURM deployer. 
+- Create a simple script doing FastAPI requests to start a service and stop it. Use a simple recipe and apptainer (!). 

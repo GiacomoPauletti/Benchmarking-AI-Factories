@@ -1,6 +1,6 @@
 # Microservices Development Guide
 
-## AI Benchmarking Application - Team Reference
+## AI Benchmarking Application - Development Reference
 
 ### Principles
 
@@ -14,28 +14,26 @@
 
 #### Git Strategy
 
-- **Feature Branches**: `feature/service-name/feature-description`
-- **Pull Requests**: Require code review + automated tests
-- **Main Branch**: Always deployable, protected
+- **Main Branch**: Production-ready, always deployable, protected
+- **Dev Branch**: Integration branch for team collaboration, mirrors main but allows for testing
+- **Feature Branches**: `feature/service-name/feature-description` or `feature/issue-number`
+- **Pull Request Workflow**:
+  1. Feature branch -> Dev (for team integration and testing)
+  2. Dev -> Main (for production releases)
+- **Branch Protection**: Both main and dev require code review + automated tests
 
 #### CI/CD Pipeline
 
 1. **Build**: Docker image creation and testing
 1. **Test**: Unit tests, integration tests
-1. **Deploy**: Automated deployment to dev/staging/prod
+1. **Deploy**: Automated deployment to dev/main
 
 ### Team Collaboration
 
 #### Service Ownership
 
-- Each team member owns one primary service
-- Cross-training sessions for knowledge sharing
+- Each team member owns one primary service (Server, Client, Logs or Monitor). APIs documented and versioned.
+- Cross-training sessions for knowledge sharing (every week?)
 - Shared responsibility for integration testing
-
-#### Communication
-
-- APIs documented and versioned
-- Regular architecture reviews and dependency mapping
-- Incident response procedures for service failures
 
 **Remember**: Start simple, iterate fast, and maintain service boundaries. Focus on getting the basics right before optimizing.
