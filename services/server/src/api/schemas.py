@@ -22,22 +22,18 @@ class ServiceResponse(BaseModel):
     status: str
     nodes: int
     config: Dict[str, Any]
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    output: Optional[str] = None
+    error: Optional[str] = None
+    return_code: Optional[int] = None
+    created_at: str
 
 
 class RecipeResponse(BaseModel):
     """Schema for recipe responses."""
     name: str
-    category: str
     description: str
+    category: str
     version: str
-    image: str
-    ports: List[int]
-    environment: Dict[str, str]
-    resources: Dict[str, Any]
-    deployment_config: Dict[str, Any]
-    health_check: Optional[Dict[str, Any]] = None
 
 
 class HealthResponse(BaseModel):

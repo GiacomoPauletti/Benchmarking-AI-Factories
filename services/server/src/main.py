@@ -1,16 +1,29 @@
 """
-Application entry point for the server service.
+Main FastAPI application entry point for the Server Service.
 """
 
-from server_service import ServerService
+from fastapi import FastAPI
+from api.routes import router
 
+# Create FastAPI application
+app = FastAPI(
+    title="AI Factory Server Service",
+    description="Service orchestrator using proper architecture",
+    version="1.0.0"
+)
 
-def main():
-    """Main application entry point."""
-    server = ServerService()
-    # Initialize and start the server
-    print("Starting AI Factory Server Service...")
-    
+# Include the API routes
+app.include_router(router)
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {
+        "service": "AI Factory Server Service",
+        "status": "running",
+        "endpoints": ["/services", "/services/{service_id}", "/recipes"]
+    }
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)
