@@ -79,7 +79,7 @@ interactive_mode() {
         fi
         
         # Read user input
-        read -r input
+        read -r input || break
         
         # Handle empty input
         if [ -z "$input" ]; then
@@ -159,6 +159,52 @@ interactive_mode() {
                     fi
                 fi
                 ;;
+            "vllm")
+                if [ -z "$1" ]; then
+                    echo "VLLM Commands:"
+                    echo "  vllm list           - List running VLLM services"
+                    echo "  vllm prompt <id> <prompt>  - Send prompt to VLLM service"
+                    echo "Usage: vllm <subcommand>"
+                else
+                    case "$1" in
+                        "list")
+                            api_call "GET" "/api/v1/vllm/services"
+                            ;;
+                        "prompt")
+                            if [ -z "$2" ] || [ -z "$3" ]; then
+                                echo "Usage: vllm prompt <service_id> <prompt>"
+                                echo "Example: vllm prompt 12345 'Hello, how are you?'"
+                            else
+                                service_id="$2"
+                                shift 2
+                                prompt="$*"
+                                payload="{\"prompt\": \"$prompt\"}"
+                                echo "Sending prompt to VLLM service $service_id: \"$prompt\""
+                                api_call "POST" "/api/v1/vllm/$service_id/prompt" "$payload"
+                            fi
+                            ;;
+                        *)
+                            echo "Unknown VLLM command: $1"
+                            echo "Available: list, prompt"
+                            ;;
+                    esac
+                fi
+                ;;
+            "prompt")
+                # Shorthand for vllm prompt
+                if [ -z "$1" ] || [ -z "$2" ]; then
+                    echo "Usage: prompt <service_id> <prompt>"
+                    echo "Example: prompt 12345 'Hello, how are you?'"
+                    echo "Note: This is a shorthand for 'vllm prompt'"
+                else
+                    service_id="$1"
+                    shift
+                    prompt="$*"
+                    payload="{\"prompt\": \"$prompt\"}"
+                    echo "Sending prompt to VLLM service $service_id: \"$prompt\""
+                    api_call "POST" "/api/v1/vllm/$service_id/prompt" "$payload"
+                fi
+                ;;
             "endpoint")
                 local endpoint=$(get_server_endpoint)
                 if [ -n "$endpoint" ]; then
@@ -178,6 +224,9 @@ interactive_mode() {
                 echo "  service <id>        - Get service status"
                 echo "  logs <id>           - Get service logs"
                 echo "  delete <id>         - Delete a service"
+                echo "  vllm list           - List running VLLM services"
+                echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
+                echo "  prompt <id> <prompt> - Shorthand for vllm prompt"
                 echo "  endpoint            - Show current server endpoint"
                 echo "  clear               - Clear screen and show status"
                 echo "  help                - Show this help"
@@ -187,6 +236,8 @@ interactive_mode() {
                 echo "  recipes"
                 echo "  create inference/vllm_dummy"
                 echo "  service abc123"
+                echo "  vllm list"
+                echo "  prompt 12345 'Tell me a joke'"
                 ;;
             *)
                 echo "Unknown command: $cmd"
@@ -257,6 +308,48 @@ case "${1}" in
         fi
         api_call "DELETE" "/api/v1/services/$2"
         ;;
+    "vllm")
+        case "${2}" in
+            "list")
+                api_call "GET" "/api/v1/vllm/services"
+                ;;
+            "prompt")
+                if [ -z "$3" ] || [ -z "$4" ]; then
+                    echo "Usage: $0 vllm prompt <service_id> <prompt>"
+                    echo "Example: $0 vllm prompt 12345 'Hello, how are you?'"
+                    exit 1
+                fi
+                service_id="$3"
+                shift 3
+                prompt="$*"
+                payload="{\"prompt\": \"$prompt\"}"
+                echo "Sending prompt to VLLM service $service_id: \"$prompt\""
+                api_call "POST" "/api/v1/vllm/$service_id/prompt" "$payload"
+                ;;
+            *)
+                echo "Usage: $0 vllm <subcommand>"
+                echo "Available subcommands:"
+                echo "  list                     - List running VLLM services"
+                echo "  prompt <id> <prompt>     - Send prompt to VLLM service"
+                exit 1
+                ;;
+        esac
+        ;;
+    "prompt")
+        # Shorthand for vllm prompt
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Usage: $0 prompt <service_id> <prompt>"
+            echo "Example: $0 prompt 12345 'Hello, how are you?'"
+            echo "Note: This is a shorthand for 'vllm prompt'"
+            exit 1
+        fi
+        service_id="$2"
+        shift 2
+        prompt="$*"
+        payload="{\"prompt\": \"$prompt\"}"
+        echo "Sending prompt to VLLM service $service_id: \"$prompt\""
+        api_call "POST" "/api/v1/vllm/$service_id/prompt" "$payload"
+        ;;
     "endpoint")
         local endpoint=$(get_server_endpoint)
         if [ -n "$endpoint" ]; then
@@ -283,6 +376,9 @@ case "${1}" in
         echo "  service <id>        - Get service status"
         echo "  logs <id>           - Get service logs"
         echo "  delete <id>         - Delete a service"
+        echo "  vllm list           - List running VLLM services"
+        echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
+        echo "  prompt <id> <prompt> - Shorthand for vllm prompt"
         echo "  endpoint            - Show current server endpoint"
         echo "  help                - Show this help"
         echo ""
@@ -292,6 +388,8 @@ case "${1}" in
         echo "  $0 recipes"
         echo "  $0 create inference/vllm_dummy"
         echo "  $0 service abc123"
+        echo "  $0 vllm list"
+        echo "  $0 prompt 12345 'Tell me a joke'"
         ;;
     *)
         echo "Unknown command: $1"

@@ -9,6 +9,10 @@ From: python:3.11-slim
     # Install Python dependencies without apt-get to avoid permission issues
     cd /app
     pip install --no-cache-dir -r requirements.txt
+    
+    # Create logs directory inside container with proper permissions
+    mkdir -p /app/logs
+    chmod 755 /app/logs
 
 %environment
     export PORT=8001
@@ -16,4 +20,12 @@ From: python:3.11-slim
 %runscript
     echo "Starting FastAPI app..."
     cd /app/src
-    python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}
+    
+    # Create log file with timestamp if logs directory is bound
+    if [ -d "/app/logs" ]; then
+        LOG_FILE="/app/logs/fastapi_$(date +%Y%m%d_%H%M%S).log"
+        echo "Logging to: $LOG_FILE"
+        python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001} 2>&1 | tee "$LOG_FILE"
+    else
+        python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}
+    fi

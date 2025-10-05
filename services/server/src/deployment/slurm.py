@@ -7,6 +7,7 @@ import yaml
 import requests
 import json
 import os
+import glob
 from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
@@ -21,6 +22,9 @@ class SlurmDeployer:
         self.token = os.getenv('SLURM_JWT')
         if not self.token:
             raise RuntimeError("SLURM_JWT environment variable not set")
+        
+        # Create user-dependent base path
+        self.base_path = Path(f"/home/users/{self.username}/Benchmarking-AI-Factories/services/server")
         
         self.base_url = "http://slurmrestd.meluxina.lxp.lu:6820/slurm/v0.0.40"
         self.headers = {
@@ -48,6 +52,11 @@ class SlurmDeployer:
             headers=self.headers, 
             json=job_payload
         )
+        
+        # Debug: print the response for troubleshooting
+        print(f"SLURM API Response Status: {response.status_code}")
+        print(f"SLURM API Response Body: {response.text}")
+        
         response.raise_for_status()
         
         result = response.json()
@@ -120,7 +129,6 @@ class SlurmDeployer:
             return "completed"
             
         except Exception as e:
-            # If REST API fails, throw an error - don't guess!
             raise RuntimeError(f"Failed to get job status from SLURM API: {str(e)}")
     
     def list_jobs(self, user_filter: str = None) -> list:
@@ -184,12 +192,54 @@ class SlurmDeployer:
             raise RuntimeError(f"Failed to list jobs from SLURM API: {str(e)}")
     
     def get_job_logs(self, job_id: str) -> str:
-        """Get logs from SLURM job via slurmdb API for completed jobs."""
+        """Get logs from SLURM job."""
         try:
-            # Try slurmdb API first for completed/historical jobs
-            slurmdb_url = "http://slurmrestd.meluxina.lxp.lu:6820/slurmdb/v0.0.40"
+            log_dir = self.base_path / "logs"
+            
+            if not log_dir.exists():
+                return f"Log directory {log_dir} not found"
+
+            # Get job details to find the job name
+            job_details = self.get_job_details(job_id)
+            job_name = job_details.get('name', 'unknown') if job_details else 'unknown'
+            
+            # Look for SLURM stdout and stderr files
+            stdout_file = log_dir / f"{job_name}_{job_id}.out"
+            stderr_file = log_dir / f"{job_name}_{job_id}.err"
+            
+            logs = []
+            
+            # Read stdout
+            if stdout_file.exists():
+                try:
+                    content = stdout_file.read_text()
+                    logs.append(f"=== SLURM STDOUT ({stdout_file.name}) ===\n{content}")
+                except Exception as e:
+                    logs.append(f"=== SLURM STDOUT ===\nError reading {stdout_file.name}: {e}")
+            else:
+                logs.append(f"=== SLURM STDOUT ===\nFile not found: {stdout_file.name}")
+            
+            # Read stderr
+            if stderr_file.exists():
+                try:
+                    content = stderr_file.read_text()
+                    logs.append(f"=== SLURM STDERR ({stderr_file.name}) ===\n{content}")
+                except Exception as e:
+                    logs.append(f"=== SLURM STDERR ===\nError reading {stderr_file.name}: {e}")
+            else:
+                logs.append(f"=== SLURM STDERR ===\nFile not found: {stderr_file.name}")
+            
+            return "\n\n".join(logs)
+            
+        except Exception as e:
+            return f"Error retrieving logs for job {job_id}: {str(e)}"
+
+    
+    def get_job_details(self, job_id: str) -> Dict[str, Any]:
+        """Get detailed information about a SLURM job including allocated nodes."""
+        try:
             response = requests.get(
-                f"{slurmdb_url}/job/{job_id}",
+                f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
                 timeout=10
             )
@@ -197,60 +247,58 @@ class SlurmDeployer:
             if response.status_code == 200:
                 result = response.json()
                 jobs = result.get('jobs', [])
-                
                 if jobs:
-                    job = jobs[0]  # Take the first job match
+                    job = jobs[0]
+                    # Extract node information
+                    node_list = job.get('node_list', '')
+                    allocated_nodes = self._parse_node_list(node_list) if node_list else []
                     
-                    logs = []
-                    
-                    # Get stdout content
-                    stdout = job.get('stdout', '')
-                    stdout_expanded = job.get('stdout_expanded', '')
-                    if stdout_expanded or stdout:
-                        logs.append("=== STDOUT ===")
-                        logs.append(stdout_expanded or stdout or "No stdout content")
-                        logs.append("")
-                    
-                    # Get stderr content  
-                    stderr = job.get('stderr', '')
-                    stderr_expanded = job.get('stderr_expanded', '')
-                    if stderr_expanded or stderr:
-                        logs.append("=== STDERR ===")
-                        logs.append(stderr_expanded or stderr or "No stderr content")
-                        logs.append("")
-                    
-                    if logs:
-                        return "\n".join(logs)
-                    else:
-                        # No direct log content, but job exists
-                        job_state = job.get('state', {}).get('current', ['unknown'])
-                        state = job_state[0] if isinstance(job_state, list) else str(job_state)
-                        return f"Job {job_id} found but no log content available. Job state: {state}"
-                else:
-                    return f"Job {job_id} not found in slurmdb"
+                    return {
+                        "id": str(job.get('job_id', 0)),
+                        "name": job.get('name', ''),
+                        "state": job.get('job_state', 'unknown'),
+                        "nodes": allocated_nodes,
+                        "node_count": job.get('node_count', 0),
+                        "partition": job.get('partition', ''),
+                        "account": job.get('account', '')
+                    }
             
-            elif response.status_code == 404:
-                # Job not in slurmdb, try active slurm API
-                active_response = requests.get(
-                    f"{self.base_url}/job/{job_id}",
-                    headers=self.headers,
-                    timeout=10
-                )
-                
-                if active_response.status_code == 200:
-                    return f"Job {job_id} is still active - logs not available until completion"
-                else:
-                    return f"Job {job_id} not found in either slurmdb or active jobs"
+            return {}
             
-            else:
-                return f"Failed to get job info from slurmdb: HTTP {response.status_code}"
-                
         except Exception as e:
-            return f"Error retrieving job logs via SLURM API: {str(e)}"
+            raise RuntimeError(f"Failed to get job details: {str(e)}")
+    
+    def _parse_node_list(self, node_list: str) -> List[str]:
+        """Parse SLURM node list format (e.g., 'mel2001,mel2002' or 'mel[2001-2003]')."""
+        if not node_list:
+            return []
+        
+        nodes = []
+        
+        # Handle comma-separated nodes
+        for part in node_list.split(','):
+            part = part.strip()
+            
+            # Handle range format like mel[2001-2003]
+            if '[' in part and ']' in part:
+                prefix = part.split('[')[0]
+                range_part = part.split('[')[1].split(']')[0]
+                
+                if '-' in range_part:
+                    start, end = map(int, range_part.split('-'))
+                    for i in range(start, end + 1):
+                        nodes.append(f"{prefix}{i:04d}")
+                else:
+                    nodes.append(f"{prefix}{range_part}")
+            else:
+                # Simple node name
+                nodes.append(part)
+        
+        return nodes
     
     def _find_recipe(self, recipe_name: str) -> Path:
         """Find recipe file by name."""
-        recipes_dir = Path(__file__).parent.parent / "recipes"
+        recipes_dir = self.base_path / "src" / "recipes"
         
         if "/" in recipe_name:
             category, name = recipe_name.split("/", 1)
@@ -268,28 +316,29 @@ class SlurmDeployer:
     def _create_job_payload(self, recipe: Dict[str, Any], config: Dict[str, Any], recipe_name: str) -> Dict[str, Any]:
         """Create SLURM job payload according to official API schema."""
         resources = recipe.get("resources", {})
-        logs_dir = Path(__file__).parent.parent / "logs"
-        logs_dir.mkdir(exist_ok=True)
         
         # Build the job description according to v0.0.40 schema
         job_desc = {
             "account": self.account,
             "qos": "short",
-            "time_limit": 10,  # 10 minutes (simple integer)
-            "current_working_directory": str(logs_dir.parent),
+            "time_limit": 10,  # 10 minutes for service jobs
+            "current_working_directory": str(self.base_path / "logs"),
             "name": recipe['name'],
             "nodes": config.get("nodes", 1),
             "cpus_per_task": int(resources.get("cpu", 4)),  # Simple integer
             "memory_per_cpu": resources.get("memory", "8G"),  # Use as-is, should already be in MB
             "partition": "gpu" if resources.get("gpu") else "cpu",
-            "standard_output": f"{logs_dir}/{recipe['name']}_%j.out",
-            "standard_error": f"{logs_dir}/{recipe['name']}_%j.err",
+            "standard_output": f"{recipe['name']}_%j.out",
+            "standard_error": f"{recipe['name']}_%j.err",
             "environment": self._format_environment(recipe.get("environment", {}))  # Array of KEY=VALUE
-        }
+        }        # The official API expects the job description under 'job' key with script
         
-        # The official API expects the job description under 'job' key with script
+        log_dir = self.base_path / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
         return {
             "script": self._create_script(recipe, recipe_name),
+            #"script": "#!/bin/bash\necho Hello World",
             "job": job_desc
         }
     
@@ -298,15 +347,15 @@ class SlurmDeployer:
         container_def = recipe.get("container_def", f"{recipe['name']}.def")
         image_name = recipe.get("image", f"{recipe['name']}.sif")
         
-        # Get paths
+        # Get paths - these need to be from the container's perspective
         if "/" in recipe_name:
             category = recipe_name.split("/")[0]
         else:
             category = "simple"  # fallback
         
-        base_path = "/home/users/u103056/Benchmarking-AI-Factories/services/server/src/recipes"
-        def_path = f"{base_path}/{category}/{container_def}"
-        sif_path = f"{base_path}/{category}/{image_name}"
+        recipes_path = self.base_path / "src" / "recipes"
+        def_path = str(recipes_path / category / container_def)
+        sif_path = str(recipes_path / category / image_name)
         
         # Environment variables
         env_vars = []
@@ -314,7 +363,9 @@ class SlurmDeployer:
             env_vars.append(f"export {key}={value}")
         env_section = "\n".join(env_vars) if env_vars else "# No environment variables"
         
-        # Simple script
+        log_dir = str(self.base_path / "logs")
+        
+        # Simple script with log directory creation and better debugging
         script = f"""#!/bin/bash -l
 
 # Load required modules
@@ -324,19 +375,76 @@ module load Apptainer/1.2.4-GCCcore-12.3.0
 # Set environment variables
 {env_section}
 
+# Debug: Print environment info
+echo "=== SLURM Job Debug Info ==="
+echo "Job ID: $SLURM_JOB_ID"
+echo "Node: $SLURMD_NODENAME"
+echo "Working directory: $(pwd)"
+echo "Log directory: {log_dir}"
+echo "Container def: {def_path}"
+echo "Container sif: {sif_path}"
+echo "==========================="
+
 # Build container if needed
 if [ ! -f {sif_path} ]; then
     echo 'Building Apptainer image: {sif_path}'
-    apptainer build {sif_path} {def_path}
+    
+    # Set up user-writable directories to avoid permission issues
+    export APPTAINER_TMPDIR=/tmp/apptainer-$USER-$$
+    export APPTAINER_CACHEDIR=/tmp/apptainer-cache-$USER
+    export HOME=/tmp/fake-home-$USER
+    
+    mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME/.apptainer
+    
+    # Create empty docker config to bypass authentication
+    echo '{{}}' > $HOME/.apptainer/docker-config.json
+    
+    # Build container
+    apptainer build --disable-cache --no-https {sif_path} {def_path}
+    build_result=$?
+    
+    # Clean up
+    rm -rf $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME
+    
+    if [ $build_result -ne 0 ]; then
+        echo "ERROR: Failed to build container (exit code: $build_result)"
+        exit 1
+    fi
+    
+    echo "Container build successful!"
 fi
 
-# Run container
-apptainer run {sif_path}
+# Check if container exists
+if [ ! -f {sif_path} ]; then
+    echo "ERROR: Container file not found: {sif_path}"
+    exit 1
+fi
+
+mkdir -p {log_dir}
+
+# Run container with better error handling and log redirection
+echo "Starting container..."
+# Bind the log directory and expose port 8000 for vLLM services
+if [[ "{recipe_name}" == *"vllm"* ]]; then
+    echo "Running vLLM container with port binding..."
+    apptainer run --bind {log_dir}:/app/logs --net --network-args "portmap=8000:8000/tcp" {sif_path} 2>&1
+else
+    echo "Running regular container..."
+    apptainer run --bind {log_dir}:/app/logs {sif_path} 2>&1
+fi
+container_exit_code=$?
+
+echo "Container exited with code: $container_exit_code"
+if [ $container_exit_code -ne 0 ]; then
+    echo "ERROR: Container failed to run properly"
+fi
+
+exit $container_exit_code
 """
         return script
     
     def _format_environment(self, env_dict: Dict[str, str]) -> List[str]:
-        """Format environment variables as array of KEY=VALUE strings for SLURM v0.0.40."""
+        """Format environment variables as array of KEY=VALUE strings"""
         env_list = [f"USER={self.username}"]  # Always include USER
         for key, value in env_dict.items():
             env_list.append(f"{key}={value}")

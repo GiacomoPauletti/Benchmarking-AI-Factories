@@ -3,7 +3,7 @@ API route definitions for SLURM-based service orchestration.
 """
 
 from fastapi import APIRouter, HTTPException
-from typing import List
+from typing import List, Dict, Any
 
 from server_service import ServerService
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
@@ -94,3 +94,38 @@ async def get_recipe(recipe_name: str):
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
     return recipe
+
+
+@router.get("/vllm/services")
+async def list_vllm_services():
+    """List all running VLLM services."""
+    server_service = ServerService()
+    try:
+        vllm_services = server_service.find_vllm_services()
+        return {"vllm_services": vllm_services}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/vllm/{service_id}/prompt")
+async def prompt_vllm_service(service_id: str, request: Dict[str, Any]):
+    """Send a prompt to a running VLLM service."""
+    server_service = ServerService()
+    try:
+        prompt = request.get("prompt")
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt is required")
+        
+        # Extract optional parameters
+        kwargs = {
+            "max_tokens": request.get("max_tokens", 150),
+            "temperature": request.get("temperature", 0.7),
+            "model": request.get("model")
+        }
+        # Remove None values
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        
+        result = server_service.prompt_vllm_service(service_id, prompt, **kwargs)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
