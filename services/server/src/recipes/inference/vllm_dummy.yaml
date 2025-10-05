@@ -1,20 +1,20 @@
-name: vllm
+name: vllm_dummy
 category: inference
-description: "vLLM high-performance inference server for large language models"
+description: "Simple dummy vLLM API server for testing (mock responses)"
 version: "0.2.0"
-image: "vllm.sif"
-container_def: "vllm.def"
+image: "vllm_dummy.sif"
+container_def: "vllm_dummy.def"
 ports:
   - 8000
 environment:
-  CUDA_VISIBLE_DEVICES: "0"
   VLLM_HOST: "0.0.0.0"
   VLLM_PORT: "8000"
 resources:
-  cpu: "2" #"8"
-  memory: "32G"
-  gpu: "1"
+  cpu: "8"
+  memory: "16G"
 deployment_config:
+  execution_type: "slurm"
+  command: ""
   model_path: "/models"
   tensor_parallel_size: 1
   max_model_len: 4096

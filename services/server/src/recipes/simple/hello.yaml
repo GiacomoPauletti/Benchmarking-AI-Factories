@@ -1,0 +1,15 @@
+name: hello
+category: simple
+description: "Simple Hello World Apptainer container"
+version: "1.0.0"
+image: "hello.sif"
+container_def: "hello.def"
+ports: []
+environment: {}
+resources:
+  cpu: "1"
+  memory: "1Gi"
+deployment_config:
+  replicas: 1
+  execution_type: "slurm"
+health_check: null

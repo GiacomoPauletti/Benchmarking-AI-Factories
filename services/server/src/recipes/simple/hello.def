@@ -1,0 +1,8 @@
+Bootstrap: docker
+From: ubuntu:20.04
+
+%post
+    apt-get -y update && apt-get install -y python3
+
+%runscript
+    python3 -c 'print("Hello World! Hello from our custom Apptainer image!")'

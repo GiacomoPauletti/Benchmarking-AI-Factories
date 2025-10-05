@@ -34,8 +34,11 @@ async def list_services():
 @router.get("/services/{service_id}", response_model=ServiceResponse)
 async def get_service(service_id: str):
     """Get details of a specific service."""
-    # Implementation will be added here
-    pass
+    server_service = ServerService()
+    service = server_service.get_service(service_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    return service
 
 
 @router.delete("/services/{service_id}")
@@ -60,5 +63,9 @@ async def list_recipes():
 @router.get("/recipes/{recipe_name}", response_model=RecipeResponse)
 async def get_recipe(recipe_name: str):
     """Get details of a specific recipe."""
-    # Implementation will be added here
-    pass
+    server_service = ServerService()
+    recipes = server_service.list_available_recipes()
+    recipe = next((r for r in recipes if r["name"] == recipe_name), None)
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    return recipe
