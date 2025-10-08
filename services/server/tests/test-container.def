@@ -28,7 +28,7 @@ From: python:3.11-slim
     echo "======================================"
     
     # Check if we're in the right directory
-    if [ ! -f "/app/launch_server.sh" ]; then
+    if [ ! -f "/app/services/server/launch_server.sh" ]; then
         echo "❌ Error: Must bind mount the project directory to /app"
         echo "Usage: apptainer run --bind /path/to/Benchmarking-AI-Factories:/app test-container.sif"
         exit 1
@@ -65,37 +65,28 @@ From: python:3.11-slim
         cd /app
         
         # Clean up any existing endpoint file
-        rm -f .ai-factory-endpoint
+        rm -f services/server/.server-endpoint
         
         # Start server in background with timeout
-        timeout 180 ./launch_server.sh &
+        timeout 180 ./services/server/launch_server.sh &
         SERVER_PID=$!
         
-        # Wait for server to be ready
-        echo "⏳ Waiting for server to be ready..."
-        RETRY_COUNT=0
-        MAX_RETRIES=18  # Reduced for faster testing
-        ENDPOINT=""
-        
-        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if [ -f ".ai-factory-endpoint" ]; then
-                ENDPOINT=$(cat .ai-factory-endpoint)
-                if curl -s --connect-timeout 5 "$ENDPOINT/health" >/dev/null 2>&1; then
-                    echo "✅ Server is ready at $ENDPOINT"
-                    break
-                fi
-            fi
-            
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "   Waiting... ($RETRY_COUNT/$MAX_RETRIES)"
-            sleep 10
+                # Wait for server to be ready (endpoint file created)
+        echo "Waiting for server to start..."
+        timeout=120
+        while [ ! -f "services/server/.server-endpoint" ] && [ $timeout -gt 0 ]; do
+            sleep 1
+            timeout=$((timeout-1))
         done
         
-        if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+        if [ ! -f "services/server/.server-endpoint" ]; then
             echo "❌ Server failed to start within timeout"
             kill $SERVER_PID 2>/dev/null || true
             exit 1
         fi
+        
+        ENDPOINT=$(cat services/server/.server-endpoint)
+        echo "✅ Server started at: $ENDPOINT"
         
         # Step 3: Run API integration tests
         echo ""
@@ -205,4 +196,4 @@ TEST_EOF
     Requirements:
         - Must be run from the project root directory
         - Requires SLURM environment for server launch
-        - Needs access to launch_server.sh script
+        - Needs access to services/server/launch_server.sh script

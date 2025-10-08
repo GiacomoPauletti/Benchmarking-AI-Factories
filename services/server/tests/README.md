@@ -12,7 +12,7 @@ cd /home/users/u103056/Benchmarking-AI-Factories/services/server
 This will:
 1. Build an Apptainer test container
 2. Request interactive compute node (15min, 8GB RAM)
-3. Launch your server using `launch_server.sh`
+3. Launch your server using `services/server/launch_server.sh`
 4. Run all tests (unit + integration + live API tests)
 5. Clean up automatically
 
@@ -22,7 +22,7 @@ The test container (`test-container.def`) performs a complete workflow:
 
 1. **Interactive Node**: Requests SLURM compute node for testing
 2. **Unit Tests**: Fast tests without server (mocked)
-3. **Server Launch**: Starts server using your existing `launch_server.sh` 
+3. **Server Launch**: Starts server using your existing `services/server/launch_server.sh` 
 4. **Integration Tests**: Tests with live server endpoints
 5. **Live API Tests**: Real HTTP calls to running server
 6. **Cleanup**: Stops server and cleans up
@@ -41,7 +41,7 @@ python -m pytest tests/test_api.py tests/test_slurm.py -v
 
 # For integration tests, start server first:
 cd /home/users/u103056/Benchmarking-AI-Factories
-./launch_server.sh &
+./services/server/launch_server.sh &
 
 # Then run integration tests
 cd services/server
@@ -107,7 +107,7 @@ apptainer build test-container.sif test-container.def
 
 ### Server Launch Issues
 - Check SLURM allocation is available
-- Verify `launch_server.sh` works independently
+- Verify `services/server/launch_server.sh` works independently
 - Check logs in `services/server/logs/`
 
 ### Test Failures

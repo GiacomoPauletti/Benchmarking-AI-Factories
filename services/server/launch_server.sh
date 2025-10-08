@@ -16,9 +16,9 @@ salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=16G
     cd /home/users/u103056/Benchmarking-AI-Factories/services/server
     
     # Build container if it doesn't exist
-    if [ ! -f ai-factory-server.sif ]; then
+    if [ ! -f server.sif ]; then
         echo "Building AI Factory Server container..."
-        apptainer build ai-factory-server.sif ai-factory-server.def || { echo "ERROR: Container build failed"; exit 1; }
+        apptainer build server.sif server.def || { echo "ERROR: Container build failed"; exit 1; }
     fi
     
     # Start the server
@@ -30,8 +30,8 @@ salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=16G
     echo "========================================="
     
     # Write endpoint to state file for client discovery
-    echo "${SERVER_ENDPOINT}" > /home/users/u103056/Benchmarking-AI-Factories/.ai-factory-endpoint
-    echo "Endpoint written to: /home/users/u103056/Benchmarking-AI-Factories/.ai-factory-endpoint"
+    echo "${SERVER_ENDPOINT}" > /home/users/u103056/Benchmarking-AI-Factories/services/server/.server-endpoint
+    echo "Endpoint written to: /home/users/u103056/Benchmarking-AI-Factories/services/server/.server-endpoint"
     
     # Get SLURM JWT token on the compute node
     echo "Getting SLURM JWT token..."
@@ -43,5 +43,5 @@ salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=16G
         --env SLURM_JWT="${SLURM_JWT}" \
         --bind /home/users/u103056:/home/users/u103056 \
         --bind /mnt/tier2/users/u103056:/mnt/tier2/users/u103056 \
-        ai-factory-server.sif
+        server.sif
 EOF

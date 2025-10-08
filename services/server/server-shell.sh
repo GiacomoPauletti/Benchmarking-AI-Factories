@@ -3,7 +3,8 @@
 # AI Factory Client Wrapper
 # Automatically discovers the current server endpoint and makes API calls
 
-ENDPOINT_FILE="/home/users/u103056/Benchmarking-AI-Factories/.ai-factory-endpoint"
+# Check if server endpoint file exists
+ENDPOINT_FILE="/home/users/u103056/Benchmarking-AI-Factories/services/server/.server-endpoint"
 
 # Function to get current server endpoint
 get_server_endpoint() {
@@ -19,7 +20,7 @@ check_server() {
     local endpoint=$(get_server_endpoint)
     if [ -z "$endpoint" ]; then
         echo "No server endpoint found. Is the server running?"
-        echo "   Start server with: ./launch_server.sh"
+        echo "   Start server with: ./services/server/launch_server.sh"
         return 1
     fi
     
@@ -29,7 +30,7 @@ check_server() {
         return 0
     else
         echo "Server endpoint found but not responding: $endpoint"
-        echo "   The server may have stopped. Try restarting with: ./launch_server.sh"
+        echo "   The server may have stopped. Try restarting with: ./services/server/launch_server.sh"
         return 1
     fi
 }
@@ -42,7 +43,7 @@ api_call() {
     
     local endpoint=$(get_server_endpoint)
     if [ -z "$endpoint" ]; then
-        echo "No server endpoint found. Start server with: ./launch_server.sh"
+        echo "No server endpoint found. Start server with: ./services/server/launch_server.sh"
         return 1
     fi
     

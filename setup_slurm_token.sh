@@ -18,7 +18,7 @@ if command -v scontrol >/dev/null 2>&1; then
         TOKEN=$(echo "$TOKEN_OUTPUT" | grep "SLURM_JWT=" | cut -d'=' -f2)
         export SLURM_JWT="$TOKEN"
         echo "Token set successfully"
-        echo "Run: ./launch_server.sh"
+        echo "Run: ./services/server/launch_server.sh"
     else
         echo "Failed to get token. Run manually: scontrol token"
         exit 1

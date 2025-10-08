@@ -214,4 +214,4 @@ __marimo__/
 # Apptainer/Singularity container images
 *.sif
 
-useful_commands.txt
+useful_commands.txt.server-endpoint

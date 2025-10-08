@@ -1,0 +1,48 @@
+Git feature addition:
+
+# Server feature development workflow:
+git checkout feature/server-dev
+git checkout -b feature/server/new-feature-name
+git add .
+git commit -m "Add new server feature"
+git push origin feature/server/new-feature-name
+gh pr create --title "Add new server feature" --body "Description" --base feature/server-dev
+
+# General feature workflow:
+git checkout -b feature/name_of_feature
+git add .
+git commit -m "blabla"
+git push origin feature/name_of_feature
+gh pr create --title "blabla" --body "blabla"
+
+
+#### ENDPOINTS Testing ####
+# Remove existing container if rebuild is wanted
+cd /home/users/u103056/Benchmarking-AI-Factories/services/server && rm -f server.sif && cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
+
+cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
+
+cd /home/users/u103056/Benchmarking-AI-Factories && ./server-shell.sh
+
+create inference/vllm_dummy
+
+create inference/vllm
+
+
+# Launch service
+curl -X POST http://localhost:8001/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipe_name": "inference/vllm",
+    "config": {"nodes": 1}
+  }'
+
+# Then make API calls to localhost:8000
+curl -X POST http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "microsoft/DialoGPT-medium",
+    "prompt": "Hello, how are you?",
+    "max_tokens": 100,
+    "temperature": 0.7
+  }'

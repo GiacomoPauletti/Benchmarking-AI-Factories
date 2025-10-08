@@ -32,7 +32,7 @@ def test_basic_workflow():
 def test_live_server_workflow():
     """Test workflow against live server if available."""
     # Check if we have a live server endpoint
-    endpoint_file = Path("/app/.ai-factory-endpoint")
+    endpoint_file = Path("/app/.server-endpoint")
     if not endpoint_file.exists():
         pytest.skip("No live server endpoint available")
     
