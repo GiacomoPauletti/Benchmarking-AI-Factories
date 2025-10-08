@@ -213,3 +213,5 @@ __marimo__/
 
 # Apptainer/Singularity container images
 *.sif
+
+useful_commands.txt

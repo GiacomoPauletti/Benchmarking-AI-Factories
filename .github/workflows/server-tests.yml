@@ -1,0 +1,36 @@
+name: Server Tests
+
+on:
+  push:
+    branches: [ dev ]
+    paths: [ 'services/server/**' ]
+  pull_request:
+    branches: [ dev ]
+    paths: [ 'services/server/**' ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        cd services/server
+        pip install -r requirements.txt
+        pip install -r tests/requirements-test.txt
+    
+    - name: Run tests
+      run: |
+        cd services/server
+        python -m pytest tests/ -v
+    
+    - name: Test results
+      if: always()
+      run: echo "Tests completed"
