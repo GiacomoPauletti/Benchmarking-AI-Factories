@@ -10,20 +10,18 @@ from datetime import datetime
 class ServiceRequest(BaseModel):
     """Schema for service creation requests."""
     recipe_name: str
-    nodes: int = 1
     config: Dict[str, Any] = {}
 
 
 class ServiceResponse(BaseModel):
     """Schema for service responses."""
-    id: str
+    id: str  # This is the SLURM job ID
     name: str
     recipe_name: str
     status: str
     nodes: int
     config: Dict[str, Any]
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    created_at: str
 
 
 class RecipeResponse(BaseModel):
@@ -32,12 +30,7 @@ class RecipeResponse(BaseModel):
     category: str
     description: str
     version: str
-    image: str
-    ports: List[int]
-    environment: Dict[str, str]
-    resources: Dict[str, Any]
-    deployment_config: Dict[str, Any]
-    health_check: Optional[Dict[str, Any]] = None
+    path: str
 
 
 class HealthResponse(BaseModel):
