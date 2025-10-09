@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  server-service:
+    build:
+      context: ./services/server
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - SLURM_ACCOUNT=p200981
+      - SLURM_PARTITION=cpu
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./services/server/src:/app/src
+      - ./services/server/logs:/app/logs
+    restart: unless-stopped
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+    networks:
+      - ai-factory
+
+  # Other services commented out for now - uncomment when ready
+  # client-service:
+  #   build:
+  #     context: ./services/client
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8002:8002"
+  #   environment:
+  #     - SERVER_URL=http://server-service:8001
+  #   volumes:
+  #     - ./services/client/src:/app/src
+  #     - ./logs:/app/logs
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - server-service
+
+  # monitoring-service:
+  #   build:
+  #     context: ./services/monitoring
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8003:8003"
+  #   environment:
+  #     - SERVER_URL=http://server-service:8001
+  #     - CLIENT_URL=http://client-service:8002
+  #   volumes:
+  #     - ./services/monitoring/src:/app/src
+  #     - ./logs:/app/logs
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - server-service
+  #     - client-service
+
+  # logs-service:
+  #   build:
+  #     context: ./services/logs
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8004:8004"
+  #   environment:
+  #     - LOG_LEVEL=INFO
+  #   volumes:
+  #     - ./logs:/app/logs
+  #     - ./services/logs/src:/app/src
+  #   restart: unless-stopped
+
+networks:
+  ai-factory:
+    name: ai-factory-network
