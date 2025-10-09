@@ -12,6 +12,7 @@ import json
 from typing import Dict, List, Optional, Any
 
 from deployment.slurm import SlurmDeployer
+from service_manager import ServiceManager
 
 
 class ServerService:
@@ -21,6 +22,8 @@ class ServerService:
         self.deployer = SlurmDeployer()
         # Fix the recipes directory path
         self.recipes_dir = Path(__file__).parent / "recipes"
+        # Service manager for in-memory service and job management
+        self.service_manager = ServiceManager()
 
     def start_service(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Start a service based on recipe using SLURM + Apptainer."""
@@ -33,15 +36,18 @@ class ServerService:
             # Submit to SLURM
             job_info = self.deployer.submit_job(recipe_name, full_config)
             
-            return {
+            # Store complete service information
+            service_data = {
                 "id": job_info["id"],  # SLURM job ID is used directly as service ID
                 "name": job_info["name"],
                 "recipe_name": recipe_name,
                 "status": job_info["status"],
-                "nodes": full_config["nodes"],
                 "config": full_config,
                 "created_at": job_info["created_at"]
             }
+            self.service_manager.register_service(service_data)
+            
+            return service_data
             
         except Exception as e:
             raise RuntimeError(f"Failed to start service: {str(e)}")
@@ -75,14 +81,46 @@ class ServerService:
         
     def list_running_services(self) -> List[Dict[str, Any]]:
         """List currently running services."""
-        return self.deployer.list_jobs()
+        jobs = self.deployer.list_jobs()
+        # Merge with our stored service information
+        enhanced_jobs = []
+        for job in jobs:
+            service_id = job["id"]
+            stored_service = self.service_manager.get_service(service_id)
+            if stored_service:
+                # Use our stored information and update with current SLURM status
+                service_data = stored_service.copy()
+                service_data["status"] = job["status"]  # Update with current status from SLURM
+                # Update status in manager if it changed
+                if service_data["status"] != stored_service.get("status"):
+                    self.service_manager.update_service_status(service_id, job["status"])
+                enhanced_jobs.append(service_data)
+            else:
+                # Fallback for jobs we don't have stored info for
+                job["recipe_name"] = "unknown"
+                enhanced_jobs.append(job)
+        return enhanced_jobs
     
     def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
         """Get details of a specific service."""
+        # First check if we have stored information
+        stored_service = self.service_manager.get_service(service_id)
+        if stored_service:
+            # Update with current status from SLURM
+            current_status = self.deployer.get_job_status(service_id)
+            if current_status != stored_service.get("status"):
+                self.service_manager.update_service_status(service_id, current_status)
+                stored_service = stored_service.copy()
+                stored_service["status"] = current_status
+            return stored_service
+        
+        # Fallback: check SLURM directly (for jobs we don't have stored info for)
         jobs = self.deployer.list_jobs()
         for job in jobs:
             if job["id"] == service_id:
-                return job
+                job_copy = job.copy()
+                job_copy["recipe_name"] = "unknown"
+                return job_copy
         return None
     
     def get_service_logs(self, service_id: str) -> str:
