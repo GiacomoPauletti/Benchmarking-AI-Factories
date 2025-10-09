@@ -127,5 +127,8 @@ async def prompt_vllm_service(service_id: str, request: Dict[str, Any]):
         
         result = server_service.prompt_vllm_service(service_id, prompt, **kwargs)
         return result
+    except HTTPException:
+        # Re-raise HTTPExceptions (like our 400 error) without wrapping them
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
