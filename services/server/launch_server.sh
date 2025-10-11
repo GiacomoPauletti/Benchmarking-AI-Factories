@@ -40,6 +40,7 @@ if [[ "$1" == "--use-current-node" ]]; then
         --env SLURM_JWT="${SLURM_JWT}" \
         --bind /home/users/u103056:/home/users/u103056 \
         --bind /mnt/tier2/users/u103056:/mnt/tier2/users/u103056 \
+        --bind $(pwd)/logs:/app/logs \
         server.sif
 
 else
@@ -85,6 +86,7 @@ salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=16G
         --env SLURM_JWT="${SLURM_JWT}" \
         --bind /home/users/u103056:/home/users/u103056 \
         --bind /mnt/tier2/users/u103056:/mnt/tier2/users/u103056 \
+        --bind $(pwd)/logs:/app/logs \
         server.sif
 EOF
 fi

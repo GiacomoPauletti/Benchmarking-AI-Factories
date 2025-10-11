@@ -9,10 +9,11 @@ ports:
 environment:
   CUDA_VISIBLE_DEVICES: "0"
   VLLM_HOST: "0.0.0.0"
-  VLLM_PORT: "8000"
+  VLLM_PORT: "8001"
 resources:
   cpu: "2" #"8"
   memory: "32G"
+  time_limit: 15
   gpu: "1"
 deployment_config:
   model_path: "/models"

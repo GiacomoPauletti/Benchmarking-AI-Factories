@@ -171,38 +171,73 @@ interactive_mode() {
                         "list")
                             api_call "GET" "/api/v1/vllm/services"
                             ;;
+                        "models")
+                            if [ -z "$2" ]; then
+                                echo "Usage: vllm models <service_id>"
+                                echo "Example: vllm models 12345"
+                            else
+                                service_id="$2"
+                                api_call "GET" "/api/v1/vllm/$service_id/models"
+                            fi
+                            ;;
                         "prompt")
+                            # Support optional --model=<model> flag before service id or after
+                            model_arg=""
+                            # If first arg looks like --model=..., consume it
+                            if [[ "$2" == --model=* ]]; then
+                                model_arg="${2#--model=}"
+                                shift
+                            fi
                             if [ -z "$2" ] || [ -z "$3" ]; then
-                                echo "Usage: vllm prompt <service_id> <prompt>"
-                                echo "Example: vllm prompt 12345 'Hello, how are you?'"
+                                echo "Usage: vllm prompt [--model=<model>] <service_id> <prompt>"
+                                echo "Example: vllm prompt --model=gpt2 12345 'Hello'"
                             else
                                 service_id="$2"
                                 shift 2
                                 prompt="$*"
-                                payload="{\"prompt\": \"$prompt\"}"
-                                echo "Sending prompt to VLLM service $service_id: \"$prompt\""
+                                if [ -n "$model_arg" ]; then
+                                    payload="{\"prompt\": \"$prompt\", \"model\": \"$model_arg\"}"
+                                else
+                                    payload="{\"prompt\": \"$prompt\"}"
+                                fi
+                                echo "Sending prompt to VLLM service $service_id: \"$prompt\""$( [ -n "$model_arg" ] && echo " (model=$model_arg)")
                                 api_call "POST" "/api/v1/vllm/$service_id/prompt" "$payload"
                             fi
                             ;;
                         *)
                             echo "Unknown VLLM command: $1"
-                            echo "Available: list, prompt"
+                            echo "Available: list, models, prompt"
                             ;;
                     esac
                 fi
                 ;;
             "prompt")
-                # Shorthand for vllm prompt
+                # Shorthand for vllm prompt. Supports optional --model=<model> before or after service id.
+                model_arg=""
+                # If first arg is --model=..., consume it
+                if [[ "$1" == --model=* ]]; then
+                    model_arg="${1#--model=}"
+                    shift
+                fi
                 if [ -z "$1" ] || [ -z "$2" ]; then
-                    echo "Usage: prompt <service_id> <prompt>"
-                    echo "Example: prompt 12345 'Hello, how are you?'"
+                    echo "Usage: prompt [--model=<model>] <service_id> <prompt>"
+                    echo "Example: prompt --model=gpt2 12345 'Hello, how are you?'"
                     echo "Note: This is a shorthand for 'vllm prompt'"
                 else
                     service_id="$1"
                     shift
+                    # If now-first arg is --model=... (user placed it after service id), consume it
+                    if [[ "$1" == --model=* ]]; then
+                        model_arg="${1#--model=}"
+                        shift
+                    fi
                     prompt="$*"
-                    payload="{\"prompt\": \"$prompt\"}"
-                    echo "Sending prompt to VLLM service $service_id: \"$prompt\""
+                    if [ -n "$model_arg" ]; then
+                        payload="{\"prompt\": \"$prompt\", \"model\": \"$model_arg\"}"
+                    else
+                        payload="{\"prompt\": \"$prompt\"}"
+                    fi
+                    echo "Sending prompt to VLLM service $service_id: \"$prompt\""$( [ -n "$model_arg" ] && echo " (model=$model_arg)")
                     api_call "POST" "/api/v1/vllm/$service_id/prompt" "$payload"
                 fi
                 ;;
@@ -314,24 +349,46 @@ case "${1}" in
             "list")
                 api_call "GET" "/api/v1/vllm/services"
                 ;;
-            "prompt")
-                if [ -z "$3" ] || [ -z "$4" ]; then
-                    echo "Usage: $0 vllm prompt <service_id> <prompt>"
-                    echo "Example: $0 vllm prompt 12345 'Hello, how are you?'"
+            "models")
+                if [ -z "${3}" ]; then
+                    echo "Usage: $0 vllm models <service_id>"
+                    echo "Example: $0 vllm models 12345"
                     exit 1
                 fi
-                service_id="$3"
-                shift 3
+                service_id="${3}"
+                api_call "GET" "/api/v1/vllm/$service_id/models"
+                ;;
+            "prompt")
+                # Support optional --model= before the service id
+                model_arg=""
+                arg_index=3
+                if [[ "${!arg_index}" == --model=* ]]; then
+                    model_arg="${!arg_index#--model=}"
+                    arg_index=$((arg_index+1))
+                fi
+                if [ -z "${!arg_index}" ] || [ -z "${!arg_index+1}" ]; then
+                    echo "Usage: $0 vllm prompt [--model=<model>] <service_id> <prompt>"
+                    echo "Example: $0 vllm prompt --model=gpt2 12345 'Hello'"
+                    exit 1
+                fi
+                service_id="${!arg_index}"
+                # shift to the position of prompt
+                shift $((arg_index))
                 prompt="$*"
-                payload="{\"prompt\": \"$prompt\"}"
-                echo "Sending prompt to VLLM service $service_id: \"$prompt\""
+                if [ -n "$model_arg" ]; then
+                    payload="{\"prompt\": \"$prompt\", \"model\": \"$model_arg\"}"
+                else
+                    payload="{\"prompt\": \"$prompt\"}"
+                fi
+                echo "Sending prompt to VLLM service $service_id: \"$prompt\""$( [ -n "$model_arg" ] && echo " (model=$model_arg)")
                 api_call "POST" "/api/v1/vllm/$service_id/prompt" "$payload"
                 ;;
             *)
                 echo "Usage: $0 vllm <subcommand>"
                 echo "Available subcommands:"
                 echo "  list                     - List running VLLM services"
-                echo "  prompt <id> <prompt>     - Send prompt to VLLM service"
+                echo "  models <id>              - List models served by a VLLM service"
+                echo "  prompt [--model=<m>] <id> <prompt> - Send prompt to VLLM service"
                 exit 1
                 ;;
         esac
