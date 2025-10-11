@@ -1,4 +1,4 @@
-from client_dispatcher import AbstractClientDispatcher
+from .client_dispatcher import AbstractClientDispatcher
 
 
 

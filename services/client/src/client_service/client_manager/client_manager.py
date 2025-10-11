@@ -1,7 +1,11 @@
-from client_group import ClientGroup
-from typing import Optional, TypeVar, Generic
+from client_service.client_manager.client_group import ClientGroup
+from typing import Optional, TypeVar, Generic, List
 from enum import Enum, auto
-from client_dispatcher import SlurmClientDispatcher
+from client_service.client_manager.client_dispatcher import SlurmClientDispatcher
+
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
 
 class ClientManagerResponseStatus(Enum):
     """
@@ -38,14 +42,23 @@ class ClientManagerResponse(Generic[T]):
 
 class ClientManager:
     """
-    Manages the many ClientGroup instances, which means it stores them, it eventually
-    removes them upon request, it returns their ip addres + port.
+    Singleton class thatanages the many ClientGroup instances, which means it stores them, 
+    it eventually removes them upon request, it returns their ip addres + port.
     """
-    def __init__(self):
-        self._client_groups : dict[int, ClientGroup]
-        pass
 
-    def get_client_group_ip(self, benchmark_id: int) -> ClientManagerResponse[list[int]]:
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        print ("Creating ClientManager instance")
+        if not cls._instance:
+            cls._instance = super(ClientManager, cls).__new__(cls)
+        return cls._instance
+        
+
+    def __init__(self):
+        self._client_groups : dict[int, ClientGroup] = {}
+
+    def get_client_group_ip(self, benchmark_id: int) -> ClientManagerResponse[List[int]]:
         """
             description: returns ip address and port of the ClientGroup identified by benchmark_id
             params:
@@ -80,10 +93,13 @@ class ClientManager:
              - ClientManagerResponseStatus: OK if all went correctly, else ALREADY_PRESENT
         """
         if benchmark_id in self._client_groups.keys():
+            logging.debug(f"Attempt to add already present client group for benchmark_id {benchmark_id}.")
             return ClientManagerResponseStatus.ALREADY_PRESENT
         else:
 
+            logging.debug(f"Adding client group for benchmark_id {benchmark_id} with {num_clients} clients.")
             self._client_groups[benchmark_id] = ClientGroup(num_clients, SlurmClientDispatcher())
+            logging.debug(f"Successfully added client group for benchmark_id {benchmark_id} with {num_clients} clients.")
             return ClientManagerResponseStatus.OK
         
     def remove_client_group(self, benchmark_id : int) -> ClientManagerResponseStatus:

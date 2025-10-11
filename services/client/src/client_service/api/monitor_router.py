@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, HTTPException, status
 from pydantic import BaseModel
-from client_manager.client_manager import ClientManager, ClientManagerResponseStatus
+from client_service.client_manager.client_manager import ClientManager, ClientManagerResponseStatus
 
 monitor_router  = APIRouter()
 

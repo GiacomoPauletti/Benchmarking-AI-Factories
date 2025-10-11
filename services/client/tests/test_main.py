@@ -4,10 +4,8 @@ Client service main module.
 
 import sys
 from fastapi import FastAPI
-from client_service.api.frontend_router import frontend_router
-from client_service.client_manager.slurm_config import SlurmConfig
-from client_service.client_manager.client_dispatcher import SlurmClientDispatcher
-from client_service.client_manager.client_manager import ClientManager
+from api.frontend_router import frontend_router
+from slurm_config import SlurmConfig
 import uvicorn
 
 app = FastAPI()
@@ -25,7 +23,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     slurm_config_path = sys.argv[1]
-    SlurmClientDispatcher.slurm_config = SlurmConfig.load_from_file(slurm_config_path)
+    SlurmConfig.load_from_file(slurm_config_path)
 
     
     uvicorn.run(app, host="0.0.0.0", port=8001)
