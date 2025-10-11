@@ -215,3 +215,6 @@ __marimo__/
 *.sif
 
 useful_commands.txt.server-endpoint
+
+# Local AI model files
+huggingface_cache/

@@ -7,9 +7,9 @@ import yaml
 import requests
 import json
 import os
-import glob
 from pathlib import Path
 from typing import Dict, Any, List
+from utils import parse_time_limit
 from datetime import datetime
 
 
@@ -41,7 +41,7 @@ class SlurmDeployer:
             recipe = yaml.safe_load(f)
         
         # Generate and submit job
-        job_payload = self._create_job_payload(recipe, config or {}, recipe_name)
+        job_payload = self._create_job_payload(recipe, config or {}, recipe_name, recipe_path)
         
         # Debug: print the payload
         print("Submitting job payload:")
@@ -246,13 +246,55 @@ class SlurmDeployer:
             
             if response.status_code == 200:
                 result = response.json()
+                # DEBUG: emit raw job JSON for troubleshooting allocated node fields
+                try:
+                    import logging
+                    logging.getLogger(__name__).debug("SLURM raw job response for %s: %s", job_id, json.dumps(result))
+                except Exception:
+                    pass
                 jobs = result.get('jobs', [])
                 if jobs:
                     job = jobs[0]
-                    # Extract node information
-                    node_list = job.get('node_list', '')
-                    allocated_nodes = self._parse_node_list(node_list) if node_list else []
-                    
+                    # Extract node information. Different Slurm deployments expose
+                    # allocated node names in different fields. Prefer the top-level
+                    # 'nodes' field (string), then job_resources.nodes, then the
+                    # job_resources.allocated_nodes list (which contains dicts with
+                    # a 'nodename' key). As a last resort use 'allocating_node'.
+                    allocated_nodes: List[str] = []
+
+                    # Candidate string fields that may contain compact node lists
+                    node_str = job.get('nodes') or job.get('node_list')
+                    if not node_str:
+                        jr = job.get('job_resources', {}) if isinstance(job.get('job_resources', {}), dict) else job.get('job_resources')
+                        if isinstance(jr, dict):
+                            node_str = jr.get('nodes') or jr.get('node_list')
+
+                    if node_str:
+                        # Parse compact string formats like 'mel2141' or 'mel[2001-2003]'
+                        try:
+                            allocated_nodes = self._parse_node_list(str(node_str))
+                        except Exception:
+                            allocated_nodes = [str(node_str)]
+                    else:
+                        # Try allocated_nodes structure under job_resources
+                        jr = job.get('job_resources', {}) or {}
+                        alloc_list = jr.get('allocated_nodes') or jr.get('allocated_hosts')
+                        if isinstance(alloc_list, list) and alloc_list:
+                            for item in alloc_list:
+                                if isinstance(item, dict):
+                                    # Common key is 'nodename' in this cluster
+                                    nodename = item.get('nodename') or item.get('nodename')
+                                    if nodename:
+                                        allocated_nodes.append(str(nodename))
+                                elif isinstance(item, str):
+                                    allocated_nodes.append(item)
+
+                    # Final fallback: allocating_node or batch_host may contain a node name
+                    if not allocated_nodes:
+                        allocating = job.get('allocating_node') or job.get('batch_host')
+                        if allocating:
+                            allocated_nodes = [str(allocating)]
+
                     return {
                         "id": str(job.get('job_id', 0)),
                         "name": job.get('name', ''),
@@ -313,20 +355,22 @@ class SlurmDeployer:
             raise FileNotFoundError(f"Recipe '{recipe_name}' not found")
         return recipe_path
     
-    def _create_job_payload(self, recipe: Dict[str, Any], config: Dict[str, Any], recipe_name: str) -> Dict[str, Any]:
+    def _create_job_payload(self, recipe: Dict[str, Any], config: Dict[str, Any], recipe_name: str, recipe_path: Path) -> Dict[str, Any]:
         """Create SLURM job payload according to official API schema."""
         resources = recipe.get("resources", {})
-        
+        # Determine time_limit (in minutes) from recipe resources using utility
+        time_limit_minutes = parse_time_limit(resources.get("time_limit"))
+
         # Build the job description according to v0.0.40 schema
         job_desc = {
             "account": self.account,
             "qos": "short",
-            "time_limit": 10,  # 10 minutes for service jobs
+            "time_limit": time_limit_minutes,  
             "current_working_directory": str(self.base_path / "logs"),
             "name": recipe['name'],
             "nodes": config.get("nodes", 1),
-            "cpus_per_task": int(resources.get("cpu", 4)),  # Simple integer
-            "memory_per_cpu": resources.get("memory", "8G"),  # Use as-is, should already be in MB
+            "cpus_per_task": int(resources.get("cpu", 4)), 
+            "memory_per_cpu": resources.get("memory", "8G"),  
             "partition": "gpu" if resources.get("gpu") else "cpu",
             "standard_output": f"{recipe['name']}_%j.out",
             "standard_error": f"{recipe['name']}_%j.err",
@@ -337,21 +381,19 @@ class SlurmDeployer:
         log_dir.mkdir(parents=True, exist_ok=True)
 
         return {
-            "script": self._create_script(recipe, recipe_name),
+            "script": self._create_script(recipe, recipe_name, recipe_path),
             #"script": "#!/bin/bash\necho Hello World",
             "job": job_desc
         }
     
-    def _create_script(self, recipe: Dict[str, Any], recipe_name: str) -> str:
+    def _create_script(self, recipe: Dict[str, Any], recipe_name: str, recipe_path: Path) -> str:
         """Generate the SLURM job script."""
         container_def = recipe.get("container_def", f"{recipe['name']}.def")
         image_name = recipe.get("image", f"{recipe['name']}.sif")
+        resources = recipe.get("resources", {})
         
-        # Get paths - these need to be from the container's perspective
-        if "/" in recipe_name:
-            category = recipe_name.split("/")[0]
-        else:
-            category = "simple"  # fallback
+        # Get paths - extract category from recipe_path
+        category = recipe_path.parent.name  # e.g., "inference" from /path/to/recipes/inference/vllm_dummy.yaml
         
         recipes_path = self.base_path / "src" / "recipes"
         def_path = str(recipes_path / category / container_def)
@@ -359,8 +401,19 @@ class SlurmDeployer:
         
         # Environment variables
         env_vars = []
-        for key, value in recipe.get("environment", {}).items():
-            env_vars.append(f"export {key}={value}")
+        recipe_env = recipe.get("environment", {})
+        for key, value in recipe_env.items():
+            # Quote values to avoid issues with spaces or special chars
+            env_vars.append(f"export {key}='{value}'")
+        # Ensure common vLLM/HF variables exist with defaults pointing to /workspace
+        if 'VLLM_WORKDIR' not in recipe_env:
+            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
+        if 'HF_HOME' not in recipe_env:
+            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
+        # Provide a default logging level if user didn't specify one
+        if 'VLLM_LOGGING_LEVEL' not in recipe_env:
+            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
+
         env_section = "\n".join(env_vars) if env_vars else "# No environment variables"
         
         log_dir = str(self.base_path / "logs")
@@ -424,14 +477,17 @@ mkdir -p {log_dir}
 
 # Run container with better error handling and log redirection
 echo "Starting container..."
-# Bind the log directory and expose port 8000 for vLLM services
-if [[ "{recipe_name}" == *"vllm"* ]]; then
-    echo "Running vLLM container with port binding..."
-    apptainer run --bind {log_dir}:/app/logs --net --network-args "portmap=8000:8000/tcp" {sif_path} 2>&1
-else
-    echo "Running regular container..."
-    apptainer run --bind {log_dir}:/app/logs {sif_path} 2>&1
-fi
+# Bind the log directory and the project workspace so /workspace is persistent inside container
+echo "Running vLLM container (no network binding, unprivileged user)..."
+# Bind host project workspace to /workspace so TRANSFORMERS_CACHE and outputs persist
+PROJECT_WORKSPACE="{self.base_path}"
+echo "Binding project workspace: $PROJECT_WORKSPACE -> /workspace"
+
+# Determine apptainer flags (e.g. use --nv when GPUs are requested)
+APPTAINER_FLAGS="{('--nv' if resources.get('gpu') else '')}"
+echo "Apptainer flags: $APPTAINER_FLAGS"
+
+apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,$PROJECT_WORKSPACE:/workspace {sif_path} 2>&1
 container_exit_code=$?
 
 echo "Container exited with code: $container_exit_code"

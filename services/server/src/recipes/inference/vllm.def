@@ -1,45 +1,40 @@
 Bootstrap: docker
-From: nvidia/cuda:11.6.1-devel-ubuntu20.04
+From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
 
-%environment
-    export PYTHONPATH=/app:$PYTHONPATH
-    export CUDA_VISIBLE_DEVICES=0
+%labels
+    Description "Apptainer container for vLLM OpenAI-compatible API (nightly build)"
+    Version nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
 
 %post
-    # Fix apt permissions for rootless builds
-    export DEBIAN_FRONTEND=noninteractive
-    
-    # Install system dependencies
     apt-get update && apt-get install -y \
-        python3 \
-        python3-pip \
-        python3-dev \
-        git \
-        wget \
-        curl \
-        build-essential \
-        && rm -rf /var/lib/apt/lists/*
+        git wget curl vim \
+        && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-    # Install Python dependencies for vLLM
-    python3 -m pip install --upgrade pip
-    python3 -m pip install \
-        vllm \
-        fastapi \
-        uvicorn \
-        torch \
-        transformers \
-        accelerate
+    # create workspace
+    mkdir -p /workspace
+    # create huggingface cache directory inside workspace and set permissive permissions
+    mkdir -p /workspace/huggingface_cache
+    chmod -R 777 /workspace
+    chmod -R 777 /workspace/huggingface_cache
 
-    # Create app directory
-    mkdir -p /app
-
-%files
-    # Copy any required model files or configs here
+%environment
+    # Setup environment variables
+    export PATH=/usr/local/bin:$PATH
+    export PYTHONUNBUFFERED=1
+    export VLLM_WORKDIR=/workspace
+    # Explicit Hugging Face cache locations
+    export HF_HOME=/workspace/huggingface_cache
+    # Explicit pytorch and vllm cache locations
+    export XDG_CACHE_HOME=/workspace/.cache
+    export TORCH_COMPILE_CACHE=/workspace/.cache/vllm/torch_compile_cache
 
 %runscript
-    echo "Starting vLLM server..."
-    python3 -m vllm.entrypoints.openai.api_server \
-        --model microsoft/DialoGPT-medium \
-        --host 0.0.0.0 \
-        --port 8000 \
-        --tensor-parallel-size 1
+    echo "Starting vLLM OpenAI-compatible API..."
+    # Respect environment overrides for host/port so the recipe or runtime can control binding
+    : "Using VLLM_HOST=${VLLM_HOST:-0.0.0.0} VLLM_PORT=${VLLM_PORT:-8001}"
+    exec python3 -m vllm.entrypoints.openai.api_server --host "${VLLM_HOST:-0.0.0.0}" --port "${VLLM_PORT:-8001}"
+
+%startscript
+    # Used with `apptainer instance start`
+    # Respect environment overrides for host/port
+    exec python3 -m vllm.entrypoints.openai.api_server --host "${VLLM_HOST:-0.0.0.0}" --port "${VLLM_PORT:-8001}"
