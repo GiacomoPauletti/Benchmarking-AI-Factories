@@ -7,9 +7,9 @@ import yaml
 import requests
 import json
 import os
-import glob
 from pathlib import Path
 from typing import Dict, Any, List
+from utils import parse_time_limit
 from datetime import datetime
 
 
@@ -358,17 +358,19 @@ class SlurmDeployer:
     def _create_job_payload(self, recipe: Dict[str, Any], config: Dict[str, Any], recipe_name: str, recipe_path: Path) -> Dict[str, Any]:
         """Create SLURM job payload according to official API schema."""
         resources = recipe.get("resources", {})
-        
+        # Determine time_limit (in minutes) from recipe resources using utility
+        time_limit_minutes = parse_time_limit(resources.get("time_limit"))
+
         # Build the job description according to v0.0.40 schema
         job_desc = {
             "account": self.account,
             "qos": "short",
-            "time_limit": 15,  # 15 minutes for service jobs
+            "time_limit": time_limit_minutes,  
             "current_working_directory": str(self.base_path / "logs"),
             "name": recipe['name'],
             "nodes": config.get("nodes", 1),
-            "cpus_per_task": int(resources.get("cpu", 4)),  # Simple integer
-            "memory_per_cpu": resources.get("memory", "8G"),  # Use as-is, should already be in MB
+            "cpus_per_task": int(resources.get("cpu", 4)), 
+            "memory_per_cpu": resources.get("memory", "8G"),  
             "partition": "gpu" if resources.get("gpu") else "cpu",
             "standard_output": f"{recipe['name']}_%j.out",
             "standard_error": f"{recipe['name']}_%j.err",

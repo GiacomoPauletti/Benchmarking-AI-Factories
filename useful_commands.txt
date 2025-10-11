@@ -17,6 +17,11 @@ gh pr create --title "blabla" --body "blabla"
 
 
 #### ENDPOINTS Testing ####
+# Generate docs
+ssh -L 8001:mel0533:8001 u103056@login03
+http://localhost:8001/docs
+http://localhost:8001/redoc
+
 # Remove existing container if rebuild is wanted
 cd /home/users/u103056/Benchmarking-AI-Factories/services/server && rm -f server.sif && cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
 
@@ -28,7 +33,10 @@ create inference/vllm
 
 vllm list
 
-prompt 3638042 'Hello world'
+vllm models 3638186
+
+prompt 3638186 'Hello world'
+vllm prompt --model=gpt2 3638186 'Hello'
 
 
 # Launch service

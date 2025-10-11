@@ -270,12 +270,13 @@ class ServerService:
             model = models[0] if models else None
 
         # Build request payload
+        self.logger.debug("Preparing prompt request for service %s at %s with model %s", service_id, endpoint, model)
         request_data = {
             "model": model,
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": kwargs.get("max_tokens", 150),
+            "max_tokens": kwargs.get("max_tokens", 500),
             "temperature": kwargs.get("temperature", 0.7),
             "stream": False
         }

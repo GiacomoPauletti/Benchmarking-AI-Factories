@@ -13,6 +13,7 @@ environment:
 resources:
   cpu: "2" #"8"
   memory: "32G"
+  time_limit: 15
   gpu: "1"
 deployment_config:
   model_path: "/models"
