@@ -49,7 +49,7 @@ class ClientManager:
     _instance = None
 
     def __new__(cls, *args, **kwargs):
-        print ("Creating ClientManager instance")
+        logging.debug("Creating ClientManager instance")
         if not cls._instance:
             cls._instance = super(ClientManager, cls).__new__(cls)
         return cls._instance
