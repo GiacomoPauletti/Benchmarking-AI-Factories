@@ -132,3 +132,14 @@ async def prompt_vllm_service(service_id: str, request: Dict[str, Any]):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vllm/{service_id}/models")
+async def get_vllm_models(service_id: str):
+    """Get available models served by a running VLLM service."""
+    server_service = ServerService()
+    try:
+        models = server_service.get_vllm_models(service_id)
+        return {"models": models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

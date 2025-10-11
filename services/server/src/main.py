@@ -4,11 +4,13 @@ SLURM + Apptainer orchestration for AI workloads.
 """
 
 import os
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Clean package imports
 from api.routes import router
+from logging_setup import setup_logging
 
 # Create FastAPI application
 app = FastAPI(
@@ -18,6 +20,13 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+log_dir = os.environ.get("APP_LOG_DIR", "/app/logs")
+try:
+    server_log_path = setup_logging(log_dir)
+except Exception:
+    # If logging setup fails for any reason, fall back to a basic config that writes to stdout
+    logging.basicConfig(level=logging.INFO)
 
 # Add CORS middleware
 app.add_middleware(
@@ -51,9 +60,9 @@ app.include_router(router, prefix="/api/v1")
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting AI Factory Server Service...")
-    print(f"📍 Node: {os.environ.get('SLURMD_NODENAME', 'unknown')}")
-    print(f"🆔 Job ID: {os.environ.get('SLURM_JOB_ID', 'unknown')}")
+    print("Starting AI Factory Server Service...")
+    print(f"Node: {os.environ.get('SLURMD_NODENAME', 'unknown')}")
+    print(f"Job ID: {os.environ.get('SLURM_JOB_ID', 'unknown')}")
     uvicorn.run(
         app,
         host="0.0.0.0",

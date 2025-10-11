@@ -22,11 +22,13 @@ cd /home/users/u103056/Benchmarking-AI-Factories/services/server && rm -f server
 
 cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
 
-cd /home/users/u103056/Benchmarking-AI-Factories && ./server-shell.sh
-
-create inference/vllm_dummy
+cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/server-shell.sh
 
 create inference/vllm
+
+vllm list
+
+prompt 3638042 'Hello world'
 
 
 # Launch service

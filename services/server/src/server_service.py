@@ -3,22 +3,23 @@ Core logic for the server service.
 Orchestrates AI workloads using SLURM + Apptainer.
 """
 
-import subprocess
-import sys
 from pathlib import Path
 import yaml
 import requests
-import json
 from typing import Dict, List, Optional, Any
+import logging
 
 from deployment.slurm import SlurmDeployer
 from service_manager import ServiceManager
 
+DEFAULT_VLLM_PORT = 8001
 
 class ServerService:
     """Main server service class with SLURM-based orchestration."""
 
     def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.logger.debug("Initializing ServerService")
         self.deployer = SlurmDeployer()
         # Fix the recipes directory path
         self.recipes_dir = Path(__file__).parent / "recipes"
@@ -35,6 +36,7 @@ class ServerService:
             
             # Submit to SLURM
             job_info = self.deployer.submit_job(recipe_name, full_config)
+            self.logger.info("Submitted job %s for recipe %s", job_info.get("job_id", job_info.get("id")), recipe_name)
             
             # Store complete service information
             service_data = {
@@ -46,10 +48,12 @@ class ServerService:
                 "created_at": job_info["created_at"]
             }
             self.service_manager.register_service(service_data)
+            self.logger.info("Registered service %s", service_data["id"])
             
             return service_data
             
         except Exception as e:
+            self.logger.exception("Failed to start service %s: %s", recipe_name, e)
             raise RuntimeError(f"Failed to start service: {str(e)}")
         
     def stop_service(self, service_id: str) -> bool:
@@ -113,18 +117,11 @@ class ServerService:
                 stored_service = stored_service.copy()
                 stored_service["status"] = current_status
             return stored_service
-        
-        # Fallback: check SLURM directly (for jobs we don't have stored info for)
-        jobs = self.deployer.list_jobs()
-        for job in jobs:
-            if job["id"] == service_id:
-                job_copy = job.copy()
-                job_copy["recipe_name"] = "unknown"
-                return job_copy
         return None
     
     def get_service_logs(self, service_id: str) -> str:
-        """Get logs from a service."""
+        """Get slurm logs from a service."""
+        self.logger.debug("Fetching logs for service %s", service_id)
         return self.deployer.get_job_logs(service_id)
     
     def get_service_status(self, service_id: str) -> str:
@@ -141,41 +138,112 @@ class ServerService:
             service_name = service.get("name", "").lower()
             recipe_name = service.get("recipe_name", "").lower()
             
-            # Match both vllm and vllm_dummy services
+            # Match both vllm services
             is_vllm_service = (
                 "vllm" in service_name or 
                 "vllm" in recipe_name or
                 any("vllm" in str(val).lower() for val in service.values() if isinstance(val, str))
             )
             
-            if is_vllm_service and service.get("status") in ["running", "pending"]:
+            if is_vllm_service:
                 # Try to determine the endpoint
                 job_id = service.get("id")
+                self.logger.debug("Resolving endpoint for vllm job %s", job_id)
                 endpoint = self._get_vllm_endpoint(job_id)
-                if endpoint or service.get("status") == "pending":
-                    vllm_services.append({
-                        "id": job_id,
-                        "name": service.get("name"),
-                        "recipe_name": service.get("recipe_name", "unknown"),
-                        "endpoint": endpoint,
-                        "status": service.get("status")
-                    })
+                self.logger.info("Resolved endpoint for job %s -> %s", job_id, endpoint)
+                vllm_services.append({
+                    "id": job_id,
+                    "name": service.get("name"),
+                    "recipe_name": service.get("recipe_name", "unknown"),
+                    "endpoint": endpoint,
+                    "status": service.get("status")
+                })
         
         return vllm_services
     
     def _get_vllm_endpoint(self, job_id: str) -> Optional[str]:
         """Get the endpoint for a VLLM service running on SLURM."""
         try:
-            # Get job details from SLURM to find allocated nodes
             job_details = self.deployer.get_job_details(job_id)
-            if job_details and "nodes" in job_details:
-                # Assume VLLM runs on port 8000 (from the recipe)
-                node = job_details["nodes"][0] if job_details["nodes"] else None
-                if node:
-                    return f"http://{node}:8000"
+            self.logger.debug("job_details for %s: %s", job_id, job_details)
+            if job_details and "nodes" in job_details and job_details["nodes"]:
+                node = job_details["nodes"][0]
+                port = None
+                try:
+                    # Look up registered service to find recipe name
+                    service = self.service_manager.get_service(job_id)
+                    recipe_name = service.get('recipe_name') if service else None
+                    if recipe_name:
+                        # recipes live next to this module (same layout as SlurmDeployer uses)
+                        from pathlib import Path
+                        base = Path(__file__).parent / 'recipes'
+                        # recipe_name can be 'category/name' or just 'name'
+                        if '/' in recipe_name:
+                            category, name = recipe_name.split('/', 1)
+                            recipe_path = base / category / f"{name}.yaml"
+                        else:
+                            # search
+                            found = list(base.rglob(f"{recipe_name}.yaml"))
+                            recipe_path = found[0] if found else None
+
+                        if recipe_path and recipe_path.exists():
+                            import yaml
+                            with open(recipe_path, 'r') as f:
+                                recipe = yaml.safe_load(f)
+                                env = recipe.get('environment', {}) if isinstance(recipe, dict) else {}
+                                port = str(env.get('VLLM_PORT') or (recipe.get('ports', [None])[0] if recipe.get('ports') else None))
+                except Exception:
+                    self.logger.debug("Could not read recipe to determine VLLM_PORT for job %s", job_id, exc_info=True)
+
+                if not port:
+                    port = DEFAULT_VLLM_PORT
+
+                endpoint = f"http://{node}:{port}"
+                self.logger.debug("_get_vllm_endpoint returning %s for job %s", endpoint, job_id)
+                return endpoint
             return None
+        except Exception as e:
+            self.logger.exception("Error getting endpoint for %s: %s", job_id, e)
+            return None
+
+    def get_vllm_models(self, service_id: str, timeout: int = 5) -> List[str]:
+        """Query a running VLLM service for available models.
+
+        Returns a list of model ids (strings). If discovery fails an empty list
+        is returned and the error is logged.
+        """
+        try:
+            endpoint = self._get_vllm_endpoint(service_id)
+            if not endpoint:
+                self.logger.debug("No endpoint found for service %s when querying models", service_id)
+                return []
+
+            resp = requests.get(f"{endpoint}/v1/models", timeout=timeout)
+            if not resp.ok:
+                self.logger.warning("Model discovery for %s returned %s: %s", service_id, resp.status_code, resp.text)
+                return []
+
+            data = resp.json()
+            models = []
+            if isinstance(data, dict):
+                candidates = data.get('models') or data.get('served_models') or []
+                if isinstance(candidates, list):
+                    for item in candidates:
+                        if isinstance(item, str):
+                            models.append(item)
+                        elif isinstance(item, dict):
+                            models.append(item.get('id') or item.get('model'))
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, str):
+                        models.append(item)
+                    elif isinstance(item, dict):
+                        models.append(item.get('id') or item.get('model'))
+
+            return [m for m in models if m]
         except Exception:
-            return None
+            self.logger.exception("Failed to discover models for service %s", service_id)
+            return []
     
     def prompt_vllm_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a running VLLM service."""
@@ -193,9 +261,17 @@ class ServerService:
         
         endpoint = target_service["endpoint"]
         
-        # Prepare the prompt request in OpenAI format (vLLM is compatible)
+        # Prepare the prompt request in OpenAI format (vLLM is compatible).
+        model = kwargs.get("model")
+
+        # If no model supplied, try to discover from the running service
+        if not model:
+            models = self.get_vllm_models(service_id)
+            model = models[0] if models else None
+
+        # Build request payload
         request_data = {
-            "model": kwargs.get("model", "microsoft/DialoGPT-medium"),  # Default from vllm.def
+            "model": model,
             "messages": [
                 {"role": "user", "content": prompt}
             ],
@@ -206,16 +282,33 @@ class ServerService:
         
         try:
             # Send request to VLLM service
+            url = f"{endpoint}/v1/chat/completions"
+            self.logger.debug("Posting prompt to %s (service=%s) payload model=%s", url, service_id, model)
             response = requests.post(
-                f"{endpoint}/v1/chat/completions",
+                url,
                 headers={"Content-Type": "application/json"},
                 json=request_data,
                 timeout=30
             )
-            response.raise_for_status()
-            
+
+            # If the server returned an error, include the body (if any) in our response
+            if not response.ok:
+                body = None
+                try:
+                    body = response.json()
+                except Exception:
+                    body = response.text
+                self.logger.warning("vLLM service %s returned status %s: %s", service_id, response.status_code, body)
+                return {
+                    "success": False,
+                    "error": f"vLLM returned {response.status_code}",
+                    "endpoint": endpoint,
+                    "status_code": response.status_code,
+                    "body": body
+                }
+
             result = response.json()
-            
+
             # Extract the response text
             if "choices" in result and len(result["choices"]) > 0:
                 content = result["choices"][0]["message"]["content"]
@@ -230,7 +323,8 @@ class ServerService:
                 return {
                     "success": False,
                     "error": "No response generated",
-                    "raw_response": result
+                    "raw_response": result,
+                    "endpoint": endpoint
                 }
                 
         except requests.exceptions.RequestException as e:
