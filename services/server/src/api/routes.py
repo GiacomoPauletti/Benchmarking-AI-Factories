@@ -2,8 +2,8 @@
 API route definitions for SLURM-based service orchestration.
 """
 
-from fastapi import APIRouter, HTTPException
-from typing import List, Dict, Any
+from fastapi import APIRouter, HTTPException, Body
+from typing import List, Dict, Any, Optional
 
 from server_service import ServerService
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
@@ -11,9 +11,22 @@ from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
 router = APIRouter()
 
 
-@router.post("/services", response_model=ServiceResponse)
-async def create_service(request: ServiceRequest):
-    """Create and start a new service using SLURM + Apptainer."""
+@router.post("/services", response_model=ServiceResponse, summary="Create and start a new service")
+async def create_service(
+    request: ServiceRequest = Body(...,
+        examples={
+            "simple": {
+                "summary": "Create a basic vLLM service",
+                "value": {"recipe_name": "inference/vllm", "config": {"nodes": 1, "cpus": 2, "memory": "8G", "time": "00:30:00"}}
+            }
+        }
+    )
+):
+    """Create and start a new service using SLURM + Apptainer.
+
+    The `request` body should contain `recipe_name` (path to a recipe, e.g. `inference/vllm`) and
+    an optional `config` object with keys like `nodes`, `cpus`, `memory` and `time` (HH:MM:SS).
+    """
     server_service = ServerService()
     try:
         service = server_service.start_service(
@@ -98,7 +111,10 @@ async def get_recipe(recipe_name: str):
 
 @router.get("/vllm/services")
 async def list_vllm_services():
-    """List all running VLLM services."""
+    """List all running VLLM services.
+
+    Returns a JSON object with a `vllm_services` key containing a list of service descriptors.
+    """
     server_service = ServerService()
     try:
         vllm_services = server_service.find_vllm_services()
@@ -107,15 +123,34 @@ async def list_vllm_services():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/vllm/{service_id}/prompt")
-async def prompt_vllm_service(service_id: str, request: Dict[str, Any]):
-    """Send a prompt to a running VLLM service."""
+@router.post("/vllm/{service_id}/prompt", summary="Send a prompt to a running VLLM service")
+async def prompt_vllm_service(
+    service_id: str,
+    request: Dict[str, Any] = Body(..., examples={
+        "simple": {
+            "summary": "Basic prompt",
+            "value": {"prompt": "Write a short haiku about AI."}
+        },
+        "with_model": {
+            "summary": "Prompt specifying model",
+            "value": {"prompt": "Hello", "model": "gpt2", "max_tokens": 64}
+        }
+    })
+):
+    """Send a prompt to a running VLLM service.
+
+    Request body fields:
+    - `prompt` (string, required): the text prompt to send
+    - `model` (string, optional): model id to request (if omitted the server will try to auto-discover)
+    - `max_tokens` (int, optional): maximum number of tokens to generate
+    - `temperature` (float, optional): sampling temperature
+    """
     server_service = ServerService()
     try:
         prompt = request.get("prompt")
         if not prompt:
             raise HTTPException(status_code=400, detail="Prompt is required")
-        
+
         # Extract optional parameters
         kwargs = {
             "max_tokens": request.get("max_tokens", 150),
@@ -124,7 +159,7 @@ async def prompt_vllm_service(service_id: str, request: Dict[str, Any]):
         }
         # Remove None values
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
-        
+
         result = server_service.prompt_vllm_service(service_id, prompt, **kwargs)
         return result
     except HTTPException:
@@ -136,7 +171,11 @@ async def prompt_vllm_service(service_id: str, request: Dict[str, Any]):
 
 @router.get("/vllm/{service_id}/models")
 async def get_vllm_models(service_id: str):
-    """Get available models served by a running VLLM service."""
+    """Get available models served by a running VLLM service.
+
+    The response contains a `models` array with model identifiers discoverable via the vLLM instance.
+    Example response: {"models": ["gpt2", "qwen-3b"]}
+    """
     server_service = ServerService()
     try:
         models = server_service.get_vllm_models(service_id)

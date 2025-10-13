@@ -3,8 +3,15 @@
 # AI Factory Client Wrapper
 # Automatically discovers the current server endpoint and makes API calls
 
-# Check if server endpoint file exists
-ENDPOINT_FILE="/home/users/u103056/Benchmarking-AI-Factories/services/server/.server-endpoint"
+# Compute endpoint file relative to this script location and fallback to HOME layout
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENDPOINT_FILE="$SCRIPT_DIR/.server-endpoint"
+if [ ! -f "$ENDPOINT_FILE" ]; then
+    # Fallback to common HOME-based location for legacy setups
+    if [ -f "$HOME/Benchmarking-AI-Factories/services/server/.server-endpoint" ]; then
+        ENDPOINT_FILE="$HOME/Benchmarking-AI-Factories/services/server/.server-endpoint"
+    fi
+fi
 
 # Function to get current server endpoint
 get_server_endpoint() {

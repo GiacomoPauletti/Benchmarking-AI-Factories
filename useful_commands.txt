@@ -18,24 +18,26 @@ gh pr create --title "blabla" --body "blabla"
 
 #### ENDPOINTS Testing ####
 # Generate docs
-ssh -L 8001:mel0533:8001 u103056@login03
+ssh -L 8001:mel0533:8001 $USER@login03
 http://localhost:8001/docs
 http://localhost:8001/redoc
+python3 services/server/tools/export_openapi_html.py
 
 # Remove existing container if rebuild is wanted
-cd /home/users/u103056/Benchmarking-AI-Factories/services/server && rm -f server.sif && cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
+cd "$HOME/Benchmarking-AI-Factories/services/server" && rm -f server.sif && cd "$HOME/Benchmarking-AI-Factories" && ./services/server/launch_server.sh
 
-cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
+cd "$HOME/Benchmarking-AI-Factories" && ./services/server/launch_server.sh
 
-cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/server-shell.sh
+cd "$HOME/Benchmarking-AI-Factories" && ./services/server/server-shell.sh
 
 create inference/vllm
 
 vllm list
 
-vllm models 3638186
+vllm models 3640856
 
-prompt 3638186 'Hello world'
+prompt 3642100 'Hello world'
+
 vllm prompt --model=gpt2 3638186 'Hello'
 
 

@@ -7,6 +7,7 @@ import yaml
 import requests
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any, List
 from utils import parse_time_limit
@@ -17,14 +18,18 @@ class SlurmDeployer:
     """Handles SLURM job submission and management for Apptainer workloads via REST API."""
     
     def __init__(self, account: str = "p200981"):
+        self.logger = logging.getLogger(__name__)
         self.account = account
         self.username = os.getenv('USER', 'unknown')
         self.token = os.getenv('SLURM_JWT')
         if not self.token:
             raise RuntimeError("SLURM_JWT environment variable not set")
         
-        # Create user-dependent base path
-        self.base_path = Path(f"/home/users/{self.username}/Benchmarking-AI-Factories/services/server")
+        env_base_path = os.getenv('SERVER_BASE_PATH')
+        self.base_path = Path(env_base_path)
+        print(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
+        self.logger.debug(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
+
         
         self.base_url = "http://slurmrestd.meluxina.lxp.lu:6820/slurm/v0.0.40"
         self.headers = {
@@ -381,44 +386,29 @@ class SlurmDeployer:
         log_dir.mkdir(parents=True, exist_ok=True)
 
         return {
-            "script": self._create_script(recipe, recipe_name, recipe_path),
+            "script": self._create_script(recipe, recipe_path),
             #"script": "#!/bin/bash\necho Hello World",
             "job": job_desc
         }
     
-    def _create_script(self, recipe: Dict[str, Any], recipe_name: str, recipe_path: Path) -> str:
-        """Generate the SLURM job script."""
+    def _create_script(self, recipe: Dict[str, Any], recipe_path: Path) -> str:
+        """Generate the SLURM job script by composing smaller parts."""
+        resources = recipe.get("resources", {})
+
+        # Resolve paths and names
+        category = recipe_path.parent.name
+        recipes_path = self.base_path / "src" / "recipes"
         container_def = recipe.get("container_def", f"{recipe['name']}.def")
         image_name = recipe.get("image", f"{recipe['name']}.sif")
-        resources = recipe.get("resources", {})
-        
-        # Get paths - extract category from recipe_path
-        category = recipe_path.parent.name  # e.g., "inference" from /path/to/recipes/inference/vllm_dummy.yaml
-        
-        recipes_path = self.base_path / "src" / "recipes"
-        def_path = str(recipes_path / category / container_def)
-        sif_path = str(recipes_path / category / image_name)
-        
-        # Environment variables
-        env_vars = []
-        recipe_env = recipe.get("environment", {})
-        for key, value in recipe_env.items():
-            # Quote values to avoid issues with spaces or special chars
-            env_vars.append(f"export {key}='{value}'")
-        # Ensure common vLLM/HF variables exist with defaults pointing to /workspace
-        if 'VLLM_WORKDIR' not in recipe_env:
-            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
-        if 'HF_HOME' not in recipe_env:
-            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
-        # Provide a default logging level if user didn't specify one
-        if 'VLLM_LOGGING_LEVEL' not in recipe_env:
-            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
+        def_path, sif_path = self._resolve_container_paths(recipes_path, category, container_def, image_name)
 
-        env_section = "\n".join(env_vars) if env_vars else "# No environment variables"
-        
+        # Build environment and sections
+        env_section = self._build_env_section(recipe.get("environment", {}))
         log_dir = str(self.base_path / "logs")
-        
-        # Simple script with log directory creation and better debugging
+
+        build_block = self._build_build_block(sif_path, def_path)
+        run_block = self._build_run_block(sif_path, log_dir, resources)
+
         script = f"""#!/bin/bash -l
 
 # Load required modules
@@ -438,6 +428,45 @@ echo "Container def: {def_path}"
 echo "Container sif: {sif_path}"
 echo "==========================="
 
+{build_block}
+
+# Ensure log directory exists
+mkdir -p {log_dir}
+
+{run_block}
+
+exit $container_exit_code
+"""
+        return script
+
+    def _resolve_container_paths(self, recipes_path: Path, category: str, container_def: str, image_name: str):
+        """Return absolute paths for container def and sif file."""
+        def_path = str(recipes_path / category / container_def)
+        sif_path = str(recipes_path / category / image_name)
+        return def_path, sif_path
+
+    def _build_env_section(self, recipe_env: Dict[str, str]) -> str:
+        """Construct the environment export section for the script."""
+        env_vars = []
+        
+        # Always export SERVER_BASE_PATH so it's available inside the container
+        env_vars.append(f"export SERVER_BASE_PATH='{self.base_path}'")
+        
+        for key, value in (recipe_env or {}).items():
+            env_vars.append(f"export {key}='{value}'")
+
+        if 'VLLM_WORKDIR' not in (recipe_env or {}):
+            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
+        if 'HF_HOME' not in (recipe_env or {}):
+            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
+        if 'VLLM_LOGGING_LEVEL' not in (recipe_env or {}):
+            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
+
+        return "\n".join(env_vars) if env_vars else "# No environment variables"
+
+    def _build_build_block(self, sif_path: str, def_path: str) -> str:
+        """Return the bash block that ensures the SIF image exists (and builds it if not)."""
+        return f"""
 # Build container if needed
 if [ ! -f {sif_path} ]; then
     echo 'Building Apptainer image: {sif_path}'
@@ -466,42 +495,37 @@ if [ ! -f {sif_path} ]; then
     
     echo "Container build successful!"
 fi
+"""
 
-# Check if container exists
-if [ ! -f {sif_path} ]; then
-    echo "ERROR: Container file not found: {sif_path}"
-    exit 1
-fi
-
-mkdir -p {log_dir}
-
-# Run container with better error handling and log redirection
+    def _build_run_block(self, sif_path: str, log_dir: str, resources: Dict[str, Any]) -> str:
+        """Return the bash block that runs the container with proper binds and flags."""
+        # Project workspace binding
+        project_ws = str(self.base_path)
+        nv_flag = "--nv" if resources.get('gpu') else ""
+        return f"""
 echo "Starting container..."
-# Bind the log directory and the project workspace so /workspace is persistent inside container
 echo "Running vLLM container (no network binding, unprivileged user)..."
-# Bind host project workspace to /workspace so TRANSFORMERS_CACHE and outputs persist
-PROJECT_WORKSPACE="{self.base_path}"
-echo "Binding project workspace: $PROJECT_WORKSPACE -> /workspace"
+echo "Binding project workspace: {project_ws} -> /workspace"
 
 # Determine apptainer flags (e.g. use --nv when GPUs are requested)
-APPTAINER_FLAGS="{('--nv' if resources.get('gpu') else '')}"
+APPTAINER_FLAGS="{nv_flag}"
 echo "Apptainer flags: $APPTAINER_FLAGS"
 
-apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,$PROJECT_WORKSPACE:/workspace {sif_path} 2>&1
+apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace {sif_path} 2>&1
 container_exit_code=$?
 
 echo "Container exited with code: $container_exit_code"
 if [ $container_exit_code -ne 0 ]; then
     echo "ERROR: Container failed to run properly"
 fi
-
-exit $container_exit_code
 """
-        return script
     
     def _format_environment(self, env_dict: Dict[str, str]) -> List[str]:
         """Format environment variables as array of KEY=VALUE strings"""
-        env_list = [f"USER={self.username}"]  # Always include USER
+        env_list = [
+            f"USER={self.username}",
+            f"SERVER_BASE_PATH={self.base_path}"  # Pass base path to job environment
+        ]
         for key, value in env_dict.items():
             env_list.append(f"{key}={value}")
         return env_list

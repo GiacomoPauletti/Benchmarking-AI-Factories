@@ -360,7 +360,7 @@ class TestSLURMDeployer:
     @patch.dict(os.environ, {'USER': 'testuser', 'SLURM_JWT': 'test_token'})
     def test_deployer_initialization(self):
         """Test that SlurmDeployer initializes correctly."""
-        from deployment.slurm import SlurmDeployer
+        from slurm import SlurmDeployer
         
         deployer = SlurmDeployer()
         assert deployer.username == "testuser"
@@ -369,7 +369,7 @@ class TestSLURMDeployer:
     @patch.dict(os.environ, {'USER': 'testuser', 'SLURM_JWT': 'test_token'})
     def test_job_submission_logic(self):
         """Test that deployer can be initialized and would make HTTP calls."""
-        from deployment.slurm import SlurmDeployer
+        from slurm import SlurmDeployer
         
         deployer = SlurmDeployer()
         
@@ -390,7 +390,7 @@ class TestSLURMDeployer:
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_environment_variables(self):
         """Test error handling when SLURM_JWT is missing."""
-        from deployment.slurm import SlurmDeployer
+        from slurm import SlurmDeployer
         
         with pytest.raises(RuntimeError, match="SLURM_JWT"):
             SlurmDeployer()

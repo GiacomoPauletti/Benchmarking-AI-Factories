@@ -9,7 +9,7 @@ import requests
 from typing import Dict, List, Optional, Any
 import logging
 
-from deployment.slurm import SlurmDeployer
+from slurm import SlurmDeployer
 from service_manager import ServiceManager
 
 DEFAULT_VLLM_PORT = 8001
