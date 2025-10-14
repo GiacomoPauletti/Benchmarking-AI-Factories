@@ -218,3 +218,6 @@ useful_commands.txt.server-endpoint
 
 # Local AI model files
 huggingface_cache/
+
+# Local text files
+useful_commands.txt
