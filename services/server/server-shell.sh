@@ -154,6 +154,14 @@ interactive_mode() {
                     api_call "GET" "/api/v1/services/$1/logs"
                 fi
                 ;;
+            "stop")
+                if [ -z "$1" ]; then
+                    echo "Usage: stop <service_id>"
+                else
+                    echo "Stopping service $1..."
+                    api_call "DELETE" "/api/v1/services/$1"
+                fi
+                ;;
             "delete")
                 if [ -z "$1" ]; then
                     echo "Usage: delete <service_id>"
@@ -266,7 +274,8 @@ interactive_mode() {
                 echo "  create <recipe>     - Create a service"
                 echo "  service <id>        - Get service status"
                 echo "  logs <id>           - Get service logs"
-                echo "  delete <id>         - Delete a service"
+                echo "  stop <id>           - Stop a running service"
+                echo "  delete <id>         - Delete a service (with confirmation)"
                 echo "  vllm list           - List running VLLM services"
                 echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
                 echo "  prompt <id> <prompt> - Shorthand for vllm prompt"
@@ -343,6 +352,14 @@ case "${1}" in
             exit 1
         fi
         api_call "GET" "/api/v1/services/$2/logs"
+        ;;
+    "stop")
+        if [ -z "$2" ]; then
+            echo "Usage: $0 stop <service_id>"
+            exit 1
+        fi
+        echo "Stopping service $2..."
+        api_call "DELETE" "/api/v1/services/$2"
         ;;
     "delete")
         if [ -z "$2" ]; then
@@ -440,6 +457,7 @@ case "${1}" in
         echo "  create <recipe>     - Create a service"
         echo "  service <id>        - Get service status"
         echo "  logs <id>           - Get service logs"
+        echo "  stop <id>           - Stop a running service"
         echo "  delete <id>         - Delete a service"
         echo "  vllm list           - List running VLLM services"
         echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
