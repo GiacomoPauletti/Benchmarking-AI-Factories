@@ -1,5 +1,3 @@
-Git feature addition:
-
 # Server feature development workflow:
 git checkout feature/server-dev
 git checkout -b feature/server/new-feature-name
@@ -8,51 +6,102 @@ git commit -m "Add new server feature"
 git push origin feature/server/new-feature-name
 gh pr create --title "Add new server feature" --body "Description" --base feature/server-dev
 
-# General feature workflow:
-git checkout -b feature/name_of_feature
-git add .
-git commit -m "blabla"
-git push origin feature/name_of_feature
-gh pr create --title "blabla" --body "blabla"
 
+#### RUN TESTS ####
+cd "$HOME/Benchmarking-AI-Factories" && ./services/server/run-tests.sh
 
 #### ENDPOINTS Testing ####
 # Generate docs
-ssh -L 8001:mel0533:8001 u103056@login03
+ssh -L 8001:mel0533:8001 $USER@login03
 http://localhost:8001/docs
 http://localhost:8001/redoc
+python3 services/server/tools/export_openapi_html.py
 
 # Remove existing container if rebuild is wanted
-cd /home/users/u103056/Benchmarking-AI-Factories/services/server && rm -f server.sif && cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
+# Remove existing containers and rebuild server
+cd "$HOME/Benchmarking-AI-Factories/services/server" && rm -f server.sif && cd "$HOME/Benchmarking-AI-Factories" && ./services/server/launch_server.sh
 
-cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/launch_server.sh
+cd "$HOME/Benchmarking-AI-Factories" && ./services/server/launch_server.sh
 
-cd /home/users/u103056/Benchmarking-AI-Factories && ./services/server/server-shell.sh
+cd "$HOME/Benchmarking-AI-Factories" && ./services/server/server-shell.sh
 
+# Create vLLM with DEFAULT model (Qwen/Qwen2.5-0.5B-Instruct)
 create inference/vllm
 
+# List all vLLM services
 vllm list
 
-vllm models 3638186
+# Check which models are loaded in a service
+vllm models 3643966
 
-prompt 3638186 'Hello world'
-vllm prompt --model=gpt2 3638186 'Hello'
+# Send prompts 
+prompt 3643982 'Tell me a joke about programming'
 
-
-# Launch service
-curl -X POST http://localhost:8001/api/v1/services \
+# Create vLLM with custom model AND custom resources
+curl -X POST http://mel0378:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "recipe_name": "inference/vllm",
-    "config": {"nodes": 1}
+    "config": {
+      "environment": {
+        "VLLM_MODEL": "gpt2"
+      },
+      "resources": {
+        "nodes": 1,
+        "cpu": "8",
+        "memory": "64G",
+        "time_limit": 120,
+        "gpu": "1"
+      }
+    }
   }'
 
-# Then make API calls to localhost:8000
-curl -X POST http://localhost:8000/v1/completions \
+# Create vLLM service with CUSTOM model (using API, with ALL options explicitly set)
+curl -X POST http://mel0015:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "microsoft/DialoGPT-medium",
-    "prompt": "Hello, how are you?",
-    "max_tokens": 100,
-    "temperature": 0.7
+    "recipe_name": "inference/vllm",
+    "config": {
+      "environment": {
+        "VLLM_MODEL": "gpt2",
+        "VLLM_HOST": "0.0.0.0",
+        "VLLM_PORT": "8001",
+        "VLLM_MAX_MODEL_LEN": "2048",
+        "VLLM_TENSOR_PARALLEL_SIZE": "1",
+        "VLLM_GPU_MEMORY_UTILIZATION": "0.9",
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "resources": {
+        "nodes": 1,
+        "cpu": "2",
+        "memory": "32G",
+        "time_limit": 15,
+        "gpu": "1"
+      }
+    }
   }'
+
+# Create CPU-only vLLM (no GPU)
+curl -X POST http://mel0015:8001/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipe_name": "inference/vllm",
+    "config": {
+      "environment": {
+        "VLLM_MODEL": "gpt2"
+      },
+      "resources": {
+        "nodes": 1,
+        "cpu": "4",
+        "memory": "16G",
+        "gpu": null
+      }
+    }
+  }'
+
+
+# You can now specify any model when creating the service:
+# - Default model (from recipe): Qwen/Qwen2.5-0.5B-Instruct
+# - Override with config: gpt2, facebook/opt-125m, microsoft/phi-2, etc.
+# - Model must be available on HuggingFace or cached locally
+# - See: services/server/docs/vllm-custom-models.md for full guide

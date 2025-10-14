@@ -6,11 +6,14 @@ set -e
 echo "Building AI Factory Test Container"
 echo "====================================="
 
+# Get the directory where the script is located (must be done BEFORE salloc)
+SERVER_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Navigate to the test directory
-cd "$(dirname "${BASH_SOURCE[0]}")/tests"
+cd "${SERVER_BASE_DIR}/tests"
 
 # Request resources 
-salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=8G << 'EOF'
+salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=8G << EOF
 
 module load env/release/2023.1
 module load Apptainer/1.2.4-GCCcore-12.3.0 || { echo "ERROR: Apptainer module not available"; exit 1; }
@@ -39,11 +42,15 @@ echo "============================="
 
 # Get SLURM JWT token on the compute node
 echo "Getting SLURM JWT token..."
-export SLURM_JWT=$(scontrol token | grep SLURM_JWT | cut -d= -f2)
-echo "Token obtained: ${SLURM_JWT:0:20}..."
+export SLURM_JWT=\$(scontrol token | grep SLURM_JWT | cut -d= -f2)
+echo "Token obtained: \${SLURM_JWT:0:20}..."
 
-# Run the container with project directory bound to /app and pass SLURM_JWT
-if apptainer run --env SLURM_JWT="$SLURM_JWT" --bind "$(pwd):/app" services/server/tests/test-container.sif; then
+# Run the container with project directory bound to /app and pass environment variables
+if apptainer run \\
+    --env SLURM_JWT="\${SLURM_JWT}" \\
+    --env SERVER_BASE_PATH="${SERVER_BASE_DIR}" \\
+    --bind "\$(pwd):/app" \\
+    services/server/tests/test-container.sif; then
     echo ""
     echo "All tests passed!"
     echo ""

@@ -85,21 +85,26 @@ class TestLiveServerIntegration:
         
         WARNING: This creates a real SLURM job! Only run in test environments.
         """
-        # Test service creation with a dummy recipe
+        # Test service creation with the vllm recipe
         create_response = requests.post(
             f"{server_endpoint}/api/v1/services",
             json={
-                "recipe_name": "inference/vllm_dummy",
+                "recipe_name": "inference/vllm",
                 "config": {"nodes": 1}
             },
             headers={"Content-Type": "application/json"},
             timeout=30
         )
         
+        # If we get an error, print it for debugging
+        if create_response.status_code not in [200, 201]:
+            print(f"Error creating service: {create_response.status_code}")
+            print(f"Response: {create_response.text}")
+        
         assert create_response.status_code in [200, 201]
         service_data = create_response.json()
         assert "id" in service_data
-        assert service_data["recipe_name"] == "inference/vllm_dummy"
+        assert service_data["recipe_name"] == "inference/vllm"
         
         service_id = service_data["id"]
         
@@ -118,12 +123,18 @@ class TestLiveServerIntegration:
         create_response = requests.post(
             f"{server_endpoint}/api/v1/services",
             json={
-                "recipe_name": "inference/vllm_dummy",
+                "recipe_name": "inference/vllm",
                 "config": {"nodes": 1}
             },
             headers={"Content-Type": "application/json"},
             timeout=30
         )
+        
+        # If we get an error, print it for debugging
+        if create_response.status_code not in [200, 201]:
+            print(f"Error creating service: {create_response.status_code}")
+            print(f"Response: {create_response.text}")
+        
         assert create_response.status_code in [200, 201]
         service_data = create_response.json()
         service_id = service_data["id"]
@@ -133,7 +144,7 @@ class TestLiveServerIntegration:
         assert get_response.status_code == 200
         retrieved_service = get_response.json()
         assert retrieved_service["id"] == service_id
-        assert retrieved_service["recipe_name"] == "inference/vllm_dummy"
+        assert retrieved_service["recipe_name"] == "inference/vllm"
         
         # Test getting service status
         status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=10)
@@ -204,6 +215,13 @@ class TestLiveServerIntegration:
             service = vllm_data["vllm_services"][0]
             service_id = service["id"]
             
+            # Test model discovery
+            models_response = requests.get(f"{server_endpoint}/api/v1/vllm/{service_id}/models", timeout=10)
+            assert models_response.status_code == 200
+            models_data = models_response.json()
+            assert "models" in models_data
+            assert isinstance(models_data["models"], list)
+            
             # Test prompting
             prompt_response = requests.post(
                 f"{server_endpoint}/api/v1/vllm/{service_id}/prompt",
@@ -224,6 +242,202 @@ class TestLiveServerIntegration:
                 if prompt_data["success"]:
                     assert "response" in prompt_data
                     assert isinstance(prompt_data["response"], str)
+                    # Check for endpoint_used field (chat or completions)
+                    if "endpoint_used" in prompt_data:
+                        assert prompt_data["endpoint_used"] in ["chat", "completions"]
+                else:
+                    # If not successful, should have error and message
+                    assert "error" in prompt_data
+                    if "status" in prompt_data:
+                        # Service might still be starting
+                        assert prompt_data["status"] in ["pending", "starting", "configuring", "running"]
+    
+    def test_live_server_vllm_custom_model_workflow(self, server_endpoint):
+        """
+        Test creating a VLLM service with custom model configuration.
+        
+        This tests the custom model feature via environment variables.
+        """
+        # Create a VLLM service with custom model
+        create_response = requests.post(
+            f"{server_endpoint}/api/v1/services",
+            json={
+                "recipe_name": "inference/vllm",
+                "config": {
+                    "environment": {
+                        "VLLM_MODEL": "gpt2"
+                    },
+                    "resources": {
+                        "nodes": 1,
+                        "cpu": "8",
+                        "memory": "64G",
+                        "time_limit": 120,
+                        "gpu": "1"
+                    }
+                }
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        assert create_response.status_code in [200, 201]
+        service_data = create_response.json()
+        assert "id" in service_data
+        service_id = service_data["id"]
+        
+        # Verify the config was stored correctly
+        assert "config" in service_data
+        if "environment" in service_data["config"]:
+            assert service_data["config"]["environment"]["VLLM_MODEL"] == "gpt2"
+        
+        # Wait a moment for service to start initializing
+        import time
+        time.sleep(2)
+        
+        # Check service status
+        status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=10)
+        assert status_response.status_code == 200
+        status_data = status_response.json()
+        assert "status" in status_data
+        
+        # Once running, check models endpoint
+        if status_data["status"] == "running":
+            models_response = requests.get(f"{server_endpoint}/api/v1/vllm/{service_id}/models", timeout=10)
+            if models_response.status_code == 200:
+                models_data = models_response.json()
+                if models_data.get("models"):
+                    # Should include gpt2 if model loaded successfully
+                    assert "gpt2" in models_data["models"] or len(models_data["models"]) > 0
+        
+        # Clean up - delete the service
+        delete_response = requests.delete(f"{server_endpoint}/api/v1/services/{service_id}", timeout=10)
+        # Deletion might succeed or fail depending on timing
+        assert delete_response.status_code in [200, 404]
+    
+    def test_live_server_vllm_service_not_ready(self, server_endpoint):
+        """
+        Test prompting a VLLM service that is still starting.
+        
+        This tests the improved error messaging for services not ready.
+        """
+        # Create a new VLLM service
+        create_response = requests.post(
+            f"{server_endpoint}/api/v1/services",
+            json={
+                "recipe_name": "inference/vllm",
+                "config": {
+                    "nodes": 1
+                }
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        assert create_response.status_code in [200, 201]
+        service_data = create_response.json()
+        service_id = service_data["id"]
+        
+        # Immediately try to prompt (service likely not ready)
+        prompt_response = requests.post(
+            f"{server_endpoint}/api/v1/vllm/{service_id}/prompt",
+            json={
+                "prompt": "Test prompt",
+                "max_tokens": 10
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        assert prompt_response.status_code == 200
+        prompt_data = prompt_response.json()
+        assert "success" in prompt_data
+        
+        # If service not ready, should get helpful error message
+        if not prompt_data["success"]:
+            assert "error" in prompt_data
+            # Should have user-friendly message
+            if "message" in prompt_data:
+                assert "starting" in prompt_data["message"].lower() or "not ready" in prompt_data["message"].lower()
+            # Should include status
+            if "status" in prompt_data:
+                assert prompt_data["status"] in ["pending", "starting", "configuring", "running"]
+        
+        # Clean up
+        delete_response = requests.delete(f"{server_endpoint}/api/v1/services/{service_id}", timeout=10)
+        assert delete_response.status_code in [200, 404]
+    
+    def test_live_server_vllm_chat_template_fallback(self, server_endpoint):
+        """
+        Test that prompting automatically falls back from chat to completions endpoint.
+        
+        This tests the chat template error detection and fallback mechanism.
+        """
+        # Create a VLLM service with a base model (no chat template)
+        create_response = requests.post(
+            f"{server_endpoint}/api/v1/services",
+            json={
+                "recipe_name": "inference/vllm",
+                "config": {
+                    "environment": {
+                        "VLLM_MODEL": "gpt2"  # Base model without chat template
+                    },
+                    "resources": {
+                        "nodes": 1,
+                        "cpu": "8",
+                        "memory": "64G",
+                        "time_limit": 120,
+                        "gpu": "1"
+                    }
+                }
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        if create_response.status_code not in [200, 201]:
+            pytest.skip("Could not create VLLM service for chat template fallback test")
+        
+        service_data = create_response.json()
+        service_id = service_data["id"]
+        
+        # Wait for service to be running
+        import time
+        max_wait = 120  # 2 minutes
+        wait_interval = 10
+        total_waited = 0
+        
+        while total_waited < max_wait:
+            status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=10)
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                if status_data.get("status") == "running":
+                    break
+            time.sleep(wait_interval)
+            total_waited += wait_interval
+        
+        # Try to prompt the service
+        prompt_response = requests.post(
+            f"{server_endpoint}/api/v1/vllm/{service_id}/prompt",
+            json={
+                "prompt": "Tell me a joke about programming",
+                "max_tokens": 50
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        if prompt_response.status_code == 200:
+            prompt_data = prompt_response.json()
+            if prompt_data.get("success"):
+                # Should have used completions endpoint (fallback from chat)
+                assert "endpoint_used" in prompt_data
+                # For base models, should be "completions"
+                assert prompt_data["endpoint_used"] in ["chat", "completions"]
+                assert "response" in prompt_data
+        
+        # Clean up
+        delete_response = requests.delete(f"{server_endpoint}/api/v1/services/{service_id}", timeout=10)
+        assert delete_response.status_code in [200, 404]
     
     def test_live_server_error_scenarios(self, server_endpoint):
         """

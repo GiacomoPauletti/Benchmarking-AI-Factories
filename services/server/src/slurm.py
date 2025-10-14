@@ -7,6 +7,7 @@ import yaml
 import requests
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any, List
 from utils import parse_time_limit
@@ -17,14 +18,18 @@ class SlurmDeployer:
     """Handles SLURM job submission and management for Apptainer workloads via REST API."""
     
     def __init__(self, account: str = "p200981"):
+        self.logger = logging.getLogger(__name__)
         self.account = account
         self.username = os.getenv('USER', 'unknown')
         self.token = os.getenv('SLURM_JWT')
         if not self.token:
             raise RuntimeError("SLURM_JWT environment variable not set")
         
-        # Create user-dependent base path
-        self.base_path = Path(f"/home/users/{self.username}/Benchmarking-AI-Factories/services/server")
+        env_base_path = os.getenv('SERVER_BASE_PATH')
+        self.base_path = Path(env_base_path)
+        print(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
+        self.logger.debug(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
+
         
         self.base_url = "http://slurmrestd.meluxina.lxp.lu:6820/slurm/v0.0.40"
         self.headers = {
@@ -32,6 +37,19 @@ class SlurmDeployer:
             'X-SLURM-USER-TOKEN': self.token,
             'Content-Type': 'application/json'
         }
+        # Load SLURM state normalization mapping from YAML file in server folder
+        try:
+            map_path = self.base_path / 'src' / 'mappings' / 'slurm_state_map.yaml'
+            if map_path.exists():
+                with open(map_path, 'r') as mf:
+                    try:
+                        self._state_map = yaml.safe_load(mf) or {}
+                    except Exception:
+                        self._state_map = {}
+            else:
+                self._state_map = {}
+        except Exception:
+            self._state_map = {}
     
     def submit_job(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Submit a job to SLURM cluster using recipe configuration."""
@@ -76,7 +94,6 @@ class SlurmDeployer:
             "recipe_name": recipe_name,
             "status": "pending",
             "created_at": datetime.now().isoformat(),
-            "nodes": config.get("nodes", 1),
             "config": config or {}
         }
     
@@ -93,43 +110,74 @@ class SlurmDeployer:
             return False
     
     def get_job_status(self, job_id: str) -> str:
-        """Get the status of a SLURM job by job ID."""
+        """Get the status of a SLURM job by job ID, always checking logs for more detailed status if running."""
         try:
             response = requests.get(
-                f"{self.base_url}/job/{job_id}", 
+                f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
                 timeout=5
             )
-            
             if response.status_code == 200:
                 result = response.json()
                 jobs = result.get('jobs', [])
                 if jobs:
                     job = jobs[0]
                     job_state = job.get('job_state', '')
-                    
-                    # Handle case where job_state might be a list or other type
                     if isinstance(job_state, list):
                         status = job_state[0].lower() if job_state else 'unknown'
                     elif isinstance(job_state, str):
                         status = job_state.lower()
                     else:
                         status = str(job_state).lower()
-                    
-                    status_map = {
-                        'pending': 'pending',
-                        'running': 'running',
-                        'completed': 'completed',
-                        'failed': 'failed',
-                        'cancelled': 'cancelled'
-                    }
-                    return status_map.get(status, 'unknown')
-            
-            # If job not found in REST API, it likely completed
+                    basic_status = self._normalize_slurm_state(status)
+                    if basic_status != 'running':
+                        return basic_status
+                    # If running, check logs for more detail
+                    try:
+                        return self._get_detailed_status_from_logs(job_id)
+                    except Exception as e:
+                        self.logger.error(f"Error parsing logs for detailed status of job {job_id}: {e}")
+                        return 'running'
             return "completed"
-            
         except Exception as e:
             raise RuntimeError(f"Failed to get job status from SLURM API: {str(e)}")
+    
+    def _get_detailed_status_from_logs(self, job_id: str) -> str:
+        """Parse job logs to determine detailed status for running jobs.
+        
+        Returns one of: 'building', 'starting', 'running', 'completed'
+        """
+        logs = self.get_job_logs(job_id)
+        
+        # Check if log files don't exist yet or are empty
+        # This typically means the job just started running
+        if 'File not found' in logs and logs.count('File not found') >= 2:
+            # Both stdout and stderr don't exist yet
+            return 'starting'
+        
+        # Check if container exited
+        if 'Container exited' in logs:
+            return 'completed'
+        
+        # Check for building phase
+        if 'Building Apptainer image' in logs or 'apptainer build' in logs.lower():
+            if 'Container build successful' in logs or 'Starting container' in logs:
+                # Build finished, move to next check
+                pass
+            else:
+                return 'building'
+        
+        # Check if application is fully ready
+        if 'Application startup complete' in logs or 'Uvicorn running on' in logs:
+            return 'running'
+        
+        # Check for starting phase (container started but app not ready yet)
+        if 'Starting container' in logs or 'Running vLLM container' in logs or 'Starting vLLM' in logs:
+            return 'starting'
+        
+        # Default to starting for very new jobs, not running
+        # This handles the case where logs exist but don't have clear indicators yet
+        return 'starting'
     
     def list_jobs(self, user_filter: str = None) -> list:
         """List all jobs from SLURM cluster, optionally filtered by user."""
@@ -165,18 +213,10 @@ class SlurmDeployer:
                     else:
                         status = str(job_state).lower()
                     
-                    status_map = {
-                        'pending': 'pending', 
-                        'running': 'running',
-                        'completed': 'completed',
-                        'failed': 'failed',
-                        'cancelled': 'cancelled'
-                    }
-                    
                     user_jobs.append({
                         "id": str(job.get('job_id', 0)),  # Use SLURM job ID directly as service ID
                         "name": job.get('name', 'unnamed'),
-                        "status": status_map.get(status, 'unknown'),
+                        "status": self._normalize_slurm_state(status),
                         "account": job.get('account', ''),
                         "partition": job.get('partition', ''),
                         "nodes": job.get('node_count', {}).get('number', 0) if isinstance(job.get('node_count'), dict) else job.get('node_count', 0),
@@ -190,6 +230,44 @@ class SlurmDeployer:
             
         except Exception as e:
             raise RuntimeError(f"Failed to list jobs from SLURM API: {str(e)}")
+
+    def _normalize_slurm_state(self, raw_state: str) -> str:
+        """Normalize a raw SLURM state string using the loaded YAML mapping.
+
+        Falls back to simple heuristics if mapping is unavailable.
+        """
+        if not raw_state:
+            return 'unknown'
+        s = str(raw_state).strip().lower()
+
+        # Try to use mapping from YAML if present
+        try:
+            for canonical, aliases in (self._state_map or {}).items():
+                if not aliases:
+                    continue
+                for a in aliases:
+                    if not a:
+                        continue
+                    if s == str(a).strip().lower():
+                        return canonical
+                    # match prefix/similar
+                    if str(a).strip().lower() in s:
+                        return canonical
+        except Exception:
+            pass
+
+        # Fallback heuristics
+        if s in ("r", "running") or s.startswith("run"):
+            return 'running'
+        if s in ("pd", "pending") or s.startswith("pd") or s.startswith("pend"):
+            return 'pending'
+        if s.startswith("comp") or s in ("cd", "completed"):
+            return 'completed'
+        if s.startswith("fail") or s in ("f", "failed") or "node_fail" in s or "timeout" in s:
+            return 'failed'
+        if s.startswith("cancel") or s in ("ca", "cancelled", "canceled"):
+            return 'cancelled'
+        return 'unknown'
     
     def get_job_logs(self, job_id: str) -> str:
         """Get logs from SLURM job."""
@@ -233,7 +311,6 @@ class SlurmDeployer:
             
         except Exception as e:
             return f"Error retrieving logs for job {job_id}: {str(e)}"
-
     
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
         """Get detailed information about a SLURM job including allocated nodes."""
@@ -255,11 +332,7 @@ class SlurmDeployer:
                 jobs = result.get('jobs', [])
                 if jobs:
                     job = jobs[0]
-                    # Extract node information. Different Slurm deployments expose
-                    # allocated node names in different fields. Prefer the top-level
-                    # 'nodes' field (string), then job_resources.nodes, then the
-                    # job_resources.allocated_nodes list (which contains dicts with
-                    # a 'nodename' key). As a last resort use 'allocating_node'.
+
                     allocated_nodes: List[str] = []
 
                     # Candidate string fields that may contain compact node lists
@@ -357,9 +430,18 @@ class SlurmDeployer:
     
     def _create_job_payload(self, recipe: Dict[str, Any], config: Dict[str, Any], recipe_name: str, recipe_path: Path) -> Dict[str, Any]:
         """Create SLURM job payload according to official API schema."""
-        resources = recipe.get("resources", {})
-        # Determine time_limit (in minutes) from recipe resources using utility
+        # Merge resources: recipe defaults + config overrides
+        resources = recipe.get("resources", {}).copy()
+        if "resources" in config:
+            resources.update(config["resources"])
+        
+        # Determine time_limit (in minutes) from merged resources using utility
         time_limit_minutes = parse_time_limit(resources.get("time_limit"))
+
+        # Merge environment variables: recipe defaults + config overrides
+        merged_env = recipe.get("environment", {}).copy()
+        if "environment" in config:
+            merged_env.update(config["environment"])
 
         # Build the job description according to v0.0.40 schema
         job_desc = {
@@ -368,57 +450,46 @@ class SlurmDeployer:
             "time_limit": time_limit_minutes,  
             "current_working_directory": str(self.base_path / "logs"),
             "name": recipe['name'],
-            "nodes": config.get("nodes", 1),
+            "nodes": int(resources.get("nodes", 1)),
             "cpus_per_task": int(resources.get("cpu", 4)), 
             "memory_per_cpu": resources.get("memory", "8G"),  
             "partition": "gpu" if resources.get("gpu") else "cpu",
             "standard_output": f"{recipe['name']}_%j.out",
             "standard_error": f"{recipe['name']}_%j.err",
-            "environment": self._format_environment(recipe.get("environment", {}))  # Array of KEY=VALUE
+            "environment": self._format_environment(merged_env)  # Array of KEY=VALUE with merged environment
         }        # The official API expects the job description under 'job' key with script
         
         log_dir = self.base_path / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
 
         return {
-            "script": self._create_script(recipe, recipe_name, recipe_path),
+            "script": self._create_script(recipe, recipe_path, merged_env, resources),
             #"script": "#!/bin/bash\necho Hello World",
             "job": job_desc
         }
     
-    def _create_script(self, recipe: Dict[str, Any], recipe_name: str, recipe_path: Path) -> str:
-        """Generate the SLURM job script."""
+    def _create_script(self, recipe: Dict[str, Any], recipe_path: Path, merged_env: Dict[str, str] = None, merged_resources: Dict[str, Any] = None) -> str:
+        """Generate the SLURM job script by composing smaller parts."""
+        # Use merged resources or fall back to recipe resources
+        resources = merged_resources if merged_resources is not None else recipe.get("resources", {})
+
+        # Use merged environment or fall back to recipe environment
+        environment = merged_env if merged_env is not None else recipe.get("environment", {})
+
+        # Resolve paths and names
+        category = recipe_path.parent.name
+        recipes_path = self.base_path / "src" / "recipes"
         container_def = recipe.get("container_def", f"{recipe['name']}.def")
         image_name = recipe.get("image", f"{recipe['name']}.sif")
-        resources = recipe.get("resources", {})
-        
-        # Get paths - extract category from recipe_path
-        category = recipe_path.parent.name  # e.g., "inference" from /path/to/recipes/inference/vllm_dummy.yaml
-        
-        recipes_path = self.base_path / "src" / "recipes"
-        def_path = str(recipes_path / category / container_def)
-        sif_path = str(recipes_path / category / image_name)
-        
-        # Environment variables
-        env_vars = []
-        recipe_env = recipe.get("environment", {})
-        for key, value in recipe_env.items():
-            # Quote values to avoid issues with spaces or special chars
-            env_vars.append(f"export {key}='{value}'")
-        # Ensure common vLLM/HF variables exist with defaults pointing to /workspace
-        if 'VLLM_WORKDIR' not in recipe_env:
-            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
-        if 'HF_HOME' not in recipe_env:
-            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
-        # Provide a default logging level if user didn't specify one
-        if 'VLLM_LOGGING_LEVEL' not in recipe_env:
-            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
+        def_path, sif_path = self._resolve_container_paths(recipes_path, category, container_def, image_name)
 
-        env_section = "\n".join(env_vars) if env_vars else "# No environment variables"
-        
+        # Build environment and sections
+        env_section = self._build_env_section(environment)
         log_dir = str(self.base_path / "logs")
-        
-        # Simple script with log directory creation and better debugging
+
+        build_block = self._build_build_block(sif_path, def_path)
+        run_block = self._build_run_block(sif_path, log_dir, resources)
+
         script = f"""#!/bin/bash -l
 
 # Load required modules
@@ -438,6 +509,53 @@ echo "Container def: {def_path}"
 echo "Container sif: {sif_path}"
 echo "==========================="
 
+{build_block}
+
+# Ensure log directory exists
+mkdir -p {log_dir}
+
+{run_block}
+
+exit $container_exit_code
+"""
+        return script
+
+    def _resolve_container_paths(self, recipes_path: Path, category: str, container_def: str, image_name: str):
+        """Return absolute paths for container def and sif file."""
+        def_path = str(recipes_path / category / container_def)
+        sif_path = str(recipes_path / category / image_name)
+        return def_path, sif_path
+
+    def _build_env_section(self, recipe_env: Dict[str, str]) -> str:
+        """Construct the environment export section for the script."""
+        env_vars = []
+        
+        # Always export SERVER_BASE_PATH so it's available inside the container
+        env_vars.append(f"export SERVER_BASE_PATH='{self.base_path}'")
+        
+        for key, value in (recipe_env or {}).items():
+            env_vars.append(f"export {key}='{value}'")
+
+        # Add APPTAINERENV_ prefixed versions for Apptainer to pick up
+        # Apptainer automatically imports APPTAINERENV_* variables
+        for key, value in (recipe_env or {}).items():
+            env_vars.append(f"export APPTAINERENV_{key}='{value}'")
+
+        if 'VLLM_WORKDIR' not in (recipe_env or {}):
+            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
+            env_vars.append("export APPTAINERENV_VLLM_WORKDIR='/workspace' || true")
+        if 'HF_HOME' not in (recipe_env or {}):
+            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
+            env_vars.append("export APPTAINERENV_HF_HOME='/workspace/huggingface_cache' || true")
+        if 'VLLM_LOGGING_LEVEL' not in (recipe_env or {}):
+            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
+            env_vars.append("export APPTAINERENV_VLLM_LOGGING_LEVEL='INFO' || true")
+
+        return "\n".join(env_vars) if env_vars else "# No environment variables"
+
+    def _build_build_block(self, sif_path: str, def_path: str) -> str:
+        """Return the bash block that ensures the SIF image exists (and builds it if not)."""
+        return f"""
 # Build container if needed
 if [ ! -f {sif_path} ]; then
     echo 'Building Apptainer image: {sif_path}'
@@ -466,42 +584,41 @@ if [ ! -f {sif_path} ]; then
     
     echo "Container build successful!"
 fi
+"""
 
-# Check if container exists
-if [ ! -f {sif_path} ]; then
-    echo "ERROR: Container file not found: {sif_path}"
-    exit 1
-fi
-
-mkdir -p {log_dir}
-
-# Run container with better error handling and log redirection
+    def _build_run_block(self, sif_path: str, log_dir: str, resources: Dict[str, Any]) -> str:
+        """Return the bash block that runs the container with proper binds and flags."""
+        # Project workspace binding
+        project_ws = str(self.base_path)
+        nv_flag = "--nv" if resources.get('gpu') else ""
+        return f"""
 echo "Starting container..."
-# Bind the log directory and the project workspace so /workspace is persistent inside container
 echo "Running vLLM container (no network binding, unprivileged user)..."
-# Bind host project workspace to /workspace so TRANSFORMERS_CACHE and outputs persist
-PROJECT_WORKSPACE="{self.base_path}"
-echo "Binding project workspace: $PROJECT_WORKSPACE -> /workspace"
+echo "Binding project workspace: {project_ws} -> /workspace"
 
 # Determine apptainer flags (e.g. use --nv when GPUs are requested)
-APPTAINER_FLAGS="{('--nv' if resources.get('gpu') else '')}"
+APPTAINER_FLAGS="{nv_flag}"
 echo "Apptainer flags: $APPTAINER_FLAGS"
 
-apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,$PROJECT_WORKSPACE:/workspace {sif_path} 2>&1
+# Debug: Print environment variables that should be passed to container
+echo "Environment variables for container:"
+env | grep -E '^VLLM_|^HF_|^CUDA_' || echo "No VLLM/HF/CUDA vars found"
+
+apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace {sif_path} 2>&1
 container_exit_code=$?
 
 echo "Container exited with code: $container_exit_code"
 if [ $container_exit_code -ne 0 ]; then
     echo "ERROR: Container failed to run properly"
 fi
-
-exit $container_exit_code
 """
-        return script
     
     def _format_environment(self, env_dict: Dict[str, str]) -> List[str]:
         """Format environment variables as array of KEY=VALUE strings"""
-        env_list = [f"USER={self.username}"]  # Always include USER
+        env_list = [
+            f"USER={self.username}",
+            f"SERVER_BASE_PATH={self.base_path}"  # Pass base path to job environment
+        ]
         for key, value in env_dict.items():
             env_list.append(f"{key}={value}")
         return env_list
