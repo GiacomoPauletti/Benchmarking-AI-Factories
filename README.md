@@ -1,9 +1,22 @@
-# EU AI Factories benchmark project
+# EU AI Factories Benchmark Project
 EUMaster4HPC challenge a.y. 2025-2026
 
-Objective: Develop a framework to evaluate performance of AI Factory components widely used, specifically in the context of the EU
+**Objective**: Develop a framework to evaluate performance of AI Factory components in the MeluXina HPC.
 
-# General structure
+## Documentation
+
+**[View Full Documentation →](https://giacomopauletti.github.io/Benchmarking-AI-Factories/)** *(Coming soon)*
+
+For hosting documentation locally:
+
+```bash
+# Build and serve documentation locally
+cd docs
+./build-docs.sh
+# Choose option 1, then visit http://127.0.0.1:8000
+```
+
+## General Structure
 The project must run on the MeluXina supercomputer. The various components are:
  - A server: the server must take care of running the services that need to be benchmarked (databases, LLMs, etc.).
  - A client: the client must take care of testing the services that are being benchmarked (ex: running prompts, etc.).
