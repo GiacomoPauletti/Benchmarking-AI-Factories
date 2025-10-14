@@ -4,7 +4,6 @@ site_author: EUMaster4HPC Challenge Team
 repo_url: https://github.com/GiacomoPauletti/Benchmarking-AI-Factories
 repo_name: GiacomoPauletti/Benchmarking-AI-Factories
 
-docs_dir: .
 site_dir: ../site
 
 theme:
