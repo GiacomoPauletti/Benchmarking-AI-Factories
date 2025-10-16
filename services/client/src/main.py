@@ -17,8 +17,14 @@ from client_service.client_manager.client_manager import ClientManager
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("uvicorn").setLevel(logging.INFO)
 
-app = FastAPI()
-app.include_router(frontend_router)
+app = FastAPI(
+    title="AI Factory Client Service",
+    description="Spawns clients for testing Server Service",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+app.include_router(frontend_router, prefix="/api/v1")
 
 
 class ClientService:

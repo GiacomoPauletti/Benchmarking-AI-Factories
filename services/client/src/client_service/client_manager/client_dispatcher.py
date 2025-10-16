@@ -14,7 +14,8 @@ class AbstractClientDispatcher:
 class SlurmClientDispatcher(AbstractClientDispatcher):
     slurm_config : SlurmConfig = SlurmConfig.tmp_load_default()
 
-    def __init__(self, slurm_config: SlurmConfig = SlurmConfig.tmp_load_default()):
+    def __init__(self, server_addr : str, slurm_config: SlurmConfig = SlurmConfig.tmp_load_default()):
+        self._server_addr = server_addr
         self._JOB = f"""echo 'Hello, world'"""
 
     def dispatch(self, num_clients: int):
@@ -30,7 +31,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
                 'X-SLURM-USER-TOKEN': f'{self.slurm_config.jwt}'
             },
             json={
-                'script': f"""#!/bin/bash\npython3 -m client.main {num_clients}\n""",
+                'script': f"""#!/bin/bash -l\nmodule load env/release/2023.1\npython3 -m client.main {num_clients} {self._server_addr}\n""",
                 'job': {
                     'qos': 'default',
                     'time_limit': 5,

@@ -1,114 +1,158 @@
-from client_service.client_manager.client_group import ClientGroup
-from typing import Optional, TypeVar, Generic, List
-from enum import Enum, auto
-from client_service.client_manager.client_dispatcher import SlurmClientDispatcher
-
 import logging
+import threading
+import time
+from typing import Dict, Any, Optional, List
+import requests
 
-logging.basicConfig(level=logging.DEBUG)
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-class ClientManagerResponseStatus(Enum):
-    """
-        Enumeration class whose values are the response status of ClientManager.
-        The status says about the correctness of a method call on a ClientManager instance.
+class ClientManagerResponseStatus:
+    OK = 0
+    ERROR = 1
 
-        For example, OK means everything was done correctly; NOT_FOUND has a negative meaning,
-        something went wrong (NOT_FOUND meaning depends on the context)
-    """
 
-    OK              = auto()
-    NOT_FOUND       = auto()
-    ALREADY_PRESENT = auto()
-
-T = TypeVar("T")
-class ClientManagerResponse(Generic[T]):
-    """ 
-        Class representing the output of a generic method of ClientManager.
-        It wraps the actual output attaching to it the ClientManagerResponseStatus.
-        The status and the actual output (here called "value") are accessible both
-        with the homonymous attribute or with get_* method
-    """
-    def __init__(self, 
-                 response_status : ClientManagerResponseStatus,
-                 response_body   : T):
-        self.status = response_status
-        self.body   = response_body
-
-    def get_status(self) -> ClientManagerResponseStatus:
-        return self.status
-    def get_value(self) -> T:
-        return self.body
-
+class CMResponse:
+    """Simple response object returned by some ClientManager helper methods."""
+    def __init__(self, status: int, body=None):
+        self.status = status
+        self.body = body
 
 class ClientManager:
     """
-    Singleton class thatanages the many ClientGroup instances, which means it stores them, 
-    it eventually removes them upon request, it returns their ip addres + port.
+    Manages client groups (one group per benchmark_id). Uses self._client_groups
+    (mapping benchmark_id -> dict) to store group metadata and a single registered
+    client process address for that group. 
     """
-
     _instance = None
 
     def __new__(cls, *args, **kwargs):
-        logging.debug("Creating ClientManager instance")
+        logging.getLogger(__name__).debug("Creating ClientManager instance")
         if not cls._instance:
             cls._instance = super(ClientManager, cls).__new__(cls)
         return cls._instance
-        
 
-    def __init__(self):
-        self._client_groups : dict[int, ClientGroup] = {}
+    def __init__(self) -> None:
+        # mapping: benchmark_id -> {
+        #   "num_clients": int,
+        #   "client_address": Optional[str],
+        #   "created_at": float
+        # }
+        # Protect re-initialization in singleton pattern
+        if hasattr(self, "_initialized") and self._initialized:
+            return
 
-    def get_client_group_ip(self, benchmark_id: int) -> ClientManagerResponse[List[int]]:
-        """
-            description: returns ip address and port of the ClientGroup identified by benchmark_id
-            params:
-             - benchmark_id (int): id which identifies the benchmark and hence this client group
-            returns: 
-             - ClientManagerResponse[list[int]]: a response status (ClientManagerResponseStatus) plus
-                                                 a 2-element list containing the ip address (index=0)
-                                                 and the port (index=1)
-        """
-        if not benchmark_id in self._client_groups.keys():
-            return ClientManagerResponse(
-                        ClientManagerResponseStatus.NOT_FOUND, 
-                        [0,0]
-                    )
-        else:
-           client_group = self._client_groups[benchmark_id]
-           return ClientManagerResponse(
-                        ClientManagerResponseStatus.OK, 
-                        [ 
-                            client_group.get_group_ip(), 
-                            client_group.get_group_port()
-                        ]
-                  )
+        self._client_groups: Dict[int, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self._logger = logging.getLogger("client_service.client_manager")
+        self._initialized = True
 
-    def add_client_group(self, benchmark_id: int, num_clients : int) -> ClientManagerResponseStatus:
+    def add_client_group(self, benchmark_id: int, num_clients: int) -> int:
         """
-            creates a ClientGroup with num_clients clients and assigning it the benchmark_id id
-            params:
-             - benchmark_id (int): id which identifies the benchmark and hence this client group
-             - num_clients (int) : number of clients in the group to be formed
-            returns: 
-             - ClientManagerResponseStatus: OK if all went correctly, else ALREADY_PRESENT
+        Create a new client group for `benchmark_id` expecting `num_clients`.
+        Returns ClientManagerResponseStatus.OK, or ERROR if the group already exists.
         """
-        if benchmark_id in self._client_groups.keys():
-            logging.debug(f"Attempt to add already present client group for benchmark_id {benchmark_id}.")
-            return ClientManagerResponseStatus.ALREADY_PRESENT
-        else:
-
-            logging.debug(f"Adding client group for benchmark_id {benchmark_id} with {num_clients} clients.")
-            self._client_groups[benchmark_id] = ClientGroup(num_clients, SlurmClientDispatcher())
-            logging.debug(f"Successfully added client group for benchmark_id {benchmark_id} with {num_clients} clients.")
+        with self._lock:
+            if benchmark_id in self._client_groups:
+                self._logger.debug(f"Group {benchmark_id} already exists")
+                return ClientManagerResponseStatus.ERROR
+            self._client_groups[benchmark_id] = {
+                "num_clients": int(num_clients),
+                "client_address": None,
+                "created_at": time.time()
+            }
+            self._logger.info(f"Added client group {benchmark_id}: expecting {num_clients}")
             return ClientManagerResponseStatus.OK
-        
-    def remove_client_group(self, benchmark_id : int) -> ClientManagerResponseStatus:
+
+    def remove_client_group(self, benchmark_id: int) -> None:
+        """Remove the group if present."""
+        with self._lock:
+            if benchmark_id in self._client_groups:
+                del self._client_groups[benchmark_id]
+                self._logger.info(f"Removed client group {benchmark_id}")
+
+    def register_client(self, benchmark_id: int, client_address: str) -> bool:
         """
-            removes a ClientGroup assigned to the benchmark_id id
-            params:
-             - benchmark_id (int): id which identifies the benchmark and hence this client group
-            returns: 
-             - ClientManagerResponseStatus: OK even if benchmark_id is not assigned to any ClientGroup
+        Called by a client *process* to register its HTTP address (e.g. "http://10.0.0.2:9000").
+        The registering process declares how many internal clients it will spawn via provided_clients.
+        If provided_clients is None, it is treated as claiming to provide all expected clients.
+        Returns True if registered, False if the group does not exist.
         """
-        self._client_groups.pop(benchmark_id)
-        return ClientManagerResponseStatus.OK
+        with self._lock:
+            group = self._client_groups.get(benchmark_id)
+            if group is None:
+                self._logger.warning(f"Tried to register client for unknown benchmark {benchmark_id}")
+                return False
+
+
+            group["client_address"] = client_address.rstrip('/')
+            self._logger.info(
+                f"Registered client process {client_address} for benchmark {benchmark_id} "
+            )
+            return True
+
+    def list_groups(self) -> List[int]:
+        """Return the list of registered group ids."""
+        with self._lock:
+            return list(self._client_groups.keys())
+
+    def get_group_info(self, benchmark_id: int) -> Optional[Dict[str, Any]]:
+        """Return a copy of group information or None if it does not exist."""
+        with self._lock:
+            g = self._client_groups.get(benchmark_id)
+            if g is None:
+                return None
+            # return a stable copy of the stored fields
+            return {
+                "num_clients": g["num_clients"],
+                "client_address": g.get("client_address"),
+                "created_at": g.get("created_at")
+            }
+
+    def wait_for_clients(self, benchmark_id: int, timeout: float = 30.0, poll_interval: float = 0.5) -> bool:
+        """
+        Wait until the client registers or timeout expires. 
+        Returns True if client registers, False otherwise.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                group = self._client_groups.get(benchmark_id)
+                if group is None:
+                    return False
+                client_addr = group["client_address"]
+                if client_addr is None:
+                    # no process registered yet
+                    pass
+                else:
+                    return True
+            time.sleep(poll_interval)
+        return False
+
+    def run_client_group(self, benchmark_id: int, num_clients: int, timeout: float = 5.0) -> List[Dict[str, Any]]:
+        """
+        Forward a POST /run request to the registered client process of the group.
+        The single process may spawn multiple internal clients; we request up to num_clients
+        to be started by that process. Returns a list with a single entry (or error).
+        """
+        with self._lock:
+            group = self._client_groups.get(benchmark_id)
+            if group is None:
+                raise ValueError(f"Unknown benchmark id {benchmark_id}")
+            client_addr = group["client_address"]
+
+        results: List[Dict[str, Any]] = []
+        if client_addr is None:
+            self._logger.warning(f"No client process registered for benchmark {benchmark_id}")
+            return [{"error": "no client process registered", "benchmark_id": benchmark_id}]
+
+        url = f"{client_addr}/run"
+        try:
+            r = requests.post(url, timeout=timeout)
+            results.append({"client_process": client_addr, "requested": num_clients, "status_code": r.status_code, "body": r.text})
+            self._logger.debug(f"Forwarded run to {client_addr}: requested={num_clients} -> {r.status_code}")
+        except Exception as e:
+            self._logger.exception(f"Error forwarding run to {client_addr}")
+            results.append({"client_process": client_addr, "requested": num_clients, "error": str(e)})
+
+        return results
+
