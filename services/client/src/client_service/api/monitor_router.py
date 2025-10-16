@@ -24,7 +24,7 @@ async def add_observer(benchmark_id: int, payload: ObserverPayload):
         group = client_manager._client_groups.get(benchmark_id)
         if group is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Benchmark id not found")
-        client_addr = group.get("client_address")
+        client_addr = group.get_client_address()
 
     if client_addr is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No client process registered for this benchmark")

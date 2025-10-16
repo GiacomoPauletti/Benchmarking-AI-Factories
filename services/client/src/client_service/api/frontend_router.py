@@ -14,19 +14,17 @@ client_manager = ClientManager()
 
 class AddGroupPayload(BaseModel):
     num_clients: int
+    time_limit: int = 5  # Default 5 minutes
 
-
-class RunPayload(BaseModel):
-    num_clients: int
 
 
 @frontend_router.post("/client-group/{benchmark_id}", status_code=status.HTTP_201_CREATED)
 async def add_client_group(benchmark_id: int, payload: AddGroupPayload):
     """
-    Create a client group for a benchmark. Expects JSON { "num_clients": <int> }.
+    Create a client group for a benchmark. Expects JSON { "num_clients": <int>, "time_limit": <int> }.
     """
-    logger.debug(f"Received request to create client group {benchmark_id} expecting {payload.num_clients}")
-    res = client_manager.add_client_group(benchmark_id, payload.num_clients)
+    logger.debug(f"Received request to create client group {benchmark_id} expecting {payload.num_clients} with time_limit {payload.time_limit}")
+    res = client_manager.add_client_group(benchmark_id, payload.num_clients, payload.time_limit)
     if res != ClientManagerResponseStatus.OK:
         logger.debug(f"Failed to create client group {benchmark_id} (already exists)")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Group already exists")
@@ -47,14 +45,14 @@ async def delete_client_group(benchmark_id: int):
 
 
 @frontend_router.post("/client-group/{benchmark_id}/run", status_code=status.HTTP_200_OK)
-async def run_client_group(benchmark_id: int, payload: RunPayload):
+async def run_client_group(benchmark_id: int):
     """
     Trigger the registered client process to spawn (up to) payload.num_clients internal clients.
     For groups where a single process manages all internal clients, this proxies the /run request.
     """
-    logger.debug(f"Run request for benchmark {benchmark_id}: num_clients={payload.num_clients}")
+    logger.debug(f"Run request for benchmark {benchmark_id}")
     try:
-        results = client_manager.run_client_group(benchmark_id, payload.num_clients)
+        results = client_manager.run_client_group(benchmark_id)
     except ValueError as e:
         logger.warning(f"Run failed for unknown benchmark {benchmark_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

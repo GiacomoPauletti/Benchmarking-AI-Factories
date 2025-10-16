@@ -6,8 +6,11 @@ import sys
 from fastapi import FastAPI
 import uvicorn
 import logging
+import socket
 
 from client_service.api.frontend_router import frontend_router
+from client_service.api.client_router import client_router
+from client_service.api.monitor_router import monitor_router
 from client_service.client_manager.slurm_config import SlurmConfig
 from client_service.client_manager.client_dispatcher import SlurmClientDispatcher
 from client_service.client_manager.client_manager import ClientManager
@@ -25,6 +28,8 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 app.include_router(frontend_router, prefix="/api/v1")
+app.include_router(client_router, prefix="/api/v1")
+app.include_router(monitor_router, prefix="/api/v1")
 
 
 class ClientService:
@@ -34,13 +39,29 @@ class ClientService:
 
 # ======================================== MAIN =========================================
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python main.py <path_to_slurm_config_file>")
+    if len(sys.argv) < 2:
+        logging.fatal("Usage: python main.py <server_addr> [path_to_slurm_config_file]")
         sys.exit(1)
 
-    slurm_config_path = sys.argv[1]
-    SlurmClientDispatcher.slurm_config = SlurmConfig.load_from_file(slurm_config_path)
+    server_addr = sys.argv[1]
+    
+    # Load Slurm configuration
+    if len(sys.argv) >= 3:
+        # Use provided config file
+        slurm_config_path = sys.argv[2]
+        SlurmClientDispatcher.slurm_config = SlurmConfig.load_from_file(slurm_config_path)
+        logging.info(f"Loaded Slurm config from file: {slurm_config_path}")
+    else:
+        # Use auto-detected configuration
+        SlurmClientDispatcher.slurm_config = SlurmConfig.tmp_load_default()
+        logging.info("Using auto-detected Slurm configuration")
 
     #r = requests.post("http://localhost:8001/client-group/71", params={"num_clients": 2})
     
-    uvicorn.run("main:app", host="0.0.0.0", port=8001)
+    CLIENT_SERVICE_IP   = socket.gethostname()
+    CLIENT_SERVICE_PORT = 8001
+
+    client_manager = ClientManager()
+    client_manager.configure(server_addr=server_addr, client_service_addr=f"http://{CLIENT_SERVICE_IP}:{CLIENT_SERVICE_PORT}")
+
+    uvicorn.run("main:app", host=CLIENT_SERVICE_IP, port=CLIENT_SERVICE_PORT)
