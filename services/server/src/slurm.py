@@ -1,13 +1,13 @@
 """
-SLURM job submission and management logic.
-Translates recipes into SLURM scripts and runs with Apptainer via SLURM REST API.
+SLURM job submission and management via SSH tunnel to MeluXina.
+Designed for local Docker development with remote job submission.
 """
 
 import yaml
-import requests
-import json
 import os
 import logging
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, List
 from utils import parse_time_limit
@@ -15,28 +15,31 @@ from datetime import datetime
 
 
 class SlurmDeployer:
-    """Handles SLURM job submission and management for Apptainer workloads via REST API."""
+    """Handles SLURM job submission and management via SSH tunnel to MeluXina.
+    
+    Designed for local development: runs in Docker container on laptop and submits
+    jobs to MeluXina cluster via SSH.
+    """
     
     def __init__(self, account: str = "p200981"):
         self.logger = logging.getLogger(__name__)
         self.account = account
         self.username = os.getenv('USER', 'unknown')
-        self.token = os.getenv('SLURM_JWT')
-        if not self.token:
-            raise RuntimeError("SLURM_JWT environment variable not set")
         
+        # SSH configuration for MeluXina access
+        self.ssh_host = os.getenv('SSH_TUNNEL_HOST', 'login.lxp.lu')
+        self.ssh_user = os.getenv('SSH_TUNNEL_USER')
+        if not self.ssh_user:
+            raise ValueError("SSH_TUNNEL_USER must be set. Check your .env.local file.")
+        
+        self.logger.info(f"Initializing SLURM deployer with SSH tunnel to {self.ssh_user}@{self.ssh_host}")
+        self._setup_ssh_tunnel()
+        
+        # Base path configuration
         env_base_path = os.getenv('SERVER_BASE_PATH')
         self.base_path = Path(env_base_path)
         print(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
         self.logger.debug(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
-
-        
-        self.base_url = "http://slurmrestd.meluxina.lxp.lu:6820/slurm/v0.0.40"
-        self.headers = {
-            'X-SLURM-USER-NAME': self.username,
-            'X-SLURM-USER-TOKEN': self.token,
-            'Content-Type': 'application/json'
-        }
         # Load SLURM state normalization mapping from YAML file in server folder
         try:
             map_path = self.base_path / 'src' / 'mappings' / 'slurm_state_map.yaml'
@@ -51,45 +54,137 @@ class SlurmDeployer:
         except Exception:
             self._state_map = {}
     
+    def _setup_ssh_tunnel(self):
+        """Establish and test SSH connection to MeluXina for tunnel mode."""
+        try:
+            result = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                 f"{self.ssh_user}@{self.ssh_host}", "echo", "SSH connection test"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                self.logger.info(f"SSH connection to {self.ssh_user}@{self.ssh_host} established successfully")
+            else:
+                raise ConnectionError(f"SSH connection failed: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            raise ConnectionError(f"SSH connection to {self.ssh_host} timed out")
+        except Exception as e:
+            self.logger.error(f"Failed to establish SSH tunnel: {e}")
+            raise
+    
+    def _execute_remote_command(self, command: str, timeout: int = 30) -> str:
+        """Execute command on MeluXina via SSH.
+        
+        Args:
+            command: Shell command to execute on MeluXina
+            timeout: Command timeout in seconds
+            
+        Returns:
+            Command stdout output
+            
+        Raises:
+            RuntimeError: If command execution fails
+        """
+        ssh_command = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            f"{self.ssh_user}@{self.ssh_host}",
+            command
+        ]
+        try:
+            result = subprocess.run(
+                ssh_command,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Remote command failed: {result.stderr}")
+            return result.stdout
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Remote command timed out after {timeout}s")
+    
+    def _submit_job_via_ssh(self, job_script: str) -> str:
+        """Submit SLURM job via SSH by writing script to remote temp file and calling sbatch.
+        
+        Args:
+            job_script: Complete SLURM batch script content
+            
+        Returns:
+            SLURM job ID
+        """
+        try:
+            # Create temp file for job script
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as tmp:
+                tmp.write(job_script)
+                local_script = tmp.name
+            
+            # Generate remote temp path
+            remote_script = f"/tmp/slurm_job_{os.path.basename(local_script)}"
+            
+            # Copy script to remote
+            scp_command = [
+                "scp",
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=10",
+                local_script,
+                f"{self.ssh_user}@{self.ssh_host}:{remote_script}"
+            ]
+            
+            result = subprocess.run(scp_command, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to copy script to remote: {result.stderr}")
+            
+            # Submit job via sbatch
+            output = self._execute_remote_command(f"sbatch {remote_script}", timeout=30)
+            
+            # Clean up remote script
+            try:
+                self._execute_remote_command(f"rm -f {remote_script}", timeout=10)
+            except:
+                pass  # Best effort cleanup
+            
+            # Clean up local temp file
+            try:
+                os.unlink(local_script)
+            except:
+                pass
+            
+            # Parse job ID from sbatch output (format: "Submitted batch job 12345")
+            if "Submitted batch job" in output:
+                job_id = output.strip().split()[-1]
+                self.logger.info(f"Job submitted via SSH tunnel: {job_id}")
+                return job_id
+            else:
+                raise RuntimeError(f"Unexpected sbatch output: {output}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to submit job via SSH: {e}")
+            raise RuntimeError(f"SSH job submission failed: {str(e)}")
+    
     def submit_job(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Submit a job to SLURM cluster using recipe configuration."""
+        """Submit a job to MeluXina SLURM cluster via SSH.
+        
+        Generates a complete SLURM batch script and submits it via sbatch over SSH.
+        """
         # Load recipe
         recipe_path = self._find_recipe(recipe_name)
         with open(recipe_path, 'r') as f:
             recipe = yaml.safe_load(f)
         
-        # Generate and submit job
+        # Generate job payload and script
         job_payload = self._create_job_payload(recipe, config or {}, recipe_name, recipe_path)
+        job_script = self._create_standalone_script(job_payload, recipe)
         
-        # Debug: print the payload
-        print("Submitting job payload:")
-        print(json.dumps(job_payload, indent=2))
-        
-        response = requests.post(
-            f"{self.base_url}/job/submit", 
-            headers=self.headers, 
-            json=job_payload
-        )
-        
-        # Debug: print the response for troubleshooting
-        print(f"SLURM API Response Status: {response.status_code}")
-        print(f"SLURM API Response Body: {response.text}")
-        
-        response.raise_for_status()
-        
-        result = response.json()
-        if result.get('errors'):
-            raise RuntimeError(f"SLURM API errors: {result['errors']}")
-        
-        # Return job information directly from SLURM response
-        job_id = result.get('job_id', 0)
-        
-        # Validate that we got a valid job ID
-        if job_id == 0:
-            raise RuntimeError(f"SLURM job submission failed: received job_id=0. Response: {result}")
+        # Submit job via SSH
+        self.logger.info(f"Submitting job '{recipe['name']}' to MeluXina via SSH")
+        job_id = self._submit_job_via_ssh(job_script)
         
         return {
-            "id": str(job_id),  # Use SLURM job ID directly as service ID
+            "id": str(job_id),
             "name": f"{recipe['name']}-{job_id}",
             "recipe_name": recipe_name,
             "status": "pending",
@@ -98,49 +193,57 @@ class SlurmDeployer:
         }
     
     def cancel_job(self, job_id: str) -> bool:
-        """Cancel a running SLURM job by job ID."""
+        """Cancel a running SLURM job by job ID via SSH."""
         try:
-            response = requests.delete(
-                f"{self.base_url}/job/{job_id}", 
-                headers=self.headers
-            )
-            response.raise_for_status()
+            self._execute_remote_command(f"scancel {job_id}", timeout=10)
+            self.logger.info(f"Cancelled job {job_id}")
             return True
-        except:
+        except Exception as e:
+            self.logger.error(f"Failed to cancel job {job_id}: {e}")
             return False
     
     def get_job_status(self, job_id: str) -> str:
-        """Get the status of a SLURM job by job ID, always checking logs for more detailed status if running."""
+        """Get the status of a SLURM job by job ID via SSH, with detailed status from logs if running."""
         try:
-            response = requests.get(
-                f"{self.base_url}/job/{job_id}",
-                headers=self.headers,
-                timeout=5
+            # Use squeue to get job state
+            output = self._execute_remote_command(
+                f"squeue -j {job_id} -h -o '%T'",
+                timeout=10
             )
-            if response.status_code == 200:
-                result = response.json()
-                jobs = result.get('jobs', [])
-                if jobs:
-                    job = jobs[0]
-                    job_state = job.get('job_state', '')
-                    if isinstance(job_state, list):
-                        status = job_state[0].lower() if job_state else 'unknown'
-                    elif isinstance(job_state, str):
-                        status = job_state.lower()
-                    else:
-                        status = str(job_state).lower()
-                    basic_status = self._normalize_slurm_state(status)
-                    if basic_status != 'running':
-                        return basic_status
-                    # If running, check logs for more detail
-                    try:
-                        return self._get_detailed_status_from_logs(job_id)
-                    except Exception as e:
-                        self.logger.error(f"Error parsing logs for detailed status of job {job_id}: {e}")
-                        return 'running'
-            return "completed"
+            
+            if output.strip():
+                # Job found in queue
+                status = output.strip().lower()
+                basic_status = self._normalize_slurm_state(status)
+                
+                if basic_status != 'running':
+                    return basic_status
+                    
+                # If running, check logs for more detail
+                try:
+                    return self._get_detailed_status_from_logs(job_id)
+                except Exception as e:
+                    self.logger.error(f"Error parsing logs for detailed status of job {job_id}: {e}")
+                    return 'running'
+            else:
+                # Job not in queue - check if it completed or failed
+                # Use sacct to check job history
+                try:
+                    output = self._execute_remote_command(
+                        f"sacct -j {job_id} -n -o state -X",
+                        timeout=10
+                    )
+                    if output.strip():
+                        status = output.strip().lower()
+                        return self._normalize_slurm_state(status)
+                except:
+                    pass
+                
+                return "completed"
+                
         except Exception as e:
-            raise RuntimeError(f"Failed to get job status from SLURM API: {str(e)}")
+            self.logger.error(f"Failed to get job status for {job_id}: {e}")
+            raise RuntimeError(f"Failed to get job status: {str(e)}")
     
     def _get_detailed_status_from_logs(self, job_id: str) -> str:
         """Parse job logs to determine detailed status for running jobs.
@@ -180,56 +283,39 @@ class SlurmDeployer:
         return 'starting'
     
     def list_jobs(self, user_filter: str = None) -> list:
-        """List all jobs from SLURM cluster, optionally filtered by user."""
+        """List all jobs from SLURM cluster via SSH, optionally filtered by user."""
         try:
-            # Use the /jobs endpoint to get all jobs
-            params = {}
-            if user_filter:
-                # Note: The official API may not support user filtering directly
-                # but we can filter the results after getting them
-                pass
-            
-            response = requests.get(
-                f"{self.base_url}/jobs", 
-                headers=self.headers,
-                params=params,
-                timeout=10
+            # Use squeue to get all jobs for the user
+            user = user_filter or self.ssh_user
+            output = self._execute_remote_command(
+                f"squeue -u {user} -h -o '%i|%j|%T|%a|%P|%D|%u'",
+                timeout=15
             )
-            response.raise_for_status()
             
-            result = response.json()
-            jobs = result.get('jobs', [])
-            
-            # Filter to current user's jobs and convert to our format
             user_jobs = []
-            for job in jobs:
-                # Only include jobs belonging to the current user
-                job_user = job.get('user_name', '')
-                if not user_filter or job_user == self.username:
-                    
-                    job_state = job.get('job_state', ['unknown'])
-                    if isinstance(job_state, list):
-                        status = job_state[0].lower() if job_state else 'unknown'
-                    else:
-                        status = str(job_state).lower()
-                    
-                    user_jobs.append({
-                        "id": str(job.get('job_id', 0)),  # Use SLURM job ID directly as service ID
-                        "name": job.get('name', 'unnamed'),
-                        "status": self._normalize_slurm_state(status),
-                        "account": job.get('account', ''),
-                        "partition": job.get('partition', ''),
-                        "nodes": job.get('node_count', {}).get('number', 0) if isinstance(job.get('node_count'), dict) else job.get('node_count', 0),
-                        "user": job_user,
-                        "recipe_name": "unknown",  # SLURM doesn't store this, could be extracted from job name
-                        "config": {},  # SLURM doesn't store this
-                        "created_at": "unknown"  # Could be extracted from submit_time if available
-                    })
+            if output.strip():
+                for line in output.strip().split('\n'):
+                    parts = line.split('|')
+                    if len(parts) >= 7:
+                        job_id, name, state, account, partition, nodes, job_user = parts
+                        user_jobs.append({
+                            "id": job_id.strip(),
+                            "name": name.strip(),
+                            "status": self._normalize_slurm_state(state.strip()),
+                            "account": account.strip(),
+                            "partition": partition.strip(),
+                            "nodes": int(nodes.strip()) if nodes.strip().isdigit() else 0,
+                            "user": job_user.strip(),
+                            "recipe_name": "unknown",  # Could parse from job name
+                            "config": {},
+                            "created_at": "unknown"
+                        })
             
             return user_jobs
             
         except Exception as e:
-            raise RuntimeError(f"Failed to list jobs from SLURM API: {str(e)}")
+            self.logger.error(f"Failed to list jobs: {e}")
+            raise RuntimeError(f"Failed to list jobs: {str(e)}")
 
     def _normalize_slurm_state(self, raw_state: str) -> str:
         """Normalize a raw SLURM state string using the loaded YAML mapping.
@@ -313,74 +399,62 @@ class SlurmDeployer:
             return f"Error retrieving logs for job {job_id}: {str(e)}"
     
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
-        """Get detailed information about a SLURM job including allocated nodes."""
+        """Get detailed information about a SLURM job including allocated nodes via SSH."""
         try:
-            response = requests.get(
-                f"{self.base_url}/job/{job_id}",
-                headers=self.headers,
+            # Use squeue to get detailed job information
+            output = self._execute_remote_command(
+                f"squeue -j {job_id} -h -o '%i|%j|%T|%a|%P|%D|%N'",
                 timeout=10
             )
             
-            if response.status_code == 200:
-                result = response.json()
-                # DEBUG: emit raw job JSON for troubleshooting allocated node fields
-                try:
-                    import logging
-                    logging.getLogger(__name__).debug("SLURM raw job response for %s: %s", job_id, json.dumps(result))
-                except Exception:
-                    pass
-                jobs = result.get('jobs', [])
-                if jobs:
-                    job = jobs[0]
-
-                    allocated_nodes: List[str] = []
-
-                    # Candidate string fields that may contain compact node lists
-                    node_str = job.get('nodes') or job.get('node_list')
-                    if not node_str:
-                        jr = job.get('job_resources', {}) if isinstance(job.get('job_resources', {}), dict) else job.get('job_resources')
-                        if isinstance(jr, dict):
-                            node_str = jr.get('nodes') or jr.get('node_list')
-
-                    if node_str:
-                        # Parse compact string formats like 'mel2141' or 'mel[2001-2003]'
+            if output.strip():
+                parts = output.strip().split('|')
+                if len(parts) >= 7:
+                    job_id, name, state, account, partition, node_count, node_list = parts
+                    
+                    # Parse node list
+                    allocated_nodes = []
+                    if node_list.strip():
                         try:
-                            allocated_nodes = self._parse_node_list(str(node_str))
+                            allocated_nodes = self._parse_node_list(node_list.strip())
                         except Exception:
-                            allocated_nodes = [str(node_str)]
-                    else:
-                        # Try allocated_nodes structure under job_resources
-                        jr = job.get('job_resources', {}) or {}
-                        alloc_list = jr.get('allocated_nodes') or jr.get('allocated_hosts')
-                        if isinstance(alloc_list, list) and alloc_list:
-                            for item in alloc_list:
-                                if isinstance(item, dict):
-                                    # Common key is 'nodename' in this cluster
-                                    nodename = item.get('nodename') or item.get('nodename')
-                                    if nodename:
-                                        allocated_nodes.append(str(nodename))
-                                elif isinstance(item, str):
-                                    allocated_nodes.append(item)
-
-                    # Final fallback: allocating_node or batch_host may contain a node name
-                    if not allocated_nodes:
-                        allocating = job.get('allocating_node') or job.get('batch_host')
-                        if allocating:
-                            allocated_nodes = [str(allocating)]
-
+                            allocated_nodes = [node_list.strip()]
+                    
                     return {
-                        "id": str(job.get('job_id', 0)),
-                        "name": job.get('name', ''),
-                        "state": job.get('job_state', 'unknown'),
+                        "id": job_id.strip(),
+                        "name": name.strip(),
+                        "state": state.strip(),
                         "nodes": allocated_nodes,
-                        "node_count": job.get('node_count', 0),
-                        "partition": job.get('partition', ''),
-                        "account": job.get('account', '')
+                        "node_count": int(node_count.strip()) if node_count.strip().isdigit() else 0,
+                        "partition": partition.strip(),
+                        "account": account.strip()
                     }
+            
+            # Job not in queue, try sacct
+            try:
+                output = self._execute_remote_command(
+                    f"sacct -j {job_id} -n -o jobid,jobname,state,account,partition,nnodes,nodelist -X",
+                    timeout=10
+                )
+                if output.strip():
+                    parts = output.strip().split()
+                    if len(parts) >= 7:
+                        return {
+                            "id": parts[0],
+                            "name": parts[1],
+                            "state": parts[2],
+                            "account": parts[3],
+                            "partition": parts[4],
+                            "node_count": int(parts[5]) if parts[5].isdigit() else 0,
+                            "nodes": self._parse_node_list(parts[6]) if len(parts) > 6 else []
+                        }
+            except:
+                pass
             
             return {}
             
         except Exception as e:
+            self.logger.error(f"Failed to get job details for {job_id}: {e}")
             raise RuntimeError(f"Failed to get job details: {str(e)}")
     
     def _parse_node_list(self, node_list: str) -> List[str]:
@@ -467,6 +541,37 @@ class SlurmDeployer:
             #"script": "#!/bin/bash\necho Hello World",
             "job": job_desc
         }
+    
+    def _create_standalone_script(self, job_payload: Dict[str, Any], recipe: Dict[str, Any]) -> str:
+        """Create a complete SLURM batch script from job payload for SSH submission.
+        
+        Combines SLURM directives from job_payload['job'] with the script content.
+        """
+        job_desc = job_payload['job']
+        script_content = job_payload['script']
+        
+        # Build SLURM directives
+        directives = [
+            "#!/bin/bash -l",
+            f"#SBATCH --account={job_desc['account']}",
+            f"#SBATCH --qos={job_desc.get('qos', 'short')}",
+            f"#SBATCH --time={job_desc['time_limit']}",
+            f"#SBATCH --job-name={job_desc['name']}",
+            f"#SBATCH --nodes={job_desc['nodes']}",
+            f"#SBATCH --cpus-per-task={job_desc['cpus_per_task']}",
+            f"#SBATCH --mem-per-cpu={job_desc['memory_per_cpu']}",
+            f"#SBATCH --partition={job_desc['partition']}",
+            f"#SBATCH --output={job_desc['standard_output']}",
+            f"#SBATCH --error={job_desc['standard_error']}",
+        ]
+        
+        # Add working directory if specified
+        if 'current_working_directory' in job_desc:
+            directives.append(f"#SBATCH --chdir={job_desc['current_working_directory']}")
+        
+        # Combine directives with script content
+        full_script = "\n".join(directives) + "\n\n" + script_content
+        return full_script
     
     def _create_script(self, recipe: Dict[str, Any], recipe_path: Path, merged_env: Dict[str, str] = None, merged_resources: Dict[str, Any] = None) -> str:
         """Generate the SLURM job script by composing smaller parts."""
