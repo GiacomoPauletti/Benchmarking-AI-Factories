@@ -93,4 +93,4 @@ if __name__ == "__main__":
 
     # Start the FastAPI server
     logging.info(f"Starting FastAPI server on port 8080 for benchmark {benchmark_id}")
-    uvicorn.run(app, host=local_ip, port=8080)
+    uvicorn.run(app, host=local_ip, port=8080) # type: ignore
