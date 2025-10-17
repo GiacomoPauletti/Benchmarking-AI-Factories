@@ -1,7 +1,7 @@
 import requests
 import json
 
-from client_service.client_manager.slurm_config import SlurmConfig
+from client_service.deployment.slurm_config import SlurmConfig
 
 import logging
 
@@ -42,7 +42,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
                 'X-SLURM-USER-TOKEN': f'{self.slurm_config.token}'
             },
             json={
-                'script': f"""#!/bin/bash -l\nmodule load env/release/2023.1\npython3 -m client.main {num_clients} {self._server_addr} {self._client_service_addr} {benchmark_id}\n""",
+                'script': f"""#!/bin/bash -l\n ./client_service/deployment/start_client.sh {num_clients} {self._server_addr} {self._client_service_addr} {benchmark_id}\n""",
                 'job': {
                     'qos': 'default',
                     'time_limit': time,

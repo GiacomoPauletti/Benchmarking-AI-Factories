@@ -11,8 +11,8 @@ import socket
 from client_service.api.frontend_router import frontend_router
 from client_service.api.client_router import client_router
 from client_service.api.monitor_router import monitor_router
-from client_service.client_manager.slurm_config import SlurmConfig
-from client_service.client_manager.client_dispatcher import SlurmClientDispatcher
+from client_service.deployment.slurm_config import SlurmConfig
+from client_service.deployment.client_dispatcher import SlurmClientDispatcher
 from client_service.client_manager.client_manager import ClientManager
 
 # =================================== LOGGING CONFIG ====================================

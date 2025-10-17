@@ -1,4 +1,4 @@
-from .client_dispatcher import AbstractClientDispatcher, SlurmClientDispatcher
+from client_service.deployment.client_dispatcher import AbstractClientDispatcher, SlurmClientDispatcher
 import time as time_module
 import logging
 from typing import Optional
