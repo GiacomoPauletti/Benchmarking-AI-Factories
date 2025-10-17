@@ -27,9 +27,22 @@ RUN chmod 700 /root/.ssh
 # Expose FastAPI port
 EXPOSE 8001
 
+# Set PYTHONPATH so imports work correctly
+ENV PYTHONPATH=/app/src
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8001/health || exit 1
 
-# Run the FastAPI application
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+# Run the FastAPI application with SSH key setup in CMD
+CMD ["/bin/bash", "-c", "\
+if [ -d /tmp/host-ssh ]; then \
+  echo 'Setting up SSH keys...'; \
+  cp /tmp/host-ssh/id_* /root/.ssh/ 2>/dev/null || true; \
+  cp /tmp/host-ssh/known_hosts /root/.ssh/ 2>/dev/null || true; \
+  chmod 700 /root/.ssh; \
+  chmod 600 /root/.ssh/id_* 2>/dev/null || true; \
+  chmod 644 /root/.ssh/*.pub 2>/dev/null || true; \
+  echo 'SSH keys ready'; \
+fi && \
+exec uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload"]

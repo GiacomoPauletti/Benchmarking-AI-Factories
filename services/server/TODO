@@ -4,7 +4,6 @@ DOCS:
 - Document Server better.
 - Create diagram showcasing CI (testing) pipeline.
 OTHER:
-- ✓ COMPLETED: Run server locally with Docker + SSH tunnel to MeluXina for job submission.
 - Test multi-node vllm.
 - Create HF auth mechanism.
 - Create vec-db mechanism. Separate vllm and vec-db logic from slurm deployer logic?

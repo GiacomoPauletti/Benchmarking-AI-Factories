@@ -284,7 +284,13 @@ class ServerService:
 
     def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Try to send prompt using chat completions endpoint."""
-        url = f"{endpoint}/v1/chat/completions"
+        # Parse endpoint URL (e.g., "http://mel2079:8001")
+        from urllib.parse import urlparse
+        parsed = urlparse(endpoint)
+        remote_host = parsed.hostname
+        remote_port = parsed.port or 8001
+        path = "/v1/chat/completions"
+        
         request_data = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -293,19 +299,41 @@ class ServerService:
             "stream": False
         }
         
-        self.logger.debug("Trying chat endpoint: %s", url)
-        response = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json=request_data,
+        self.logger.debug("Trying chat endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
+        
+        # Use SSH to make the HTTP request
+        ssh_manager = self.deployer.ssh_manager
+        success, status_code, body = ssh_manager.http_request_via_ssh(
+            remote_host=remote_host,
+            remote_port=remote_port,
+            method="POST",
+            path=path,
+            json_data=request_data,
             timeout=30
         )
         
-        return response
+        # Create a mock response object that matches requests.Response interface
+        class MockResponse:
+            def __init__(self, status_code, text, ok):
+                self.status_code = status_code
+                self.text = text
+                self.ok = ok
+            
+            def json(self):
+                import json
+                return json.loads(self.text)
+        
+        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
 
     def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Try to send prompt using completions endpoint (for base models)."""
-        url = f"{endpoint}/v1/completions"
+        # Parse endpoint URL (e.g., "http://mel2079:8001")
+        from urllib.parse import urlparse
+        parsed = urlparse(endpoint)
+        remote_host = parsed.hostname
+        remote_port = parsed.port or 8001
+        path = "/v1/completions"
+        
         request_data = {
             "model": model,
             "prompt": prompt,
@@ -314,15 +342,31 @@ class ServerService:
             "stream": False
         }
         
-        self.logger.debug("Trying completions endpoint: %s", url)
-        response = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json=request_data,
+        self.logger.debug("Trying completions endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
+        
+        # Use SSH to make the HTTP request
+        ssh_manager = self.deployer.ssh_manager
+        success, status_code, body = ssh_manager.http_request_via_ssh(
+            remote_host=remote_host,
+            remote_port=remote_port,
+            method="POST",
+            path=path,
+            json_data=request_data,
             timeout=30
         )
         
-        return response
+        # Create a mock response object that matches requests.Response interface
+        class MockResponse:
+            def __init__(self, status_code, text, ok):
+                self.status_code = status_code
+                self.text = text
+                self.ok = ok
+            
+            def json(self):
+                import json
+                return json.loads(self.text)
+        
+        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
 
     def _parse_chat_response(self, response: requests.Response, endpoint: str, service_id: str) -> Dict[str, Any]:
         """Parse response from chat completions endpoint."""

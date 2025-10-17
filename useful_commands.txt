@@ -7,24 +7,44 @@ git push origin feature/server/new-feature-name
 gh pr create --title "Add new server feature" --body "Description" --base feature/server-dev
 
 
-#### RUN TESTS ####
-cd "$HOME/Benchmarking-AI-Factories" && ./services/server/run-tests.sh
+#### SETUP ####
 
-#### ENDPOINTS Testing ####
-# Generate docs
-ssh -L 8001:mel0533:8001 $USER@login03
+#### RUN SERVER LOCALLY ####
+# Option 1: Use launcher script 
+~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/launch_local.sh
+
+# Option 2: Direct docker compose (from project root)
+cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
+docker compose up server
+
+# use the shell script
+~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/server-shell.sh
+
+#### RUN TESTS ####
+# Run all tests in Docker container (fast, local)
+cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
+./services/server/run-tests.sh
+
+# Or manually run specific tests
+docker compose exec server pip install pytest pytest-mock
+docker compose exec server python -m pytest tests/test_api.py -v          # Unit tests only
+docker compose exec server python -m pytest tests/test_integration.py -v  # Integration tests
+docker compose exec server python -m pytest tests/ -v                     # All tests
+
+#### API TESTING (Local Server) ####
+# Server runs on http://localhost:8001
+
+# Interactive API docs
 http://localhost:8001/docs
+
+# Alternative docs
 http://localhost:8001/redoc
+
+# Export OpenAPI spec
+cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
 python3 services/server/tools/export_openapi_html.py
 
-# Remove existing container if rebuild is wanted
-# Remove existing containers and rebuild server
-cd "$HOME/Benchmarking-AI-Factories/services/server" && rm -f server.sif && cd "$HOME/Benchmarking-AI-Factories" && ./services/server/launch_server.sh
-
-cd "$HOME/Benchmarking-AI-Factories" && ./services/server/launch_server.sh
-
-cd "$HOME/Benchmarking-AI-Factories" && ./services/server/server-shell.sh
-
+#### CLIENT CLI COMMANDS ####
 # Create vLLM with DEFAULT model (Qwen/Qwen2.5-0.5B-Instruct)
 create inference/vllm
 
@@ -32,13 +52,14 @@ create inference/vllm
 vllm list
 
 # Check which models are loaded in a service
-vllm models 3643966
+vllm models 3652057
 
 # Send prompts 
-prompt 3643982 'Tell me a joke about programming'
+prompt 3652098 'Tell me a joke about programming'
 
+#### API CURL EXAMPLES ####
 # Create vLLM with custom model AND custom resources
-curl -X POST http://mel0378:8001/api/v1/services \
+curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "recipe_name": "inference/vllm",
@@ -57,7 +78,7 @@ curl -X POST http://mel0378:8001/api/v1/services \
   }'
 
 # Create vLLM service with CUSTOM model (using API, with ALL options explicitly set)
-curl -X POST http://mel0015:8001/api/v1/services \
+curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "recipe_name": "inference/vllm",
@@ -82,7 +103,7 @@ curl -X POST http://mel0015:8001/api/v1/services \
   }'
 
 # Create CPU-only vLLM (no GPU)
-curl -X POST http://mel0015:8001/api/v1/services \
+curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
     "recipe_name": "inference/vllm",
