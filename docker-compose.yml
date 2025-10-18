@@ -29,7 +29,8 @@ services:
     # Load additional service-specific variables
     env_file:
       - .env
-    network_mode: host
+    networks: 
+      - ai-factory
     stdin_open: true
     tty: true
     restart: unless-stopped
@@ -87,27 +88,23 @@ services:
       dockerfile: Dockerfile
     container_name: prometheus
     ports:
-      - "9090:9090"  # Expose Prometheus UI on port 9090
+      - "9090:9090"
     volumes:
       - prometheus-storage:/prometheus
     networks:
       - ai-factory
     restart: unless-stopped
 
-  
   loki:
     image: grafana/loki:2.8.0
     container_name: loki
     ports:
-      - "3100:3100"  # Expose Loki web UI on port 3100
+      - "3100:3100"
     volumes:
-      - ./services/loki/config.yaml:/etc/loki/loki.yaml  # Mount Loki config
-      - ./logs:/var/log  # Optional: Mount host log directory to access logs
+      - loki-storage:/loki
     networks:
       - ai-factory
     restart: unless-stopped
-    command:
-      - "-config.file=/etc/loki/loki.yaml"
 
   # Documentation service
   docs:
