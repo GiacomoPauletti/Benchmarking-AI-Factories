@@ -41,20 +41,73 @@ services:
   #     dockerfile: Dockerfile
   #   container_name: benchmarking-ai-client
   #   ...
-  
+
   # monitoring:
   #   build:
   #     context: ./services/monitoring
   #     dockerfile: Dockerfile
-  #   container_name: benchmarking-ai-monitoring
-  #   ...
+  #   ports:
+  #     - "8003:8003"
+  #   environment:
+  #     - SERVER_URL=http://server-service:8001
+  #     - CLIENT_URL=http://client-service:8002
+  #   volumes:
+  #     - ./services/monitoring/src:/app/src
+  #     - ./logs:/app/logs
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - server-service
+  #     - client-service
+
+  # Logs
+
+  # Front-end
+  grafana:
+    build:
+      context: ./services/grafana
+      dockerfile: Dockerfile
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    restart: unless-stopped
+    networks:
+      - ai-factory
+    depends_on:
+      - prometheus
+      - loki
   
-  # logs:
-  #   build:
-  #     context: ./services/logs
-  #     dockerfile: Dockerfile
-  #   container_name: benchmarking-ai-logs
-  #   ...
+  prometheus:
+    build:
+      context: ./services/prometheus
+      dockerfile: Dockerfile
+    container_name: prometheus
+    ports:
+      - "9090:9090"  # Expose Prometheus UI on port 9090
+    volumes:
+      - prometheus-storage:/prometheus
+    networks:
+      - ai-factory
+    restart: unless-stopped
+
+  
+  loki:
+    image: grafana/loki:2.8.0
+    container_name: loki
+    ports:
+      - "3100:3100"  # Expose Loki web UI on port 3100
+    volumes:
+      - ./services/loki/config.yaml:/etc/loki/loki.yaml  # Mount Loki config
+      - ./logs:/var/log  # Optional: Mount host log directory to access logs
+    networks:
+      - ai-factory
+    restart: unless-stopped
+    command:
+      - "-config.file=/etc/loki/loki.yaml"
 
   # Documentation service
   docs:
@@ -73,3 +126,18 @@ services:
     working_dir: /
     command: mkdocs serve --dev-addr=0.0.0.0:8000
     restart: unless-stopped
+
+networks:
+  ai-factory:
+    name: ai-factory-network
+
+volumes:
+  grafana-storage:
+    driver: local
+    name: grafana-storage
+  prometheus-storage:
+    driver: local
+    name: prometheus-storage
+  loki-storage:
+    driver: local
+    name: loki-storage
