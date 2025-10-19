@@ -1,66 +1,76 @@
 #!/bin/bash
-# Build and run the test container
+# Run tests in isolated Docker test environment
+# This uses docker-compose.test.yml for a clean test environment
 
 set -e
 
-echo "Building AI Factory Test Container"
-echo "====================================="
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Get the directory where the script is located (must be done BEFORE salloc)
-SERVER_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# Navigate to the test directory
-cd "${SERVER_BASE_DIR}/tests"
+echo -e "${GREEN}Running Server Tests (Isolated Test Container)${NC}"
+echo "================================================"
+echo ""
 
-# Request resources 
-salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=8G << EOF
-
-module load env/release/2023.1
-module load Apptainer/1.2.4-GCCcore-12.3.0 || { echo "ERROR: Apptainer module not available"; exit 1; }
-    
-# Build the container
-echo "Building test container..."
-if apptainer build --fakeroot --force test-container.sif test-container.def; then
-    echo "Container built successfully"
-else
-    echo "Container build failed"
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+    echo -e "${RED}Error: Docker is not running${NC}"
+    echo "Please start Docker Desktop or Docker daemon"
     exit 1
 fi
 
-# Navigate back to project root (from tests/ directory, go up 3 levels: tests -> server -> services -> root)
-cd ../../..
+# Navigate to project root
+cd "$PROJECT_ROOT"
 
-# Debug: Show current directory and files
-echo "Current directory: $(pwd)"
-echo "Looking for container at: $(pwd)/services/server/tests/test-container.sif"
-ls -la services/server/tests/test-container.sif
+# Cleanup function to remove test container
+cleanup() {
+    echo ""
+    echo -e "${YELLOW}Cleaning up test container...${NC}"
+    docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+}
+
+# Set trap to cleanup on exit
+trap cleanup EXIT INT TERM
+
+# Clean up any existing test containers
+echo -e "${YELLOW}Cleaning up old test containers...${NC}"
+docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+
+# Build and run tests in isolated container
+echo ""
+echo -e "${GREEN}Building test container...${NC}"
+docker compose -f docker-compose.test.yml build
 
 echo ""
-echo "Running Tests in Container"
-echo "============================="
+echo -e "${GREEN}Running tests...${NC}"
+echo "=================="
 
+# Run tests and capture exit code
+if docker compose -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from server-test; then
+    TEST_STATUS=0
+else
+    TEST_STATUS=$?
+fi
 
-# Get SLURM JWT token on the compute node
-echo "Getting SLURM JWT token..."
-export SLURM_JWT=\$(scontrol token | grep SLURM_JWT | cut -d= -f2)
-echo "Token obtained: \${SLURM_JWT:0:20}..."
+# Cleanup happens automatically via trap
 
-# Run the container with project directory bound to /app and pass environment variables
-if apptainer run \\
-    --env SLURM_JWT="\${SLURM_JWT}" \\
-    --env SERVER_BASE_PATH="${SERVER_BASE_DIR}" \\
-    --bind "\$(pwd):/app" \\
-    services/server/tests/test-container.sif; then
+if [ $TEST_STATUS -eq 0 ]; then
     echo ""
-    echo "All tests passed!"
+    echo -e "${GREEN}✓ All tests passed!${NC}"
     echo ""
-    echo "You can now push your changes to your feature branch and create a pull request."
+    echo "Next steps:"
+    echo "  • Commit your changes: git commit -am 'Your message'"
+    echo "  • Push to your branch: git push"
+    echo "  • Create a pull request on GitHub"
+    exit 0
 else
     echo ""
-    echo "Tests failed!"
-    echo ""
+    echo -e "${RED}✗ Tests failed!${NC}"
     echo "Check the output above for details."
     exit 1
 fi
-
-EOF

@@ -1,6 +1,6 @@
 """
-SLURM job submission and management logic.
-Translates recipes into SLURM scripts and runs with Apptainer via SLURM REST API.
+SLURM job submission and management via REST API with SSH tunnel to MeluXina.
+Designed for local Docker development with remote job submission using SLURM REST API.
 """
 
 import yaml
@@ -12,34 +12,84 @@ from pathlib import Path
 from typing import Dict, Any, List
 from utils import parse_time_limit
 from datetime import datetime
+from ssh_manager import SSHManager
 
 
 class SlurmDeployer:
-    """Handles SLURM job submission and management for Apptainer workloads via REST API."""
+    """Handles SLURM job submission and management via REST API over SSH tunnel.
+    
+    Designed for local development: runs in Docker container on laptop and submits
+    jobs to MeluXina cluster via SLURM REST API through an SSH tunnel.
+    """
     
     def __init__(self, account: str = "p200981"):
         self.logger = logging.getLogger(__name__)
         self.account = account
-        self.username = os.getenv('USER', 'unknown')
+        
+        # Initialize SSH manager for all remote operations
+        self.ssh_manager = SSHManager()
+        self.ssh_user = self.ssh_manager.ssh_user
+        self.ssh_host = self.ssh_manager.ssh_host
+        
+        # Use SSH_USER as the username for SLURM operations
+        self.username = self.ssh_user
+        
+        # Get or fetch SLURM JWT token
         self.token = os.getenv('SLURM_JWT')
         if not self.token:
-            raise RuntimeError("SLURM_JWT environment variable not set")
+            self.logger.info("SLURM_JWT not set, fetching fresh token from MeluXina...")
+            try:
+                self.token = self.ssh_manager.get_slurm_token()
+            except Exception as e:
+                raise RuntimeError(f"Failed to fetch SLURM token: {e}")
+        else:
+            self.logger.info("Using SLURM_JWT from environment")
         
-        env_base_path = os.getenv('SERVER_BASE_PATH')
-        self.base_path = Path(env_base_path)
-        print(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
-        self.logger.debug(f"Using SERVER_BASE_PATH from environment: {self.base_path}")
-
+        self.logger.info(f"Initializing SLURM deployer with REST API via SSH tunnel to {self.ssh_user}@{self.ssh_host}")
         
-        self.base_url = "http://slurmrestd.meluxina.lxp.lu:6820/slurm/v0.0.40"
+        # Setup SSH tunnel for SLURM REST API
+        self.rest_api_port = self.ssh_manager.setup_slurm_rest_tunnel()
+        
+        # Base path configuration
+        # LOCAL_BASE_PATH: Where recipes/configs are stored locally (in Docker container)
+        # REMOTE_BASE_PATH: Where recipes/logs will be stored on MeluXina
+        self.local_base_path = Path(os.getenv('LOCAL_BASE_PATH', '/app'))
+        
+        # Get remote base path from env (required)
+        self.remote_base_path = os.getenv('REMOTE_BASE_PATH')
+        if not self.remote_base_path:
+            # REMOTE_BASE_PATH is required for remote operations; fail fast
+            raise RuntimeError(
+                "REMOTE_BASE_PATH environment variable is required but not set. "
+                "Please set REMOTE_BASE_PATH to the remote base path on MeluXina."
+            )
+        else:
+            self.logger.info(f"Using REMOTE_BASE_PATH: {self.remote_base_path}")
+        
+        # Ensure remote directories exist
+        try:
+            self.ssh_manager.ensure_remote_directories(self.remote_base_path)
+        except Exception as e:
+            self.logger.warning(f"Could not ensure remote directories: {e}")
+            
+        print(f"Local base path (for recipes): {self.local_base_path}")
+        print(f"Remote base path (for SLURM jobs): {self.remote_base_path}")
+        self.logger.debug(f"Local: {self.local_base_path}, Remote: {self.remote_base_path}")
+        
+        # SLURM REST API configuration (via SSH tunnel)
+        self.base_url = f"http://localhost:{self.rest_api_port}/slurm/v0.0.40"
         self.headers = {
             'X-SLURM-USER-NAME': self.username,
             'X-SLURM-USER-TOKEN': self.token,
             'Content-Type': 'application/json'
         }
+        
+        self.logger.info(f"SLURM REST API: {self.base_url}")
+        self.logger.info(f"Authenticating as user: {self.username}")
+        
         # Load SLURM state normalization mapping from YAML file in server folder
         try:
-            map_path = self.base_path / 'src' / 'mappings' / 'slurm_state_map.yaml'
+            map_path = self.local_base_path / 'src' / 'mappings' / 'slurm_state_map.yaml'
             if map_path.exists():
                 with open(map_path, 'r') as mf:
                     try:
@@ -52,7 +102,16 @@ class SlurmDeployer:
             self._state_map = {}
     
     def submit_job(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Submit a job to SLURM cluster using recipe configuration."""
+        """Submit a job to SLURM cluster using recipe configuration via REST API.
+        
+        Note: Recipes should be synced to MeluXina before starting the server
+        (handled by launch_local.sh). This method assumes recipes are already present.
+        """
+        # Ensure logs directory exists on remote before submitting job
+        # (SLURM needs this directory to exist BEFORE job starts)
+        remote_log_dir = f"{self.remote_base_path}/logs"
+        self.ssh_manager.create_remote_directory(remote_log_dir)
+        
         # Load recipe
         recipe_path = self._find_recipe(recipe_name)
         with open(recipe_path, 'r') as f:
@@ -98,7 +157,7 @@ class SlurmDeployer:
         }
     
     def cancel_job(self, job_id: str) -> bool:
-        """Cancel a running SLURM job by job ID."""
+        """Cancel a running SLURM job by job ID via REST API."""
         try:
             response = requests.delete(
                 f"{self.base_url}/job/{job_id}", 
@@ -110,7 +169,7 @@ class SlurmDeployer:
             return False
     
     def get_job_status(self, job_id: str) -> str:
-        """Get the status of a SLURM job by job ID, always checking logs for more detailed status if running."""
+        """Get the status of a SLURM job by job ID via REST API, always checking logs for more detailed status if running."""
         try:
             response = requests.get(
                 f"{self.base_url}/job/{job_id}",
@@ -180,7 +239,7 @@ class SlurmDeployer:
         return 'starting'
     
     def list_jobs(self, user_filter: str = None) -> list:
-        """List all jobs from SLURM cluster, optionally filtered by user."""
+        """List all jobs from SLURM cluster via REST API, optionally filtered by user."""
         try:
             # Use the /jobs endpoint to get all jobs
             params = {}
@@ -269,43 +328,68 @@ class SlurmDeployer:
             return 'cancelled'
         return 'unknown'
     
-    def get_job_logs(self, job_id: str) -> str:
-        """Get logs from SLURM job."""
-        try:
-            log_dir = self.base_path / "logs"
+    def _fetch_remote_log_file(self, remote_path: str, local_path: Path) -> bool:
+        """Fetch a log file from the remote MeluXina filesystem via SSH.
+        
+        Args:
+            remote_path: Absolute path to the log file on MeluXina
+            local_path: Local path where the file should be saved
             
-            if not log_dir.exists():
-                return f"Log directory {log_dir} not found"
+        Returns:
+            True if file was successfully fetched, False otherwise
+        """
+        return self.ssh_manager.fetch_remote_file(remote_path, local_path)
 
-            # Get job details to find the job name
-            job_details = self.get_job_details(job_id)
-            job_name = job_details.get('name', 'unknown') if job_details else 'unknown'
+    def get_job_logs(self, job_id: str) -> str:
+        """Get logs from SLURM job, fetching from remote if needed."""
+        try:
+            # Use local path for cached logs
+            local_log_dir = self.local_base_path / "logs"
+            local_log_dir.mkdir(parents=True, exist_ok=True)
             
-            # Look for SLURM stdout and stderr files
-            stdout_file = log_dir / f"{job_name}_{job_id}.out"
-            stderr_file = log_dir / f"{job_name}_{job_id}.err"
+            # Use remote path for the actual log location on MeluXina (as string)
+            remote_log_dir = f"{self.remote_base_path}/logs"
+
+            # Get job details to find the recipe name (which is used in SLURM log filenames)
+            job_details = self.get_job_details(job_id)
+            recipe_name = job_details.get('name', 'unknown') if job_details else 'unknown'
+            
+            # SLURM creates log files as: {recipe_name}_{job_id}.out
+            # (using the 'name' field from job submission, which is the recipe name)
+            stdout_local = local_log_dir / f"{recipe_name}_{job_id}.out"
+            stderr_local = local_log_dir / f"{recipe_name}_{job_id}.err"
+            
+            stdout_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.out"
+            stderr_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.err"
             
             logs = []
             
-            # Read stdout
-            if stdout_file.exists():
-                try:
-                    content = stdout_file.read_text()
-                    logs.append(f"=== SLURM STDOUT ({stdout_file.name}) ===\n{content}")
-                except Exception as e:
-                    logs.append(f"=== SLURM STDOUT ===\nError reading {stdout_file.name}: {e}")
-            else:
-                logs.append(f"=== SLURM STDOUT ===\nFile not found: {stdout_file.name}")
+            # Always re-fetch logs from remote to get latest content
+            # (logs are continuously being written while job runs)
+            self.logger.info(f"Fetching latest stdout for job {job_id} from MeluXina...")
+            self._fetch_remote_log_file(stdout_remote, stdout_local)
             
-            # Read stderr
-            if stderr_file.exists():
+            if stdout_local.exists():
                 try:
-                    content = stderr_file.read_text()
-                    logs.append(f"=== SLURM STDERR ({stderr_file.name}) ===\n{content}")
+                    content = stdout_local.read_text()
+                    logs.append(f"=== SLURM STDOUT ({stdout_local.name}) ===\n{content}")
                 except Exception as e:
-                    logs.append(f"=== SLURM STDERR ===\nError reading {stderr_file.name}: {e}")
+                    logs.append(f"=== SLURM STDOUT ===\nError reading {stdout_local.name}: {e}")
             else:
-                logs.append(f"=== SLURM STDERR ===\nFile not found: {stderr_file.name}")
+                logs.append(f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)")
+            
+            # Always re-fetch stderr from remote to get latest content
+            self.logger.info(f"Fetching latest stderr for job {job_id} from MeluXina...")
+            self._fetch_remote_log_file(stderr_remote, stderr_local)
+            
+            if stderr_local.exists():
+                try:
+                    content = stderr_local.read_text()
+                    logs.append(f"=== SLURM STDERR ({stderr_local.name}) ===\n{content}")
+                except Exception as e:
+                    logs.append(f"=== SLURM STDERR ===\nError reading {stderr_local.name}: {e}")
+            else:
+                logs.append(f"=== SLURM STDERR ===\nLog not yet available (job may not have started)")
             
             return "\n\n".join(logs)
             
@@ -313,7 +397,7 @@ class SlurmDeployer:
             return f"Error retrieving logs for job {job_id}: {str(e)}"
     
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
-        """Get detailed information about a SLURM job including allocated nodes."""
+        """Get detailed information about a SLURM job including allocated nodes via REST API."""
         try:
             response = requests.get(
                 f"{self.base_url}/job/{job_id}",
@@ -412,8 +496,8 @@ class SlurmDeployer:
         return nodes
     
     def _find_recipe(self, recipe_name: str) -> Path:
-        """Find recipe file by name."""
-        recipes_dir = self.base_path / "src" / "recipes"
+        """Find recipe file by name (searches locally)."""
+        recipes_dir = self.local_base_path / "src" / "recipes"
         
         if "/" in recipe_name:
             category, name = recipe_name.split("/", 1)
@@ -444,27 +528,40 @@ class SlurmDeployer:
             merged_env.update(config["environment"])
 
         # Build the job description according to v0.0.40 schema
+        # Use REMOTE path for SLURM job execution on MeluXina
+        # Note: SLURM REST API v0.0.40 is strict about types - use strings for most fields
+        log_dir_path = str(Path(self.remote_base_path) / "logs")
+        
         job_desc = {
             "account": self.account,
             "qos": "short",
-            "time_limit": time_limit_minutes,  
-            "current_working_directory": str(self.base_path / "logs"),
+            "time_limit": {
+                "number": int(time_limit_minutes),
+                "set": True
+            },
+            "current_working_directory": log_dir_path,  # Required by SLURM
             "name": recipe['name'],
-            "nodes": int(resources.get("nodes", 1)),
+            "nodes": str(resources.get("nodes", 1)),  # Must be string
             "cpus_per_task": int(resources.get("cpu", 4)), 
             "memory_per_cpu": resources.get("memory", "8G"),  
             "partition": "gpu" if resources.get("gpu") else "cpu",
-            "standard_output": f"{recipe['name']}_%j.out",
-            "standard_error": f"{recipe['name']}_%j.err",
+            "standard_output": f"{log_dir_path}/{recipe['name']}_%j.out",
+            "standard_error": f"{log_dir_path}/{recipe['name']}_%j.err",
             "environment": self._format_environment(merged_env)  # Array of KEY=VALUE with merged environment
         }        # The official API expects the job description under 'job' key with script
         
-        log_dir = self.base_path / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        # Create local logs directory for any local logging needs
+        local_log_dir = self.local_base_path / "logs"
+        local_log_dir.mkdir(parents=True, exist_ok=True)
 
+        # Generate the full script
+        full_script = self._create_script(recipe, recipe_path, merged_env, resources)
+        
+        # Debug: Log script length
+        self.logger.debug(f"Generated script length: {len(full_script)} bytes")
+        
         return {
-            "script": self._create_script(recipe, recipe_path, merged_env, resources),
-            #"script": "#!/bin/bash\necho Hello World",
+            "script": full_script,
             "job": job_desc
         }
     
@@ -477,15 +574,16 @@ class SlurmDeployer:
         environment = merged_env if merged_env is not None else recipe.get("environment", {})
 
         # Resolve paths and names
+        # Use REMOTE path for paths that will be used on MeluXina
         category = recipe_path.parent.name
-        recipes_path = self.base_path / "src" / "recipes"
+        recipes_path = Path(self.remote_base_path) / "src" / "recipes"
         container_def = recipe.get("container_def", f"{recipe['name']}.def")
         image_name = recipe.get("image", f"{recipe['name']}.sif")
         def_path, sif_path = self._resolve_container_paths(recipes_path, category, container_def, image_name)
 
         # Build environment and sections
         env_section = self._build_env_section(environment)
-        log_dir = str(self.base_path / "logs")
+        log_dir = str(Path(self.remote_base_path) / "logs")
 
         build_block = self._build_build_block(sif_path, def_path)
         run_block = self._build_run_block(sif_path, log_dir, resources)
@@ -530,9 +628,7 @@ exit $container_exit_code
         """Construct the environment export section for the script."""
         env_vars = []
         
-        # Always export SERVER_BASE_PATH so it's available inside the container
-        env_vars.append(f"export SERVER_BASE_PATH='{self.base_path}'")
-        
+        # Export recipe-specific environment variables
         for key, value in (recipe_env or {}).items():
             env_vars.append(f"export {key}='{value}'")
 
@@ -588,8 +684,8 @@ fi
 
     def _build_run_block(self, sif_path: str, log_dir: str, resources: Dict[str, Any]) -> str:
         """Return the bash block that runs the container with proper binds and flags."""
-        # Project workspace binding
-        project_ws = str(self.base_path)
+        # Project workspace binding (use REMOTE path on MeluXina)
+        project_ws = str(self.remote_base_path)
         nv_flag = "--nv" if resources.get('gpu') else ""
         return f"""
 echo "Starting container..."
@@ -616,8 +712,7 @@ fi
     def _format_environment(self, env_dict: Dict[str, str]) -> List[str]:
         """Format environment variables as array of KEY=VALUE strings"""
         env_list = [
-            f"USER={self.username}",
-            f"SERVER_BASE_PATH={self.base_path}"  # Pass base path to job environment
+            f"USER={self.username}"
         ]
         for key, value in env_dict.items():
             env_list.append(f"{key}={value}")

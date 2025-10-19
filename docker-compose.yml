@@ -1,0 +1,57 @@
+services:
+  server:
+    build:
+      context: ./services/server
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-server
+    ports:
+      - "8001:8001"
+    volumes:
+      # Mount source code for hot-reload during development
+      - ./services/server/src:/app/src
+      - ./services/server/tests:/app/tests
+      - ./services/server/pytest.ini:/app/pytest.ini
+      - ./services/server/logs:/app/logs
+      - ./services/server/huggingface_cache:/app/huggingface_cache
+      # Mount SSH keys for MeluXina access
+      - ~/.ssh:/tmp/host-ssh:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      
+      # Application Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    # Load additional service-specific variables
+    env_file:
+      - .env
+    network_mode: host
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+  # TODO: Add other services when ready
+  # client:
+  #   build:
+  #     context: ./services/client
+  #     dockerfile: Dockerfile
+  #   container_name: benchmarking-ai-client
+  #   ...
+  
+  # monitoring:
+  #   build:
+  #     context: ./services/monitoring
+  #     dockerfile: Dockerfile
+  #   container_name: benchmarking-ai-monitoring
+  #   ...
+  
+  # logs:
+  #   build:
+  #     context: ./services/logs
+  #     dockerfile: Dockerfile
+  #   container_name: benchmarking-ai-logs
+  #   ...

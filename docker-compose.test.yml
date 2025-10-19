@@ -1,0 +1,33 @@
+services:
+  server-test:
+    build:
+      context: ./services/server
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-server-test
+    volumes:
+      # Mount source code
+      - ./services/server/src:/app/src
+      # Mount tests directory
+      - ./services/server/tests:/app/tests
+      # Mount test configuration
+      - ./services/server/pytest.ini:/app/pytest.ini
+      - ./services/server/requirements-dev.txt:/app/requirements-dev.txt
+    environment:
+      # Test environment variables
+      - SSH_HOST=test.example.com
+      - SSH_PORT=22
+      - SSH_USER=testuser
+      - SSH_KEY_PATH=/tmp/test_key
+      - REMOTE_BASE_PATH=/test/path
+      - LOG_LEVEL=DEBUG
+      - PYTHONPATH=/app/src
+      - TESTING=true
+    command: >
+      bash -c "
+      echo 'Installing test dependencies...' &&
+      pip install -q -r requirements-dev.txt &&
+      echo '' &&
+      echo 'Running tests...' &&
+      python -m pytest tests/ -v --tb=short --color=yes
+      "
+    network_mode: bridge
