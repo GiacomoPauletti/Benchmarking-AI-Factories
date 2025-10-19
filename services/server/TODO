@@ -9,7 +9,6 @@ OTHER:
 - Create vec-db mechanism. Separate vllm and vec-db logic from slurm deployer logic?
 - Pull.
 
-
 Things to Benchmark:
 vllm:
 - tokens/sec
