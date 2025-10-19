@@ -4,12 +4,11 @@ This guide will help you set up and run the AI Factory Benchmarking Framework on
 
 ## Prerequisites
 
-### System Requirements
+### Requirements
 
 - Access to **MeluXina** supercomputer
 - SLURM allocation (account: `p200981` or your project account)
-- **Apptainer/Singularity** 1.2.4+
-- **Python** 3.11+
+- Docker and docker compose
 
 ### Required Modules
 

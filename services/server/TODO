@@ -1,8 +1,7 @@
 DOCS:
-- Find way to embed FastAPI docs into Mkdocs. 
 - Host MkDocs with GitHub pages. 
-- Document Server better.
-- Create diagram showcasing CI (testing) pipeline.
+- Document Server better (remove outsdated docs).
+- Create diagram showcasing CI (testing) pipeline. Add this to the docs.
 OTHER:
 - Test multi-node vllm.
 - Create HF auth mechanism.

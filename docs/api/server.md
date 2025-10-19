@@ -1,191 +1,208 @@
-# Server API
+# Server API Documentation
 
-The Server Service API documentation is automatically generated from the FastAPI application using OpenAPI specifications.
+## Interactive API Reference
 
-## Live API Documentation
+The Server Service provides a REST API for managing SLURM jobs and AI workload orchestration.
 
-!!! info "Interactive API Docs"
-    The Server Service provides **three** auto-generated API documentation interfaces:
+<swagger-ui src="server-openapi.json"/>
 
-### 1. Swagger UI (Recommended)
 
-**Best for**: Interactive exploration and testing
+## API Examples
 
-<iframe src="http://localhost:8001/docs" width="100%" height="600px" style="border: 1px solid #ddd; border-radius: 4px;"></iframe>
+### Create vLLM Service with Default Model
 
-**Direct Link**: [http://localhost:8001/docs](http://localhost:8001/docs)
-
-!!! tip "Replace `localhost:8001`"
-    Change `localhost:8001` to your actual server endpoint (e.g., `mel2106:8001`)
-
-### 2. ReDoc
-
-**Best for**: Reading documentation and reference
-
-<iframe src="http://localhost:8001/redoc" width="100%" height="600px" style="border: 1px solid #ddd; border-radius: 4px;"></iframe>
-
-**Direct Link**: [http://localhost:8001/redoc](http://localhost:8001/redoc)
-
-### 3. OpenAPI JSON
-
-**Best for**: Generating client SDKs, importing to tools
-
-**Direct Link**: [http://localhost:8001/openapi.json](http://localhost:8001/openapi.json)
-
-## Quick Start
-
-### Access the Documentation
-
-1. **Start the server**:
-   ```bash
-   cd services/server
-   ./launch_server.sh
-   ```
-
-2. **Get the endpoint**:
-   ```bash
-   # The script will output something like:
-   # API Docs: http://mel2106:8001/docs
-   ```
-
-3. **Open in browser**:
-   - Visit the URL shown in the terminal
-   - Try the interactive examples
-
-### Features
-
-The interactive API documentation provides:
-
-✅ **Try It Out** - Execute requests directly from the browser  
-✅ **Schema Validation** - See required fields and data types  
-✅ **Example Values** - Pre-filled request bodies  
-✅ **Authentication** - Test with credentials (when implemented)  
-✅ **Response Codes** - See all possible responses  
-✅ **Download** - Export OpenAPI spec for tooling  
-
-## Using the OpenAPI Specification
-
-### Generate Client SDK
+Create a vLLM service with default configuration (Qwen/Qwen2.5-0.5B-Instruct):
 
 ```bash
-# Python client
-pip install openapi-generator-cli
-openapi-generator generate \
-  -i http://mel2106:8001/openapi.json \
-  -g python \
-  -o ./ai-factory-client
-
-# TypeScript/JavaScript client
-openapi-generator generate \
-  -i http://mel2106:8001/openapi.json \
-  -g typescript-fetch \
-  -o ./ai-factory-client-ts
-```
-
-### Import to Postman
-
-1. Open Postman
-2. Click "Import"
-3. Enter URL: `http://mel2106:8001/openapi.json`
-4. Click "Import"
-
-### Import to Insomnia
-
-1. Open Insomnia
-2. Click "Create" → "Import"
-3. Enter URL: `http://mel2106:8001/openapi.json`
-4. Click "Fetch and Import"
-
-## API Overview
-
-For a comprehensive guide with examples, see the [API Reference](../services/server/api-reference.md).
-
-### Endpoint Categories
-
-| Category | Description | Endpoints |
-|----------|-------------|-----------|
-| **Health** | Health checks | `/health` |
-| **Services** | Service lifecycle | `/api/v1/services/*` |
-| **Recipes** | Template management | `/api/v1/recipes/*` |
-| **vLLM** | LLM operations | `/api/v1/vllm/*` |
-
-### Quick Examples
-
-**Create a Service:**
-```bash
-curl -X POST "http://mel2106:8001/api/v1/services" \
+curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
-  -d '{"recipe_name": "inference/vllm"}'
+  -d '{
+    "recipe_name": "inference/vllm"
+  }'
 ```
 
-**Check Status:**
-```bash
-curl "http://mel2106:8001/api/v1/services/3614523/status"
-```
+### Create vLLM Service with Custom Model
 
-**Send Prompt:**
+Specify a different model from HuggingFace:
+
 ```bash
-curl -X POST "http://mel2106:8001/api/v1/vllm/3614523/prompt" \
+curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, AI!"}'
+  -d '{
+    "recipe_name": "inference/vllm",
+    "config": {
+      "environment": {
+        "VLLM_MODEL": "gpt2"
+      }
+    }
+  }'
 ```
 
-## Updating Documentation
+### Create vLLM Service with Custom Model and Resources
 
-The API documentation is **automatically generated** from code annotations. To update:
+Override both model and resource allocation:
 
-1. **Update docstrings** in `services/server/src/api/routes.py`
-2. **Restart the server**
-3. **Refresh** the `/docs` page
-
-Example:
-```python
-@router.post("/services", response_model=ServiceResponse)
-async def create_service(request: ServiceRequest):
-    """Create and start a new service.
-    
-    This endpoint submits a job to SLURM using a recipe template.
-    
-    Args:
-        request: Service configuration with recipe name and config
-        
-    Returns:
-        Service object with job ID and status
-        
-    Raises:
-        HTTPException: If recipe not found or SLURM error
-    """
-    ...
+```bash
+curl -X POST http://localhost:8001/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipe_name": "inference/vllm",
+    "config": {
+      "environment": {
+        "VLLM_MODEL": "gpt2"
+      },
+      "resources": {
+        "nodes": 1,
+        "cpu": "8",
+        "memory": "64G",
+        "time_limit": 120,
+        "gpu": "1"
+      }
+    }
+  }'
 ```
 
-## Troubleshooting
+### Create vLLM Service with All Options
 
-### Docs Not Loading
+Full configuration with all available environment variables and resource settings:
 
-**Issue**: iframe shows "Connection refused"
+```bash
+curl -X POST http://localhost:8001/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipe_name": "inference/vllm",
+    "config": {
+      "environment": {
+        "VLLM_MODEL": "gpt2",
+        "VLLM_HOST": "0.0.0.0",
+        "VLLM_PORT": "8001",
+        "VLLM_MAX_MODEL_LEN": "2048",
+        "VLLM_TENSOR_PARALLEL_SIZE": "1",
+        "VLLM_GPU_MEMORY_UTILIZATION": "0.9",
+        "CUDA_VISIBLE_DEVICES": "0"
+      },
+      "resources": {
+        "nodes": 1,
+        "cpu": "2",
+        "memory": "32G",
+        "time_limit": 15,
+        "gpu": "1"
+      }
+    }
+  }'
+```
 
-**Solution**: 
-1. Verify server is running: `curl http://mel2106:8001/health`
-2. Update iframe src to correct endpoint
-3. Check browser console for CORS errors
+### Create CPU-Only vLLM Service
 
-### Embedded Docs Not Working
+For testing or when GPU is not available:
 
-If the embedded iframes don't work (CORS/network restrictions):
+```bash
+curl -X POST http://localhost:8001/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipe_name": "inference/vllm",
+    "config": {
+      "environment": {
+        "VLLM_MODEL": "gpt2"
+      },
+      "resources": {
+        "nodes": 1,
+        "cpu": "4",
+        "memory": "16G",
+        "gpu": null
+      }
+    }
+  }'
+```
 
-**Use Direct Links Instead:**
-- Swagger UI: http://&lt;server&gt;:8001/docs
-- ReDoc: http://&lt;server&gt;:8001/redoc
-- OpenAPI: http://&lt;server&gt;:8001/openapi.json
+### List All Services
 
-## Additional Resources
+```bash
+curl http://localhost:8001/api/v1/services
+```
 
-- [Full API Reference](../services/server/api-reference.md) - Detailed endpoint documentation
-- [FastAPI Documentation](https://fastapi.tiangolo.com/) - FastAPI framework docs
-- [OpenAPI Specification](https://swagger.io/specification/) - OpenAPI standard
+### Get Service Details
 
----
+```bash
+curl http://localhost:8001/api/v1/services/3652098
+```
 
-!!! note "Auto-Generated"
-    This documentation is auto-generated from the FastAPI application.
-    It's always up-to-date with the latest code changes.
+### Check Service Status
+
+```bash
+curl http://localhost:8001/api/v1/services/3652098/status
+```
+
+### Get Service Logs
+
+```bash
+curl http://localhost:8001/api/v1/services/3652098/logs
+```
+
+### Stop a Service
+
+```bash
+curl -X DELETE http://localhost:8001/api/v1/services/3652098
+```
+
+### List vLLM Services
+
+Get all running vLLM services with their endpoints:
+
+```bash
+curl http://localhost:8001/api/v1/vllm/services
+```
+
+### Get Available Models
+
+Check which models are loaded in a vLLM service:
+
+```bash
+curl http://localhost:8001/api/v1/vllm/3652098/models
+```
+
+### Send Prompt to vLLM Service
+
+Send a text prompt and get a response:
+
+```bash
+curl -X POST http://localhost:8001/api/v1/vllm/3652098/prompt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Tell me a joke about programming",
+    "max_tokens": 100
+  }'
+```
+
+### Send Prompt with Advanced Options
+
+```bash
+curl -X POST http://localhost:8001/api/v1/vllm/3652098/prompt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Write a short haiku about AI",
+    "model": "gpt2",
+    "max_tokens": 64,
+    "temperature": 0.7
+  }'
+```
+
+### List Available Recipes
+
+```bash
+curl http://localhost:8001/api/v1/recipes
+```
+
+### Get Recipe Details
+
+```bash
+curl http://localhost:8001/api/v1/recipes/inference/vllm
+```
+
+## Notes
+
+- **Default Model**: If not specified, services use `Qwen/Qwen2.5-0.5B-Instruct`
+- **Model Sources**: Models must be available on HuggingFace or cached locally
+- **Resource Defaults**: Each recipe has default resource allocations that can be overridden
+- **Status Values**: Services progress through states: `pending` → `building` → `starting` → `running`
+- **Service ID**: The SLURM job ID is used as the service identifier

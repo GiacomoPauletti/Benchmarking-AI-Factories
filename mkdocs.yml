@@ -41,6 +41,7 @@ theme:
 plugins:
   - search
   - mermaid2
+  - swagger-ui-tag
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -68,32 +69,22 @@ nav:
   - Getting Started:
       - Overview: getting-started/overview.md
       - Installation: getting-started/installation.md
-      - Quick Start: getting-started/quickstart.md
   - Architecture:
       - System Overview: architecture/overview.md
       - Microservices: architecture/microservices.md
       - Container Orchestration: architecture/container-orchestration.md
   - Services:
-      - Server Service:
-          - Overview: services/server/overview.md
-          - Architecture: services/server/architecture.md
-          - API Reference: services/server/api-reference.md
-          - Recipes: services/server/recipes.md
-          - Testing: services/server/testing.md
-      - Client Service: services/client/overview.md
-      - Monitoring Service: services/monitoring/overview.md
-      - Logging Service: services/logs/overview.md
+      - Server: services/server/api-reference.md
+      - Client: services/client.md
+      - Monitoring: services/monitoring.md
+      - Logs: services/logs.md
   - Development:
       - Guidelines: development/guidelines.md
-      - Setup: development/setup.md
-      - Testing: development/testing.md
-      - Contributing: development/contributing.md
-  - Deployment:
-      - MeluXina Setup: deployment/meluxina.md
-      - Kubernetes: deployment/kubernetes.md
-      - SLURM: deployment/slurm.md
   - API Documentation:
       - Server API: api/server.md
+      - Client API: api/client.md
+      - Monitoring API: api/monitoring.md
+      - Logs API: api/logs.md
 
 extra:
   social:

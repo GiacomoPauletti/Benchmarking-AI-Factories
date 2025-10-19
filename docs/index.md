@@ -1,79 +1,53 @@
 # AI Factory Benchmarking Framework
 
-Welcome to the **AI Factory Benchmarking Framework** documentation.
+Welcome to the AI Factory Benchmarking Framework documentation.
 
-## Project Overview
+## Overview
 
-This framework enables benchmarking of AI Factory components in HPC environments, providing:
-
-- **Automated Service Deployment** - Deploy AI services (LLMs, databases, vector stores) via SLURM + Apptainer
-- **Performance Testing** - Client testing with configurable workloads
-- **Real-time Monitoring** - Metrics collection and visualization with Prometheus + Grafana
-- **Log Aggregation** - Centralized logging with Grafana Loki
-- **Interactive Dashboard** - Web-based UI for benchmarking control and visualization
+This framework enables benchmarking of AI Factory components on HPC systems, specifically designed for the MeluXina supercomputer. The system orchestrates AI workloads via SLURM and provides comprehensive monitoring and testing capabilities.
 
 ## Architecture
 
-The system follows a microservices architecture with the following core components:
+The framework consists of four microservices:
 
 ```mermaid
 graph TB
-    UI[Web Dashboard] --> Server[Server Service<br/>FastAPI + SLURM]
-    UI --> Client[Client Service<br/>Benchmark Executor]
-    UI --> Monitor[Monitoring Service<br/>Metrics Collection]
-    UI --> Logs[Logs Service<br/>Log Aggregation]
+    Client[Client Service<br/>Benchmark Executor] --> Server[Server Service<br/>SLURM Orchestration]
+    Monitor[Monitoring Service<br/>Metrics Collection] --> Server
+    Logs[Logs Service<br/>Log Aggregation] --> Server
     
-    Server --> SLURM[SLURM Scheduler]
-    SLURM --> Container[Apptainer Containers]
-    
-    Monitor --> Prometheus[Prometheus]
-    Logs --> Loki[Grafana Loki]
-    Prometheus --> Grafana[Grafana Dashboard]
-    Loki --> Grafana
+    Server --> SLURM[SLURM REST API]
+    SLURM --> HPC[MeluXina HPC]
     
     style Server fill:#4051b5
-    style Client fill:#4051b5
-    style Monitor fill:#4051b5
-    style Logs fill:#4051b5
+    style Client fill:#e8eaf6
+    style Monitor fill:#e8eaf6
+    style Logs fill:#e8eaf6
 ```
+
+### Services
+
+- **Server** - Core orchestration service that manages SLURM job submissions and AI workload deployment
+- **Client** - Executes benchmark tests and workload simulations (TODO: Documentation in progress)
+- **Monitoring** - Collects and aggregates performance metrics (TODO: Documentation in progress)
+- **Logs** - Centralized log collection and analysis (TODO: Documentation in progress)
 
 ## Quick Start
 
-TODO: Short quick start guide.
+See [Getting Started](getting-started/overview.md) for detailed instructions.
 
-See the [Getting Started Guide](getting-started/overview.md) for detailed instructions.
 
-## Services
+## Documentation
 
-[Learn more →](services/server/overview.md)
+- [Getting Started](getting-started/overview.md) - Setup and installation
+- [Architecture](architecture/overview.md) - System design and components
+- [Server Service](services/server/overview.md) - Detailed server documentation
+- [API Reference](api/server.md) - Interactive API documentation
+- [Development](development/setup.md) - Development guidelines
 
-### Supported Server Services
-- **vLLM** - High-performance LLM inference
-- **Chroma** - Vector database
+## Status
 
-[View all available recipes →](services/server/recipes.md)
+**Current Version**: 1.0.0  
+**Last Updated**: October 2025  
+**Project**: EUMaster4HPC Challenge 2025-2026
 
-## Documentation Sections
-
-- **[Getting Started](getting-started/overview.md)** - Installation, setup, and quick start guide
-- **[Architecture](architecture/overview.md)** - System design, components, and data flow
-- **[Services](services/server/overview.md)** - Detailed documentation for each microservice
-- **[Development](development/guidelines.md)** - Development guidelines, testing, and contribution guide
-- **[Deployment](deployment/meluxina.md)** - Deployment on MeluXina and other HPC systems
-
-## Contributing
-
-Please see our [Contributing Guide](development/contributing.md) for details on:
-
-- Code style and standards
-- Testing requirements
-- Pull request process
-- Development workflow
-
-## EUMaster4HPC Challenge
-
-This project is developed as part of the **EUMaster4HPC Challenge** (2025-2026), focusing on benchmarking AI infrastructure components in the MeluXina HPC.
-
----
-
-**Status**: Active Development | **Version**: 0.1.0 | **Last Updated**: October 2025
