@@ -55,3 +55,21 @@ services:
   #     dockerfile: Dockerfile
   #   container_name: benchmarking-ai-logs
   #   ...
+
+  # Documentation service
+  docs:
+    build:
+      context: ./docs-src
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-docs
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount docs source for hot-reload during development
+      - ./docs-src:/docs-src
+      - ./mkdocs.yml:/mkdocs.yml
+      # Mount output directory
+      - ./docs:/docs
+    working_dir: /
+    command: mkdocs serve --dev-addr=0.0.0.0:8000
+    restart: unless-stopped
