@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='utf-8'><title>AI Factory Server Service 1.0.0 API Docs</title>
+<style>body{font-family:sans-serif;}h1{margin-bottom:0;}h2{margin-top:2em;}pre{background:#f8f8f8;padding:8px;}details{margin-bottom:1em;}summary{font-weight:bold;}table{border-collapse:collapse;}td,th{border:1px solid #ccc;padding:2px 6px;}code{background:#eee;padding:1px 3px;}</style>
+</head>
+<body>
+<h1>AI Factory Server Service <small>1.0.0</small></h1>
+<p>SLURM + Apptainer orchestration for AI workloads</p>
+<h2>Endpoints</h2>
+<details><summary><code>/</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— Root</span>
+</div>
+<div style='margin-left:2em'>Root endpoint with service information.</div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/recipes</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— List Recipes</span>
+</div>
+<div style='margin-left:2em'>List all available recipes.</div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;items&quot;: {
+    &quot;$ref&quot;: &quot;#/components/schemas/RecipeResponse&quot;
+  },
+  &quot;type&quot;: &quot;array&quot;,
+  &quot;title&quot;: &quot;Response List Recipes Api V1 Recipes Get&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/recipes/{recipe_name}</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— Get Recipe</span>
+</div>
+<div style='margin-left:2em'>Get details of a specific recipe.</div>
+<div style='margin-left:2em'><b>Parameters:</b><table><tr><th>name</th><th>in</th><th>required</th><th>schema</th><th>description</th></tr>
+<tr><td>recipe_name</td><td>path</td><td>True</td><td><pre>{
+  &quot;type&quot;: &quot;string&quot;,
+  &quot;title&quot;: &quot;Recipe Name&quot;
+}</pre></td><td></td></tr>
+</table></div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/RecipeResponse&quot;
+}</pre>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/services</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— List Services</span>
+</div>
+<div style='margin-left:2em'>List all running services.</div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;items&quot;: {
+    &quot;$ref&quot;: &quot;#/components/schemas/ServiceResponse&quot;
+  },
+  &quot;type&quot;: &quot;array&quot;,
+  &quot;title&quot;: &quot;Response List Services Api V1 Services Get&quot;
+}</pre>
+</li>
+</ul></div>
+<div style='margin-left:1em'><b>POST</b> 
+<span>— Create and start a new service</span>
+</div>
+<div style='margin-left:2em'>Create and start a new service using SLURM + Apptainer.
+
+The `request` body should contain `recipe_name` (path to a recipe, e.g. `inference/vllm`) and
+an optional `config` object with keys like `nodes`, `cpus`, `memory` and `time` (HH:MM:SS).</div>
+<div style='margin-left:2em'><b>Request Body:</b>
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/ServiceRequest&quot;
+}</pre>
+</div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/ServiceResponse&quot;
+}</pre>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/services/{service_id}</code></summary>
+<div style='margin-left:1em'><b>DELETE</b> 
+<span>— Stop Service</span>
+</div>
+<div style='margin-left:2em'>Stop a running service by cancelling the SLURM job.</div>
+<div style='margin-left:2em'><b>Parameters:</b><table><tr><th>name</th><th>in</th><th>required</th><th>schema</th><th>description</th></tr>
+<tr><td>service_id</td><td>path</td><td>True</td><td><pre>{
+  &quot;type&quot;: &quot;string&quot;,
+  &quot;title&quot;: &quot;Service Id&quot;
+}</pre></td><td></td></tr>
+</table></div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— Get Service</span>
+</div>
+<div style='margin-left:2em'>Get details of a specific service.</div>
+<div style='margin-left:2em'><b>Parameters:</b><table><tr><th>name</th><th>in</th><th>required</th><th>schema</th><th>description</th></tr>
+<tr><td>service_id</td><td>path</td><td>True</td><td><pre>{
+  &quot;type&quot;: &quot;string&quot;,
+  &quot;title&quot;: &quot;Service Id&quot;
+}</pre></td><td></td></tr>
+</table></div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/ServiceResponse&quot;
+}</pre>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/services/{service_id}/logs</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— Get Service Logs</span>
+</div>
+<div style='margin-left:2em'>Get logs from a service.</div>
+<div style='margin-left:2em'><b>Parameters:</b><table><tr><th>name</th><th>in</th><th>required</th><th>schema</th><th>description</th></tr>
+<tr><td>service_id</td><td>path</td><td>True</td><td><pre>{
+  &quot;type&quot;: &quot;string&quot;,
+  &quot;title&quot;: &quot;Service Id&quot;
+}</pre></td><td></td></tr>
+</table></div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/services/{service_id}/status</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— Get Service Status</span>
+</div>
+<div style='margin-left:2em'>Get current status of a service.</div>
+<div style='margin-left:2em'><b>Parameters:</b><table><tr><th>name</th><th>in</th><th>required</th><th>schema</th><th>description</th></tr>
+<tr><td>service_id</td><td>path</td><td>True</td><td><pre>{
+  &quot;type&quot;: &quot;string&quot;,
+  &quot;title&quot;: &quot;Service Id&quot;
+}</pre></td><td></td></tr>
+</table></div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/vllm/services</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— List Vllm Services</span>
+</div>
+<div style='margin-left:2em'>List all running VLLM services.
+
+Returns a JSON object with a `vllm_services` key containing a list of service descriptors.</div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/vllm/{service_id}/models</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— Get Vllm Models</span>
+</div>
+<div style='margin-left:2em'>Get available models served by a running VLLM service.
+
+The response contains a `models` array with model identifiers discoverable via the vLLM instance.
+Example response: {&quot;models&quot;: [&quot;gpt2&quot;, &quot;qwen-3b&quot;]}</div>
+<div style='margin-left:2em'><b>Parameters:</b><table><tr><th>name</th><th>in</th><th>required</th><th>schema</th><th>description</th></tr>
+<tr><td>service_id</td><td>path</td><td>True</td><td><pre>{
+  &quot;type&quot;: &quot;string&quot;,
+  &quot;title&quot;: &quot;Service Id&quot;
+}</pre></td><td></td></tr>
+</table></div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/api/v1/vllm/{service_id}/prompt</code></summary>
+<div style='margin-left:1em'><b>POST</b> 
+<span>— Send a prompt to a running VLLM service</span>
+</div>
+<div style='margin-left:2em'>Send a prompt to a running VLLM service.
+
+Request body fields:
+- `prompt` (string, required): the text prompt to send
+- `model` (string, optional): model id to request (if omitted the server will try to auto-discover)
+- `max_tokens` (int, optional): maximum number of tokens to generate
+- `temperature` (float, optional): sampling temperature</div>
+<div style='margin-left:2em'><b>Parameters:</b><table><tr><th>name</th><th>in</th><th>required</th><th>schema</th><th>description</th></tr>
+<tr><td>service_id</td><td>path</td><td>True</td><td><pre>{
+  &quot;type&quot;: &quot;string&quot;,
+  &quot;title&quot;: &quot;Service Id&quot;
+}</pre></td><td></td></tr>
+</table></div>
+<div style='margin-left:2em'><b>Request Body:</b>
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;type&quot;: &quot;object&quot;,
+  &quot;additionalProperties&quot;: true,
+  &quot;examples&quot;: {
+    &quot;simple&quot;: {
+      &quot;summary&quot;: &quot;Basic prompt&quot;,
+      &quot;value&quot;: {
+        &quot;prompt&quot;: &quot;Write a short haiku about AI.&quot;
+      }
+    },
+    &quot;with_model&quot;: {
+      &quot;summary&quot;: &quot;Prompt specifying model&quot;,
+      &quot;value&quot;: {
+        &quot;prompt&quot;: &quot;Hello&quot;,
+        &quot;model&quot;: &quot;gpt2&quot;,
+        &quot;max_tokens&quot;: 64
+      }
+    }
+  },
+  &quot;title&quot;: &quot;Request&quot;
+}</pre>
+</div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+<li><b>422</b>: Validation Error
+<div>Content-Type: <code>application/json</code></div>
+<pre>{
+  &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+}</pre>
+</li>
+</ul></div>
+</details>
+<details><summary><code>/health</code></summary>
+<div style='margin-left:1em'><b>GET</b> 
+<span>— Health</span>
+</div>
+<div style='margin-left:2em'>Health check endpoint.</div>
+<div style='margin-left:2em'><b>Responses:</b><ul>
+<li><b>200</b>: Successful Response
+<div>Content-Type: <code>application/json</code></div>
+</li>
+</ul></div>
+</details>
+</body></html>

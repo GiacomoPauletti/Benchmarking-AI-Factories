@@ -1,70 +1,57 @@
-version: '3.8'
-
 services:
-  server-service:
+  server:
     build:
       context: ./services/server
       dockerfile: Dockerfile
+    container_name: benchmarking-ai-server
     ports:
       - "8001:8001"
-    environment:
-      - SLURM_ACCOUNT=p200981
-      - SLURM_PARTITION=cpu
-      - PYTHONPATH=/app/src
     volumes:
+      # Mount source code for hot-reload during development
       - ./services/server/src:/app/src
+      - ./services/server/tests:/app/tests
+      - ./services/server/pytest.ini:/app/pytest.ini
       - ./services/server/logs:/app/logs
+      - ./services/server/huggingface_cache:/app/huggingface_cache
+      # Mount SSH keys for MeluXina access
+      - ~/.ssh:/tmp/host-ssh:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      
+      # Application Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    # Load additional service-specific variables
+    env_file:
+      - .env
+    network_mode: host
+    stdin_open: true
+    tty: true
     restart: unless-stopped
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
-    networks:
-      - ai-factory
 
-  # Other services commented out for now - uncomment when ready
-  # client-service:
+  # TODO: Add other services when ready
+  # client:
   #   build:
   #     context: ./services/client
   #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8002:8002"
-  #   environment:
-  #     - SERVER_URL=http://server-service:8001
-  #   volumes:
-  #     - ./services/client/src:/app/src
-  #     - ./logs:/app/logs
-  #   restart: unless-stopped
-  #   depends_on:
-  #     - server-service
-
-  # monitoring-service:
+  #   container_name: benchmarking-ai-client
+  #   ...
+  
+  # monitoring:
   #   build:
   #     context: ./services/monitoring
   #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8003:8003"
-  #   environment:
-  #     - SERVER_URL=http://server-service:8001
-  #     - CLIENT_URL=http://client-service:8002
-  #   volumes:
-  #     - ./services/monitoring/src:/app/src
-  #     - ./logs:/app/logs
-  #   restart: unless-stopped
-  #   depends_on:
-  #     - server-service
-  #     - client-service
-
-  # logs-service:
+  #   container_name: benchmarking-ai-monitoring
+  #   ...
+  
+  # logs:
   #   build:
   #     context: ./services/logs
   #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8004:8004"
-  #   environment:
-  #     - LOG_LEVEL=INFO
-  #   volumes:
-  #     - ./logs:/app/logs
-  #     - ./services/logs/src:/app/src
-  #   restart: unless-stopped
-
-networks:
-  ai-factory:
-    name: ai-factory-network
+  #   container_name: benchmarking-ai-logs
+  #   ...

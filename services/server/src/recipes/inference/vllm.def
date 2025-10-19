@@ -2,7 +2,7 @@ Bootstrap: docker
 From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
 
 %labels
-    Description "Apptainer container for vLLM OpenAI-compatible API (nightly build)"
+    Description "Apptainer container for vLLM OpenAI-compatible API"
     Version nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
 
 %post
@@ -30,11 +30,20 @@ From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
 
 %runscript
     echo "Starting vLLM OpenAI-compatible API..."
-    # Respect environment overrides for host/port so the recipe or runtime can control binding
-    : "Using VLLM_HOST=${VLLM_HOST:-0.0.0.0} VLLM_PORT=${VLLM_PORT:-8001}"
-    exec python3 -m vllm.entrypoints.openai.api_server --host "${VLLM_HOST:-0.0.0.0}" --port "${VLLM_PORT:-8001}"
+    echo "Model: ${VLLM_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
+    echo "Endpoint: ${VLLM_HOST:-0.0.0.0}:${VLLM_PORT:-8001}"
+    
+    # Build vLLM command
+    VLLM_CMD="python3 -m vllm.entrypoints.openai.api_server"
+    VLLM_CMD="${VLLM_CMD} --host ${VLLM_HOST:-0.0.0.0}"
+    VLLM_CMD="${VLLM_CMD} --port ${VLLM_PORT:-8001}"
+    VLLM_CMD="${VLLM_CMD} --model ${VLLM_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
+    
+    # Optional parameters
+    [ -n "${VLLM_MAX_MODEL_LEN}" ] && VLLM_CMD="${VLLM_CMD} --max-model-len ${VLLM_MAX_MODEL_LEN}"
+    [ -n "${VLLM_TENSOR_PARALLEL_SIZE}" ] && VLLM_CMD="${VLLM_CMD} --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}"
+    [ -n "${VLLM_GPU_MEMORY_UTILIZATION}" ] && VLLM_CMD="${VLLM_CMD} --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION}"
+    
+    echo "Executing: ${VLLM_CMD}"
+    exec ${VLLM_CMD}
 
-%startscript
-    # Used with `apptainer instance start`
-    # Respect environment overrides for host/port
-    exec python3 -m vllm.entrypoints.openai.api_server --host "${VLLM_HOST:-0.0.0.0}" --port "${VLLM_PORT:-8001}"
