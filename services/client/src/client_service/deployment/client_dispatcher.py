@@ -5,7 +5,8 @@ from client_service.deployment.slurm_config import SlurmConfig
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+# Use the logger configured by main.py instead of basic config
+logger = logging.getLogger(__name__)
 
 class AbstractClientDispatcher:
     def dispatch(self, num_clients: int, benchmark_id: int, time: int = 5):
@@ -27,10 +28,10 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             - benchmark_id: Benchmark ID to associate with the clients
             - time: Time limit for the Slurm job in minutes
         """
-        logging.debug(f"Dispatching {num_clients} clients using SlurmClientDispatcher for benchmark {benchmark_id}.")
+        logger.debug(f"Dispatching {num_clients} clients using SlurmClientDispatcher for benchmark {benchmark_id}.")
         SLURM_JOB = f'...{num_clients}...'
 
-        logging.debug(f"Using SlurmConfig: {self.slurm_config}")
+        logger.debug(f"Using SlurmConfig: {self.slurm_config}")
 
         # Check and refresh token if needed before making the request (default threshold: 2 minutes)
         self.slurm_config.refresh_token_if_needed(threshold_seconds=300)
@@ -60,13 +61,13 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
                 }
         })
 
-        logging.debug(f"Slurm job submission response: {response.status_code} - {response.text}")
+        logger.debug(f"Slurm job submission response: {response.status_code} - {response.text}")
         
         if response.status_code == 200:
-            logging.debug("Job submitted successfully!")
-            logging.debug(json.dumps(response.json(), indent=2))
+            logger.info("Job submitted successfully!")
+            logger.debug(json.dumps(response.json(), indent=2))
         else:
-            logging.debug(f"Job submission failed with status code {response.status_code}:")
-            logging.debug(response.text)
+            logger.error(f"Job submission failed with status code {response.status_code}:")
+            logger.error(response.text)
 
         print(json.dumps(response.json(), indent=2)) 

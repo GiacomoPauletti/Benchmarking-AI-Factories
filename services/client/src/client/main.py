@@ -44,6 +44,8 @@ if __name__ == "__main__":
         logging.fatal("Invalid number of arguments. Required: num_clients server_addr client_service_addr benchmark_id")
         sys.exit(1)
 
+    print("Starting Client Process...")
+
     client_count = int(sys.argv[1])
     server_addr = sys.argv[2]
     client_service_addr = sys.argv[3]

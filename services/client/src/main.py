@@ -15,8 +15,34 @@ from client_service.deployment.slurm_config import SlurmConfig
 from client_service.deployment.client_dispatcher import SlurmClientDispatcher
 from client_service.client_manager.client_manager import ClientManager
 
+"""
+Client service main module.
+"""
+
+import sys
+from fastapi import FastAPI
+import uvicorn
+import logging
+import socket
+
+from client_service.api.frontend_router import frontend_router
+from client_service.api.client_router import client_router
+from client_service.api.monitor_router import monitor_router
+from client_service.deployment.slurm_config import SlurmConfig
+from client_service.deployment.client_dispatcher import SlurmClientDispatcher
+from client_service.client_manager.client_manager import ClientManager
+
 # =================================== LOGGING CONFIG ====================================
-# Suppress all uvicorn logs
+# Always log to console (stdout) with debug level
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+# Suppress some uvicorn logs but keep our application logs visible
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("uvicorn").setLevel(logging.INFO)
 

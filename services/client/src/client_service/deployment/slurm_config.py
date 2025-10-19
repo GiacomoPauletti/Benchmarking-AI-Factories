@@ -23,6 +23,13 @@ class SlurmConfig:
         self._token: Optional[SlurmToken] = None
         
         # Generate token automatically
+        logger.info("Initializing SlurmConfig and generating JWT token...")
+        raw_token = self.create_new_token()
+        if raw_token:
+            self._token = SlurmToken(raw_token)
+            logger.info("SlurmConfig initialized successfully with valid token")
+        else:
+            logger.warning("SlurmConfig initialized but no token available")
 
     def _detect_username(self) -> str:
         """Automatically detect the current user"""
@@ -42,65 +49,26 @@ class SlurmConfig:
         """
         Create a new JWT token for Slurm authentication.
         
+        This method is DISABLED in container mode. Tokens are generated on the host
+        and passed to the container via environment variables.
+        
         Args:
-            lifetime: Token lifetime in seconds (default: 300)
+            lifetime: Token lifetime in seconds (ignored in container mode)
             
         Returns:
-            JWT token string or None if creation failed
+            JWT token string from environment or None if not available
         """
-        if not self._user_name:
-            logger.error("Cannot create token: username not available")
-            return None
-            
-        try:
-            logger.info(f"Creating new Slurm token for user {self._user_name} with lifetime {lifetime}s")
-            
-            # Try different methods to obtain a JWT token
-            
-            # Method 1: Try to use scontrol to generate a token
-            import subprocess
-            try:
-                cmd = ["scontrol", "token", f"lifespan={lifetime}"]
-                # Use older subprocess API for compatibility
-                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-                stdout, stderr = process.communicate()
-                
-                if process.returncode == 0 and "SLURM_JWT=" in stdout:
-                    # Extract token from output like "SLURM_JWT=eyJ..."
-                    for line in stdout.split('\n'):
-                        if line.strip().startswith('SLURM_JWT='):
-                            token = line.split('=', 1)[1].strip()
-                            logger.info("Successfully created token using scontrol")
-                            return token
-                else:
-                    logger.debug(f"scontrol failed: {stderr}")
-            except (OSError, FileNotFoundError) as e:
-                logger.debug(f"scontrol not available or failed: {e}")
-            
-            # Method 2: Try to make REST API call to Slurm auth endpoint
-            try:
-                auth_url = f"{self._url}/slurm/{self._api_ver}/auth"
-                
-                # Try with different authentication methods
-                # This would need proper authentication credentials
-                # For now, we'll skip this as it requires user credentials
-                logger.debug("REST API token creation requires user credentials - skipping")
-                
-            except Exception as e:
-                logger.debug(f"REST API token creation failed: {e}")
-            
-            # Method 3: Check for existing token in environment
-            env_token = os.getenv('SLURM_JWT')
-            if env_token:
-                logger.info("Using existing token from SLURM_JWT environment variable")
-                return env_token
-                
-            # If all methods fail, return None
-            logger.warning("Token creation not available - will need to use existing authentication method")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Failed to create Slurm token: {e}")
+        logger.warning("create_new_token() called - token generation is disabled in container mode")
+        logger.info("Tokens are generated on the host and passed via SLURM_JWT environment variable")
+        
+        # Only check for existing token in environment
+        env_token = os.getenv('SLURM_JWT')
+        if env_token:
+            logger.info("Using token from SLURM_JWT environment variable")
+            return env_token
+        else:
+            logger.error("No SLURM_JWT token found in environment")
+            logger.error("This indicates the host failed to generate a token")
             return None
 
     @classmethod
@@ -169,22 +137,30 @@ class SlurmConfig:
         """
         Refresh the token if it's expiring soon or has expired.
         
+        This method is DISABLED in container mode. Token refresh is not supported
+        when running in containers.
+        
         Args:
-            threshold_seconds: Refresh token if it expires within this many seconds
+            threshold_seconds: Refresh token if it expires within this many seconds (ignored)
             
         Returns:
-            True if token was refreshed, False otherwise
+            False - refresh is not supported in container mode
         """
-        if not self._token or self._token.has_expired() or self._token.is_expiring_soon(threshold_seconds):
-            logger.info("Token is expired or expiring soon, attempting to refresh...")
-            raw_token = self.create_new_token()
-            if raw_token:
-                self._token = SlurmToken(raw_token)
-                logger.info("Token refreshed successfully")
-                return True
-            else:
-                logger.error("Failed to refresh token")
-                return False
+        logger.warning("refresh_token_if_needed() called - token refresh is disabled in container mode")
+        logger.info("Container uses pre-generated tokens from the host, refresh is not supported")
+        
+        if not self._token:
+            logger.error("No token available and refresh is disabled")
+            return False
+        elif self._token.has_expired():
+            logger.error("Token has expired and refresh is disabled in container mode")
+            logger.error("Please restart the container to get a new token from the host")
+            return False
+        elif self._token.is_expiring_soon(threshold_seconds):
+            logger.warning(f"Token expires in less than {threshold_seconds} seconds but refresh is disabled")
+            logger.warning("Please restart the container soon to get a new token")
+            return False
+        
         return False
 
     def __str__(self):
