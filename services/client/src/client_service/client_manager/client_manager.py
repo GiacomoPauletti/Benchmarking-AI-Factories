@@ -63,14 +63,17 @@ class ClientManager:
         # Default addresses - can be configured via environment or config file
         self._server_addr = "http://localhost:8002"
         self._client_service_addr = "http://localhost:8001"
+        self._use_container = False  # Default to native execution
         self._initialized = True
     
-    def configure(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None):
-        """Configure server and client service addresses after initialization"""
+    def configure(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None, use_container: Optional[bool] = None):
+        """Configure server and client service addresses and container mode after initialization"""
         if server_addr:
             self._server_addr = server_addr
         if client_service_addr:
             self._client_service_addr = client_service_addr
+        if use_container is not None:
+            self._use_container = use_container
 
     def add_client_group(self, benchmark_id: int, num_clients: int, time_limit: int = 5) -> int:
         """
@@ -84,9 +87,9 @@ class ClientManager:
             
             try:
                 # Create ClientGroup - it handles the dispatching internally
-                client_group = ClientGroup(benchmark_id, num_clients, self._server_addr, self._client_service_addr, time_limit)
+                client_group = ClientGroup(benchmark_id, num_clients, self._server_addr, self._client_service_addr, time_limit, self._use_container)
                 self._client_groups[benchmark_id] = client_group
-                self._logger.info(f"Added client group {benchmark_id}: expecting {num_clients} with time limit {time_limit}")
+                self._logger.info(f"Added client group {benchmark_id}: expecting {num_clients} with time limit {time_limit}, container mode: {self._use_container}")
                 return ClientManagerResponseStatus.OK
             except Exception as e:
                 self._logger.error(f"Failed to create client group {benchmark_id}: {e}")

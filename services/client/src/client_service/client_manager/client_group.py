@@ -5,17 +5,18 @@ from typing import Optional
 
 
 class ClientGroup:
-    def __init__(self, benchmark_id: int, num_clients: int, server_addr: str, client_service_addr: str, time_limit: int = 5): 
+    def __init__(self, benchmark_id: int, num_clients: int, server_addr: str, client_service_addr: str, time_limit: int = 5, use_container: bool = False): 
         self._benchmark_id = benchmark_id
         self._num_clients = num_clients
         self._server_addr = server_addr
         self._client_service_addr = client_service_addr
         self._client_address: Optional[str] = None
         self._created_at = time_module.time()
+        self._use_container = use_container
         self._logger = logging.getLogger(f"client_service.client_group.{benchmark_id}")
 
         # Create and use dispatcher to start the slurm job
-        dispatcher = SlurmClientDispatcher(server_addr, client_service_addr)
+        dispatcher = SlurmClientDispatcher(server_addr, client_service_addr, use_container=use_container)
         try:
             dispatcher.dispatch(num_clients, benchmark_id, time_limit)
             self._logger.info(f"Dispatched Slurm job for benchmark {benchmark_id}")

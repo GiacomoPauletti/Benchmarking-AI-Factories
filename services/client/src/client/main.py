@@ -9,8 +9,7 @@ from typing import List
 from fastapi import FastAPI
 import uvicorn
 
-from client.client import Client
-from client.server_proxy.server_proxy import ServerProxy
+from client.client import VLLMClient
 from client.api.client_service_router import client_service_router
 from client.api.monitor_router import monitor_proxy_router
 from client.client_group import ClientGroup
@@ -36,7 +35,7 @@ app.include_router(client_service_router)
 app.include_router(monitor_proxy_router)
 
 # =================================== GLOBAL VARIABLES ====================================
-server_proxy = ServerProxy()
+# No global variables needed anymore
 
 # ======================================== MAIN =========================================
 if __name__ == "__main__":
@@ -57,8 +56,7 @@ if __name__ == "__main__":
     # Create clients but don't start them yet
     clients = []
     for i in range(client_count):
-        recipe = "default"
-        client = Client(server_proxy, recipe)
+        client = VLLMClient()
         clients.append(client)
 
     # Get the local IP address for registration

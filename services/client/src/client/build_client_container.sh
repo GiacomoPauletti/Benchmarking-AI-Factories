@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# Container Builder for AI Factory Client Service
+# AI Factory Client Container Builder
 # =============================================================================
-# Description: Builds Apptainer container image for the Client Service
-# Usage: ./build_container.sh [--force]
+# Description: Builds an Apptainer container for the AI Factory Client
+# Usage: ./build_client_container.sh [--force]
 # Author: AI Assistant
 # =============================================================================
 
@@ -17,13 +17,14 @@ BLUE="\033[0;34m"
 CYAN="\033[0;36m"
 NC="\033[0m" # No Color
 
-CONTAINER_IMAGE="client_service.sif"
-DEFINITION_FILE="client_service.def"
+# Configuration
+CONTAINER_IMAGE="client_container.sif"
+DEFINITION_FILE="client_container.def"
 FORCE_BUILD=false
 
 print_banner() {
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║           AI Factory Client Service Container Builder         ║${NC}"
+    echo -e "${CYAN}║             AI Factory Client Container Builder              ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
 }
 
@@ -45,18 +46,18 @@ print_warning() {
 
 show_help() {
     echo -e "${CYAN}Usage:${NC}"
-    echo "  ./build_container.sh [--force]"
+    echo "  ./build_client_container.sh [--force]"
     echo ""
     echo -e "${CYAN}Options:${NC}"
     echo "  --force    Force rebuild even if container already exists"
     echo ""
     echo -e "${CYAN}Description:${NC}"
-    echo "  Builds an Apptainer container for the AI Factory Client Service"
-    echo "  using the client_service.def definition file."
+    echo "  Builds an Apptainer container for the AI Factory Client"
+    echo "  using the client_container.def definition file."
     echo ""
     echo -e "${CYAN}Requirements:${NC}"
     echo "  - Apptainer/Singularity must be installed"
-    echo "  - client_service.def must exist in current directory"
+    echo "  - client_container.def must exist in current directory"
     echo "  - Internet connection for downloading base image"
     echo ""
     echo -e "${CYAN}Output:${NC}"
@@ -68,36 +69,41 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --force)
             FORCE_BUILD=true
+            shift
             ;;
-        -h|--help)
+        --help|-h)
             print_banner
             show_help
             exit 0
             ;;
         *)
             print_error "Unknown argument: $1"
-            show_help
+            print_info "Use --help for usage information"
             exit 1
             ;;
     esac
-    shift
 done
 
 print_banner
 echo ""
 
-# Load modules only if available (skip in local development)
+# Check if running on compute node (module system available)
 if command -v module >/dev/null 2>&1; then
+    print_info "Loading Apptainer modules..."
     module load env/release/2023.1
-    module load Apptainer/1.2.4-GCCcore-12.3.0 || { echo "ERROR: Apptainer module not available"; exit 1; }
+    module load Apptainer/1.2.4-GCCcore-12.3.0 || {
+        print_error "Apptainer module not available"
+        exit 1
+    }
 else
     print_warning "Module system not available - assuming Apptainer is in PATH"
 fi
 
-# Check if apptainer is available
+# Check if Apptainer is available
 if ! command -v apptainer >/dev/null 2>&1; then
     print_error "Apptainer not found in PATH"
     print_info "Please ensure Apptainer is installed and available"
+    print_info "On Meluxina compute nodes, run: module load Apptainer/1.2.4-GCCcore-12.3.0"
     exit 1
 fi
 
@@ -106,7 +112,7 @@ print_success "Apptainer found: $(apptainer --version)"
 # Check if definition file exists
 if [ ! -f "$DEFINITION_FILE" ]; then
     print_error "Definition file '$DEFINITION_FILE' not found"
-    print_info "Make sure you're in the correct directory with the .def file"
+    print_info "Please ensure the definition file exists in the current directory"
     exit 1
 fi
 
@@ -114,19 +120,17 @@ print_success "Definition file found: $DEFINITION_FILE"
 
 # Check if container already exists
 if [ -f "$CONTAINER_IMAGE" ] && [ "$FORCE_BUILD" = "false" ]; then
-    print_warning "Container image '$CONTAINER_IMAGE' already exists"
-    print_info "Use --force to rebuild or remove the existing image"
-    
-    # Show container info
+    print_warning "Container '$CONTAINER_IMAGE' already exists"
+    print_info "Use --force to rebuild or remove the existing container"
     echo ""
     print_info "Existing container information:"
     apptainer inspect "$CONTAINER_IMAGE" 2>/dev/null || echo "  Unable to inspect container"
-    
     exit 0
 fi
 
+# Remove existing container if force build
 if [ -f "$CONTAINER_IMAGE" ] && [ "$FORCE_BUILD" = "true" ]; then
-    print_warning "Removing existing container image..."
+    print_info "Removing existing container for rebuild..."
     rm -f "$CONTAINER_IMAGE"
 fi
 
@@ -160,7 +164,7 @@ if apptainer build "$CONTAINER_IMAGE" "$DEFINITION_FILE"; then
     
     echo ""
     print_info "You can now use the container with:"
-    echo -e "  ${CYAN}./start_client_service.sh <server_address> <time> --container${NC}"
+    echo -e "  ${CYAN}apptainer run $CONTAINER_IMAGE <server_address> <client_group_id> [slurm_config]${NC}"
     
 else
     echo ""

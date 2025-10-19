@@ -21,7 +21,6 @@ From: python:3.11-slim
     # Copy the entire client service source code
     client_service/         /app/src/
     __init__.py             /app/src/
-    start_client_service.sh /app/src/
     main.py                 /app/src/
     requirements.txt        /app/src/
 
@@ -44,7 +43,6 @@ From: python:3.11-slim
     pip install --no-cache-dir -r requirements.txt
     
     # Make scripts executable
-    chmod +x /app/src/start_client_service.sh
     chmod +x /app/src/client_service/deployment/start_client.sh
 
 %runscript

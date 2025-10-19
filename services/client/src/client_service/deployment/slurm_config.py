@@ -97,7 +97,7 @@ class SlurmConfig:
                 
         except Exception as e:
             logger.error(f"Failed to load config from file {file_path}: {e}")
-            # Continue with auto-detected values
+            logger.error("Continuing with auto-detected values")
             
         return instance
 

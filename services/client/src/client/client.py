@@ -1,64 +1,94 @@
 import logging 
 import threading
-from typing import List
+from typing import List, Optional
 import time
 
 import requests
 
-from client.server_proxy.server_proxy import ServerProxy
 from client.client_observer import ClientObserver
 logging.basicConfig(level=logging.DEBUG)
 
-class Client:
+class VLLMClient:
     num_clients : int = 0
-    def __init__(self, server_proxy: ServerProxy, recipe: str):
+    _service_id: Optional[str] = None  # Static variable for service ID
+    _server_base_url: Optional[str] = None  # Static variable for server URL
+    
+    def __init__(self, recipe: str = "inference/vllm"):
         # Private attributes
         self._observers : List[ClientObserver] = []
-        self._server_proxy = server_proxy
         self._recipe = recipe
 
         # Public attributes
-        self.client_id = Client.num_clients
+        self.client_id = VLLMClient.num_clients
         self.thread : threading.Thread
 
-        Client.num_clients += 1
-        pass
+        VLLMClient.num_clients += 1
 
-    def run(self):
-        # Do something here
-        logging.debug(f"Client {self.client_id} is running.")
-
-        BASE_URL = "http://mel0398:8001"
-
-
+    @staticmethod
+    def setup_benchmark(server_base_url: str) -> Optional[str]:
+        """
+        Setup benchmark by creating a vLLM service and returning the service ID.
+        This should be called once before starting all clients.
+        
+        Args:
+            server_base_url: Base URL of the server (e.g., "http://server:8000")
+            
+        Returns:
+            service_id if successful, None if failed
+        """
+        VLLMClient._server_base_url = server_base_url
+        
         payload = {
             "recipe_name": "inference/vllm",
             "config": {"nodes": 1, "cpus": 2, "memory": "8G"}
         }
-        resp = requests.post(f"{BASE_URL}/api/v1/services", json=payload)
-        print(resp.json())
-
-        # response = requests.get(f"{BASE_URL}/api/v1/services")
-        # if ( response.status_code != 200 ):
-        #     services = response.json()
-        #     logging.debug(f"Client {self.client_id} failed to get services: {response.status_code}")
-        #     logging.debug(f"Client {self.client_id} got services: {services}")
-        #     return
-        # else:
-        #     services = response.json()
-        #     logging.debug(f"Client {self.client_id} got services: {services}")
         
-        # resp = requests.get(f"{BASE_URL}/api/v1/vllm/services")
-        # print(resp.json())
-        service_id = "3639826"
+        try:
+            resp = requests.post(f"{server_base_url}/api/v1/services", json=payload)
+            if resp.status_code == 200:
+                service_data = resp.json()
+                service_id = service_data.get("id")
+                VLLMClient._service_id = str(service_id) if service_id else None
+                logging.info(f"vLLM service created with ID: {VLLMClient._service_id}")
+                return VLLMClient._service_id
+            else:
+                logging.error(f"Failed to create vLLM service: {resp.status_code} - {resp.text}")
+                return None
+        except Exception as e:
+            logging.error(f"Error creating vLLM service: {e}")
+            return None
+
+    def run(self):
+        """Run the vLLM client - makes requests to the vLLM service"""
+        logging.debug(f"VLLMClient {self.client_id} is running.")
+
+        # Check if service is set up
+        if not VLLMClient._service_id or not VLLMClient._server_base_url:
+            logging.error(f"VLLMClient {self.client_id}: Service not set up. Call setup_benchmark() first.")
+            return
+
+        # Make a prompt request to the vLLM service
         payload = {
             "prompt": "How many r has the word 'apple'?",
             "max_tokens": 500,
             "temperature": 0.7
         }
-        resp = requests.post(f"{BASE_URL}/api/v1/vllm/{service_id}/prompt", json=payload)
-        print(resp.json())
+        
+        try:
+            resp = requests.post(
+                f"{VLLMClient._server_base_url}/api/v1/vllm/{VLLMClient._service_id}/prompt", 
+                json=payload
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                logging.info(f"VLLMClient {self.client_id}: Prompt response received")
+                logging.debug(f"VLLMClient {self.client_id}: Response: {result}")
+            else:
+                logging.error(f"VLLMClient {self.client_id}: Prompt request failed: {resp.status_code} - {resp.text}")
+        except Exception as e:
+            logging.error(f"VLLMClient {self.client_id}: Error making prompt request: {e}")
 
+        # Notify observers
         for observer in self._observers:
             observer.update({})
 

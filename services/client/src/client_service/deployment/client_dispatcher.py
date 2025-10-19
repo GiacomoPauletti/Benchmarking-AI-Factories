@@ -15,9 +15,13 @@ class AbstractClientDispatcher:
 class SlurmClientDispatcher(AbstractClientDispatcher):
     slurm_config : SlurmConfig = SlurmConfig.tmp_load_default()
 
-    def __init__(self, server_addr : str, client_service_addr: str, slurm_config: SlurmConfig = SlurmConfig.tmp_load_default()):
+    def __init__(self, server_addr : str, client_service_addr: str, slurm_config: SlurmConfig = SlurmConfig.tmp_load_default(), use_container: bool = False):
         self._server_addr = server_addr
         self._client_service_addr = client_service_addr
+        self._use_container = use_container
+        print("\n\n==============================================")
+        print(f"SlurmClientDispatcher initialized with use_container={use_container}")
+        print("============================================== \n\n")
         self._JOB = f"""echo 'Hello, world'"""
 
     def dispatch(self, num_clients: int, benchmark_id: int, time: int = 5):
@@ -36,6 +40,10 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         # Check and refresh token if needed before making the request (default threshold: 2 minutes)
         self.slurm_config.refresh_token_if_needed(threshold_seconds=300)
 
+        # Build script command based on container mode
+        container_flag = " --container" if self._use_container else ""
+        script_command = f"./client_service/deployment/start_client.sh {num_clients} {self._server_addr} {self._client_service_addr} {benchmark_id}{container_flag}"
+        
         response = requests.post(
             f'{self.slurm_config.url}/slurm/{self.slurm_config.api_ver}/job/submit',
             headers={
@@ -43,7 +51,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
                 'X-SLURM-USER-TOKEN': f'{self.slurm_config.token}'
             },
             json={
-                'script': f"""#!/bin/bash -l\n ./client_service/deployment/start_client.sh {num_clients} {self._server_addr} {self._client_service_addr} {benchmark_id}\n""",
+                'script': f"""#!/bin/bash -l\n {script_command}\n""",
                 'job': {
                     'qos': 'default',
                     'time_limit': time,

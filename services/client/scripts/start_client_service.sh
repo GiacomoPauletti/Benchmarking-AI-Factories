@@ -11,7 +11,7 @@ set -e
 
 # Default values
 DEFAULT_SLURM_CONFIG="example_slurm_config"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="../src"
 LOCAL_MODE=false
 CONTAINER_MODE=false
 USE_CURRENT_NODE=false
@@ -163,30 +163,30 @@ fi
 validate_time_format "$TIME_ALLOCATION" || exit 1
 
 # Check if we're in the correct directory
-if [ ! -f "main.py" ]; then
-    print_error "main.py not found in current directory"
-    print_info "Please run this script from the client service directory:"
-    print_info "cd /path/to/services/client/src && ./start_client_service.sh"
+if [ ! -f "$SCRIPT_DIR/main.py" ]; then
+    print_error "main.py not found in $SCRIPT_DIR directory"
+    print_info "Please run this script from the client scripts directory:"
+    print_info "cd /path/to/services/client/scripts && ./start_client_service.sh"
     exit 1
 fi
 
 # Check container requirements if container mode is enabled
 if [ "$CONTAINER_MODE" = "true" ]; then
     # Check if container image exists
-    if [ ! -f "$CONTAINER_IMAGE" ]; then
-        print_error "Container image '$CONTAINER_IMAGE' not found"
+    if [ ! -f "$SCRIPT_DIR/$CONTAINER_IMAGE" ]; then
+        print_error "Container image '$CONTAINER_IMAGE' not found in $SCRIPT_DIR"
         print_info "Please build the container first with:"
-        print_info "apptainer build $CONTAINER_IMAGE client_service.def"
+        print_info "cd scripts && ./build_service_container.sh"
         exit 1
     fi
     
-    print_success "Container image found: $CONTAINER_IMAGE"
+    print_success "Container image found: $SCRIPT_DIR/$CONTAINER_IMAGE"
     print_info "Apptainer will be loaded on the compute node"
 fi
 
 # Check if Slurm config file exists (only if not in local mode)
-if [ "$LOCAL_MODE" = "false" ] && [ ! -f "$SLURM_CONFIG" ]; then
-    print_warning "Slurm config file '$SLURM_CONFIG' not found"
+if [ "$LOCAL_MODE" = "false" ] && [ ! -f "$SCRIPT_DIR/$SLURM_CONFIG" ]; then
+    print_warning "Slurm config file '$SLURM_CONFIG' not found in $SCRIPT_DIR"
     print_info "The service will use auto-detected Slurm configuration"
     SLURM_CONFIG=""
 fi
@@ -271,27 +271,37 @@ run_client_service() {
     # Start the client service
     if [ "$CONTAINER_MODE" = "true" ]; then
         if [ -n "$SLURM_CONFIG" ]; then
-            echo "Starting: apptainer run $CONTAINER_IMAGE $SERVER_ADDRESS $SLURM_CONFIG"
+            echo "Starting: apptainer run $SCRIPT_DIR/$CONTAINER_IMAGE $SERVER_ADDRESS $SLURM_CONFIG"
             apptainer run \
                 --env USER="$CONTAINER_USER" \
                 --env SLURM_JWT="$HOST_JWT" \
                 --bind /home/users/${CONTAINER_USER}:/home/users/${CONTAINER_USER} \
-                "$CONTAINER_IMAGE" "$SERVER_ADDRESS" "$SLURM_CONFIG"
+                "$SCRIPT_DIR/$CONTAINER_IMAGE" "$SERVER_ADDRESS" "$SLURM_CONFIG" --container
         else
-            echo "Starting: apptainer run $CONTAINER_IMAGE $SERVER_ADDRESS"
+            echo "Starting: apptainer run $SCRIPT_DIR/$CONTAINER_IMAGE $SERVER_ADDRESS"
             apptainer run \
                 --env USER="$CONTAINER_USER" \
                 --env SLURM_JWT="$HOST_JWT" \
                 --bind /home/users/${CONTAINER_USER}:/home/users/${CONTAINER_USER} \
-                "$CONTAINER_IMAGE" "$SERVER_ADDRESS"
+                "$SCRIPT_DIR/$CONTAINER_IMAGE" "$SERVER_ADDRESS" --container
         fi
     else
         if [ -n "$SLURM_CONFIG" ]; then
-            echo "Starting: python3 main.py $SERVER_ADDRESS $SLURM_CONFIG"
-            python3 main.py "$SERVER_ADDRESS" "$SLURM_CONFIG"
+            if [ "$CONTAINER_MODE" = "true" ]; then
+                echo "Starting: python3 main.py $SERVER_ADDRESS $SLURM_CONFIG --container"
+                cd "$SCRIPT_DIR" && python3 main.py "$SERVER_ADDRESS" "$SLURM_CONFIG" --container
+            else
+                echo "Starting: python3 main.py $SERVER_ADDRESS $SLURM_CONFIG"
+                cd "$SCRIPT_DIR" && python3 main.py "$SERVER_ADDRESS" "$SLURM_CONFIG"
+            fi
         else
-            echo "Starting: python3 main.py $SERVER_ADDRESS"
-            python3 main.py "$SERVER_ADDRESS"
+            if [ "$CONTAINER_MODE" = "true" ]; then
+                echo "Starting: python3 main.py $SERVER_ADDRESS --container"
+                cd "$SCRIPT_DIR" && python3 main.py "$SERVER_ADDRESS" --container
+            else
+                echo "Starting: python3 main.py $SERVER_ADDRESS"
+                cd "$SCRIPT_DIR" && python3 main.py "$SERVER_ADDRESS"
+            fi
         fi
     fi
 }
@@ -362,27 +372,37 @@ salloc -A $SLURM_ACCOUNT -t $TIME_ALLOCATION -p cpu -q $SLURM_QOS -N $SLURM_NODE
     # Start the client service
     if [ "$CONTAINER_MODE" = "true" ]; then
         if [ -n "$SLURM_CONFIG" ]; then
-            echo "Starting: apptainer run $CONTAINER_IMAGE $SERVER_ADDRESS $SLURM_CONFIG"
+            echo "Starting: apptainer run $SCRIPT_DIR/$CONTAINER_IMAGE $SERVER_ADDRESS $SLURM_CONFIG"
             apptainer run \\
                 --env USER="\$CONTAINER_USER" \\
                 --env SLURM_JWT="\$HOST_JWT" \\
                 --bind /home/users/\${CONTAINER_USER}:/home/users/\${CONTAINER_USER} \\
-                "$CONTAINER_IMAGE" "$SERVER_ADDRESS" "$SLURM_CONFIG"
+                "$SCRIPT_DIR/$CONTAINER_IMAGE" "$SERVER_ADDRESS" "$SLURM_CONFIG" --container
         else
-            echo "Starting: apptainer run $CONTAINER_IMAGE $SERVER_ADDRESS"
+            echo "Starting: apptainer run $SCRIPT_DIR/$CONTAINER_IMAGE $SERVER_ADDRESS"
             apptainer run \\
                 --env USER="\$CONTAINER_USER" \\
                 --env SLURM_JWT="\$HOST_JWT" \\
                 --bind /home/users/\${CONTAINER_USER}:/home/users/\${CONTAINER_USER} \\
-                "$CONTAINER_IMAGE" "$SERVER_ADDRESS"
+                "$SCRIPT_DIR/$CONTAINER_IMAGE" "$SERVER_ADDRESS" --container
         fi
     else
         if [ -n "$SLURM_CONFIG" ]; then
-            echo "Starting: python3 main.py $SERVER_ADDRESS $SLURM_CONFIG"
-            python3 main.py "$SERVER_ADDRESS" "$SLURM_CONFIG"
+            if [ "$CONTAINER_MODE" = "true" ]; then
+                echo "Starting: python3 main.py $SERVER_ADDRESS $SLURM_CONFIG --container"
+                python3 main.py "$SERVER_ADDRESS" "$SLURM_CONFIG" --container
+            else
+                echo "Starting: python3 main.py $SERVER_ADDRESS $SLURM_CONFIG"
+                python3 main.py "$SERVER_ADDRESS" "$SLURM_CONFIG"
+            fi
         else
-            echo "Starting: python3 main.py $SERVER_ADDRESS"
-            python3 main.py "$SERVER_ADDRESS"
+            if [ "$CONTAINER_MODE" = "true" ]; then
+                echo "Starting: python3 main.py $SERVER_ADDRESS --container"
+                python3 main.py "$SERVER_ADDRESS" --container
+            else
+                echo "Starting: python3 main.py $SERVER_ADDRESS"
+                python3 main.py "$SERVER_ADDRESS"
+            fi
         fi
     fi
 EOF

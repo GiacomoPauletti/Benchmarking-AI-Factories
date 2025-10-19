@@ -66,15 +66,26 @@ class ClientService:
 # ======================================== MAIN =========================================
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        logging.fatal("Usage: python main.py <server_addr> [path_to_slurm_config_file]")
+        logging.fatal("Usage: python main.py <server_addr> [path_to_slurm_config_file] [--container]")
         sys.exit(1)
 
     server_addr = sys.argv[1]
+    use_container = False
+    slurm_config_path = None
+    
+    # Parse remaining arguments
+    for i in range(2, len(sys.argv)):
+        arg = sys.argv[i]
+        if arg == "--container":
+            use_container = True
+            logging.info("Container mode enabled for client execution")
+        elif not arg.startswith("--") and slurm_config_path is None:
+            # This is the slurm config file path
+            slurm_config_path = arg
     
     # Load Slurm configuration
-    if len(sys.argv) >= 3:
+    if slurm_config_path:
         # Use provided config file
-        slurm_config_path = sys.argv[2]
         SlurmClientDispatcher.slurm_config = SlurmConfig.load_from_file(slurm_config_path)
         logging.info(f"Loaded Slurm config from file: {slurm_config_path}")
     else:
@@ -88,6 +99,6 @@ if __name__ == "__main__":
     CLIENT_SERVICE_PORT = 8001
 
     client_manager = ClientManager()
-    client_manager.configure(server_addr=server_addr, client_service_addr=f"http://{CLIENT_SERVICE_IP}:{CLIENT_SERVICE_PORT}")
+    client_manager.configure(server_addr=server_addr, client_service_addr=f"http://{CLIENT_SERVICE_IP}:{CLIENT_SERVICE_PORT}", use_container=use_container)
 
     uvicorn.run("main:app", host=CLIENT_SERVICE_IP, port=CLIENT_SERVICE_PORT)

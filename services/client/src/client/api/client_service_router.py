@@ -4,6 +4,7 @@ import logging
 from typing import List
 
 from ..client_group import ClientGroup
+from ..client import VLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,17 @@ async def run_clients():
         return RunResponse(status="error", num_clients=0)
     
     logger.info(f"Starting {client_group.num_clients} clients for benchmark {client_group.benchmark_id}")
+    
+    # Setup benchmark before running clients
+    if client_group.server_addr:
+        service_id = VLLMClient.setup_benchmark(client_group.server_addr)
+        if not service_id:
+            logger.error("Failed to setup vLLM benchmark service")
+            return RunResponse(status="error", num_clients=0)
+        logger.info(f"vLLM benchmark service setup complete with ID: {service_id}")
+    else:
+        logger.error("Server address not configured")
+        return RunResponse(status="error", num_clients=0)
     
     # Use ClientGroup's run_all_clients method
     started_count = client_group.run_all_clients()
