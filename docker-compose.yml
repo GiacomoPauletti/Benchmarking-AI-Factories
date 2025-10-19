@@ -59,18 +59,17 @@ services:
   # Documentation service
   docs:
     build:
-      context: ./docs
+      context: ./docs-src
       dockerfile: Dockerfile
     container_name: benchmarking-ai-docs
     ports:
       - "8000:8000"
     volumes:
-      # Mount docs for hot-reload during development
-      - ./docs:/docs
+      # Mount docs source for hot-reload during development
+      - ./docs-src:/docs-src
       - ./mkdocs.yml:/mkdocs.yml
-      # Mount .git directory for gh-deploy
-      - ./.git:/.git
-      - ./site:/site
+      # Mount output directory
+      - ./docs:/docs
     working_dir: /
     command: mkdocs serve --dev-addr=0.0.0.0:8000
     restart: unless-stopped

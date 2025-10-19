@@ -4,7 +4,8 @@ site_author: EUMaster4HPC Challenge Team
 repo_url: https://github.com/GiacomoPauletti/Benchmarking-AI-Factories
 repo_name: GiacomoPauletti/Benchmarking-AI-Factories
 
-site_dir: ../site
+docs_dir: docs-src
+site_dir: docs
 
 theme:
   name: material
@@ -72,7 +73,6 @@ nav:
   - Architecture:
       - System Overview: architecture/overview.md
       - Microservices: architecture/microservices.md
-      - Container Orchestration: architecture/container-orchestration.md
   - Services:
       - Server: services/server/api-reference.md
       - Client: services/client.md
