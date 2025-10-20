@@ -1,0 +1,15 @@
+name: qdrant
+category: vector-db
+description: "Qdrant vector database for semantic search and RAG"
+version: "1.7.4"
+image: "qdrant.sif"
+container_def: "qdrant.def"
+ports:
+  - 6333  # REST API
+environment:
+  QDRANT__SERVICE__HTTP_PORT: "6333"
+resources:
+  nodes: "1"
+  cpu: "4"
+  memory: "8G"
+  time_limit: 60

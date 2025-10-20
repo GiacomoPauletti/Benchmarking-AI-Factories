@@ -31,6 +31,7 @@ class TestLiveServerIntegration:
         Get the live server endpoint if available.
         
         Skips tests if no live server is detected.
+        Reads from .server-endpoint file created by launch_local.sh.
         """
         endpoint_file = Path("/app/services/server/.server-endpoint")
         if not endpoint_file.exists():
@@ -151,7 +152,7 @@ class TestLiveServerIntegration:
         assert status_response.status_code == 200
         status_data = status_response.json()
         assert "status" in status_data
-        assert status_data["status"] in ["pending", "running", "completed", "failed"]
+        assert status_data["status"] in ["pending", "starting", "running", "completed", "failed"]
         
         # Test getting service logs
         logs_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/logs", timeout=10)

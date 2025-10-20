@@ -374,6 +374,35 @@ async def list_vllm_services():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/vector-db/services")
+async def list_vector_db_services():
+    """List all running vector database services.
+
+    Returns a list of vector database services (Qdrant, Chroma, etc.) with their endpoints.
+
+    **Example Response:**
+    ```json
+    {
+      "vector_db_services": [
+        {
+          "id": "3642875",
+          "name": "qdrant-service",
+          "recipe_name": "vector-db/qdrant",
+          "endpoint": "http://mel2079:6333",
+          "status": "running"
+        }
+      ]
+    }
+    ```
+    """
+    server_service = ServerService()
+    try:
+        vector_db_services = server_service.find_vector_db_services()
+        return {"vector_db_services": vector_db_services}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/vllm/{service_id}/prompt", summary="Send a prompt to a running vLLM service")
 async def prompt_vllm_service(
     service_id: str,

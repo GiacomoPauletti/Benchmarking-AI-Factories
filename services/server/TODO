@@ -1,11 +1,11 @@
 DOCS:
-- Document Server better (remove outsdated docs).
 - Create diagram showcasing CI (testing) pipeline. Add this to the docs.
 OTHER:
 - Test multi-node vllm.
 - Create HF auth mechanism.
-- Create vec-db mechanism. Separate vllm and vec-db logic from slurm deployer logic?
-- Pull.
+- Separate vllm and vec-db logic from slurm deployer logic? 
+Create deployment folder with one module for slurm, another for vllm, another for vec-db. Way to make code more elegant (abstract classes)?
+- Test vec-db.
 
 Things to Benchmark:
 vllm:

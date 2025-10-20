@@ -175,6 +175,23 @@ interactive_mode() {
                     fi
                 fi
                 ;;
+            "vectordb"|"vector-db")
+                if [ -z "$1" ]; then
+                    echo "Vector DB Commands:"
+                    echo "  vectordb list       - List running vector database services"
+                    echo "Usage: vectordb <subcommand>"
+                else
+                    case "$1" in
+                        "list")
+                            api_call "GET" "/api/v1/vector-db/services"
+                            ;;
+                        *)
+                            echo "Unknown Vector DB command: $1"
+                            echo "Available: list"
+                            ;;
+                    esac
+                fi
+                ;;
             "vllm")
                 if [ -z "$1" ]; then
                     echo "VLLM Commands:"
@@ -279,6 +296,7 @@ interactive_mode() {
                 echo "  vllm list           - List running VLLM services"
                 echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
                 echo "  prompt <id> <prompt> - Shorthand for vllm prompt"
+                echo "  vectordb list       - List running vector database services"
                 echo "  endpoint            - Show current server endpoint"
                 echo "  clear               - Clear screen and show status"
                 echo "  help                - Show this help"
@@ -287,8 +305,10 @@ interactive_mode() {
                 echo "Examples:"
                 echo "  recipes"
                 echo "  create inference/vllm_dummy"
+                echo "  create vector-db/qdrant"
                 echo "  service abc123"
                 echo "  vllm list"
+                echo "  vectordb list"
                 echo "  prompt 12345 'Tell me a joke'"
                 ;;
             *)
@@ -367,6 +387,19 @@ case "${1}" in
             exit 1
         fi
         api_call "DELETE" "/api/v1/services/$2"
+        ;;
+    "vectordb"|"vector-db")
+        case "${2}" in
+            "list")
+                api_call "GET" "/api/v1/vector-db/services"
+                ;;
+            *)
+                echo "Usage: $0 vectordb <subcommand>"
+                echo "Available subcommands:"
+                echo "  list                     - List running vector database services"
+                exit 1
+                ;;
+        esac
         ;;
     "vllm")
         case "${2}" in
@@ -462,6 +495,7 @@ case "${1}" in
         echo "  vllm list           - List running VLLM services"
         echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
         echo "  prompt <id> <prompt> - Shorthand for vllm prompt"
+        echo "  vectordb list       - List running vector database services"
         echo "  endpoint            - Show current server endpoint"
         echo "  help                - Show this help"
         echo ""
@@ -470,8 +504,10 @@ case "${1}" in
         echo "  $0 status"
         echo "  $0 recipes"
         echo "  $0 create inference/vllm_dummy"
+        echo "  $0 create vector-db/qdrant"
         echo "  $0 service abc123"
         echo "  $0 vllm list"
+        echo "  $0 vectordb list"
         echo "  $0 prompt 12345 'Tell me a joke'"
         ;;
     *)

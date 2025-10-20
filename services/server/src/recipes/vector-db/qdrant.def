@@ -1,0 +1,31 @@
+Bootstrap: docker
+From: qdrant/qdrant:latest
+
+%labels
+    Description "Apptainer container for Qdrant vector database"
+    Version latest
+
+%post
+    mkdir -p /qdrant_data
+    chmod -R 777 /qdrant_data
+
+%environment
+    export QDRANT__SERVICE__HTTP_PORT=6333
+    export QDRANT__STORAGE__STORAGE_PATH=/workspace/qdrant_data
+
+%runscript
+    echo "Starting Qdrant vector database..."
+    echo "REST API: ${QDRANT__SERVICE__HTTP_PORT:-6333}"
+    echo "Storage: ${QDRANT__STORAGE__STORAGE_PATH:-/qdrant/storage}"
+    
+    # Find and execute qdrant binary
+    if [ -f /qdrant/qdrant ]; then
+        exec /qdrant/qdrant
+    elif [ -f ./qdrant ]; then
+        exec ./qdrant
+    elif command -v qdrant >/dev/null 2>&1; then
+        exec qdrant
+    else
+        echo "ERROR: qdrant binary not found"
+        exit 1
+    fi

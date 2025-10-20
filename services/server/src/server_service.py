@@ -4,15 +4,17 @@ Orchestrates AI workloads using SLURM + Apptainer.
 """
 
 from pathlib import Path
-import yaml
 import requests
 from typing import Dict, List, Optional, Any
 import logging
 
 from slurm import SlurmDeployer
 from service_manager import ServiceManager
+from utils.recipe_loader import RecipeLoader
+from utils.endpoint_resolver import EndpointResolver
 
 DEFAULT_VLLM_PORT = 8001
+DEFAULT_QDRANT_PORT = 6333
 
 class ServerService:
     """Main server service class with SLURM-based orchestration."""
@@ -23,6 +25,10 @@ class ServerService:
         self.deployer = SlurmDeployer()
         self.recipes_dir = Path(__file__).parent / "recipes"
         self.service_manager = ServiceManager()
+        
+        # Initialize helper utilities
+        self.recipe_loader = RecipeLoader(self.recipes_dir)
+        self.endpoint_resolver = EndpointResolver(self.deployer, self.service_manager, self.recipe_loader)
 
     def start_service(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Start a service based on recipe using SLURM + Apptainer."""
@@ -60,26 +66,7 @@ class ServerService:
         
     def list_available_recipes(self) -> List[Dict[str, Any]]:
         """List all available service recipes."""
-        recipes = []
-        
-        if self.recipes_dir.exists():
-            for category_dir in self.recipes_dir.iterdir():
-                if category_dir.is_dir():
-                    for yaml_file in category_dir.glob("*.yaml"):
-                        try:
-                            with open(yaml_file, 'r') as f:
-                                recipe = yaml.safe_load(f)
-                                recipes.append({
-                                    "name": recipe["name"],
-                                    "category": recipe["category"],
-                                    "description": recipe["description"],
-                                    "version": recipe["version"],
-                                    "path": f"{category_dir.name}/{yaml_file.stem}"
-                                })
-                        except Exception:
-                            continue
-        
-        return recipes
+        return self.recipe_loader.list_all()
         
     def list_running_services(self) -> List[Dict[str, Any]]:
         """List currently running services (only services started by this server)."""
@@ -167,48 +154,39 @@ class ServerService:
         
         return vllm_services
     
+    def find_vector_db_services(self) -> List[Dict[str, Any]]:
+        """Find running vector database services and their endpoints."""
+        services = self.list_running_services()
+        vector_db_services = []
+        
+        for service in services:
+            recipe_name = service.get("recipe_name", "").lower()
+            
+            # Match vector-db category
+            if "vector-db" in recipe_name or recipe_name in ["qdrant", "chroma", "faiss"]:
+                job_id = service.get("id")
+                endpoint = self._get_vector_db_endpoint(job_id)
+                status = service.get("status", "unknown")
+                vector_db_services.append({
+                    "id": job_id,
+                    "name": service.get("name"),
+                    "recipe_name": service.get("recipe_name", "unknown"),
+                    "endpoint": endpoint,
+                    "status": status
+                })
+        
+        return vector_db_services
+    
+    def _get_vector_db_endpoint(self, job_id: str) -> Optional[str]:
+        """Get the endpoint for a vector database service running on SLURM."""
+        return self.endpoint_resolver.resolve(job_id, default_port=DEFAULT_QDRANT_PORT)
+    
     def _get_vllm_endpoint(self, job_id: str) -> Optional[str]:
         """Get the endpoint for a VLLM service running on SLURM."""
-        try:
-            job_details = self.deployer.get_job_details(job_id)
-            # self.logger.debug("job_details for %s: %s", job_id, job_details)
-            if job_details and "nodes" in job_details and job_details["nodes"]:
-                node = job_details["nodes"][0]
-                port = None
-                try:
-                    # Look up registered service to find recipe name
-                    service = self.service_manager.get_service(job_id)
-                    recipe_name = service.get('recipe_name') if service else None
-                    if recipe_name:
-                        # recipes live next to this module (same layout as SlurmDeployer uses)
-                        base = Path(__file__).parent / 'recipes'
-                        # recipe_name can be 'category/name' or just 'name'
-                        if '/' in recipe_name:
-                            category, name = recipe_name.split('/', 1)
-                            recipe_path = base / category / f"{name}.yaml"
-                        else:
-                            # search
-                            found = list(base.rglob(f"{recipe_name}.yaml"))
-                            recipe_path = found[0] if found else None
-
-                        if recipe_path and recipe_path.exists():
-                            with open(recipe_path, 'r') as f:
-                                recipe = yaml.safe_load(f)
-                                env = recipe.get('environment', {}) if isinstance(recipe, dict) else {}
-                                port = str(env.get('VLLM_PORT') or (recipe.get('ports', [None])[0] if recipe.get('ports') else None))
-                except Exception:
-                    self.logger.debug("Could not read recipe to determine VLLM_PORT for job %s", job_id, exc_info=True)
-
-                if not port:
-                    port = DEFAULT_VLLM_PORT
-
-                endpoint = f"http://{node}:{port}"
-                self.logger.debug("_get_vllm_endpoint returning %s for job %s", endpoint, job_id)
-                return endpoint
-            return None
-        except Exception as e:
-            self.logger.exception("Error getting endpoint for %s: %s", job_id, e)
-            return None
+        endpoint = self.endpoint_resolver.resolve(job_id, default_port=DEFAULT_VLLM_PORT)
+        if endpoint:
+            self.logger.debug("_get_vllm_endpoint returning %s for job %s", endpoint, job_id)
+        return endpoint
 
     def get_vllm_models(self, service_id: str, timeout: int = 5) -> List[str]:
         """Query a running VLLM service for available models.

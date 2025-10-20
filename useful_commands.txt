@@ -25,12 +25,6 @@ docker compose up server
 cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
 ./services/server/run-tests.sh
 
-# Or manually run specific tests
-docker compose exec server pip install pytest pytest-mock
-docker compose exec server python -m pytest tests/test_api.py -v          # Unit tests only
-docker compose exec server python -m pytest tests/test_integration.py -v  # Integration tests
-docker compose exec server python -m pytest tests/ -v                     # All tests
-
 #### API TESTING (Local Server) ####
 # Server runs on http://localhost:8001
 
@@ -56,6 +50,12 @@ vllm models 3652057
 
 # Send prompts 
 prompt 3652098 'Tell me a joke about programming'
+
+# Create vecdb qdrant service
+create vector-db/qdrant
+
+# List all vecdb services
+vectordb list
 
 #### API CURL EXAMPLES ####
 # Create vLLM with custom model AND custom resources

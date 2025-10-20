@@ -21,10 +21,8 @@ src/
 ├── deployment/
 │   └── slurm.py         # SLURM REST API integration
 ├── recipes/             # YAML recipe definitions
-│   ├── inference/       # vLLM, Triton
-│   ├── storage/         # MinIO, PostgreSQL
-│   ├── vector-db/       # Chroma, FAISS
-│   └── simple/          # Test recipes
+│   ├── inference/       # vLLM
+│   ├── vector-db/       # Qdrant
 └── health/              # Health checking utilities
 ```
 
@@ -36,9 +34,9 @@ src/
 ## Quick Start
 
 ### Launch Server Locally
+From root:
 ```bash
-cd services/server
-./launch_local.sh
+docker compose up server
 ```
 
 The server will be available at http://localhost:8001
@@ -100,22 +98,12 @@ Run the server locally on your laptop in Docker while tunneling to MeluXina for 
 
 1. **Docker Desktop** installed and running
 2. **SSH access to MeluXina** configured (password-less with SSH keys)
-   ```bash
-   # Add to ~/.ssh/config
-   Host meluxina
-       HostName login.lxp.lu
-       User <your_meluxina_username>
-       IdentityFile ~/.ssh/<your_private_key>
-   ```
-
-See [LOCAL_SETUP.md](LOCAL_SETUP.md) for detailed setup instructions.
 
 #### Setup
 
 1. **Configure environment:**
    ```bash
    cd services/server
-   cp .env.local.example .env.local
    # Edit .env.local with your credentials
    ```
 
@@ -145,14 +133,6 @@ See [LOCAL_SETUP.md](LOCAL_SETUP.md) for detailed setup instructions.
 - Logs are stored locally in `./logs`
 - Hugging Face cache is shared with local filesystem
 
-#### Benefits
-
-✅ Full IDE support (debugging, autocomplete, etc.)  
-✅ Fast iteration without cluster access  
-✅ Use Docker instead of Apptainer locally  
-✅ Only consume MeluXina resources when submitting jobs  
-✅ Test API changes without rebuilding containers  
-
 #### Development Workflow
 
 ```bash
@@ -165,18 +145,7 @@ See [LOCAL_SETUP.md](LOCAL_SETUP.md) for detailed setup instructions.
 # 3. Test API
 curl http://localhost:8001/health
 
-# 4. Submit a test job (executes on MeluXina)
-curl -X POST http://localhost:8001/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{"recipe_name": "hello", "config": {}}'
-
-# 5. Check job status
-curl http://localhost:8001/api/v1/services
-
-# 6. Stop server (Ctrl+C)
 ```
-
-For more detailed setup instructions, see [LOCAL_SETUP.md](LOCAL_SETUP.md).
 
 ### Testing
 
@@ -185,9 +154,9 @@ Run tests locally in Docker:
 ./run-tests.sh
 ```
 
-### Technology Stack
+### Tech Stack
 - **Local Development**: Docker + SSH
-- **Remote Cluster**: MeluXina (Luxembourg)
+- **Remote Cluster**: MeluXina 
 - **Scheduler**: SLURM (via SSH)
 - **Container Runtime**: Apptainer (on cluster)
 - **Language**: Python 3.11+
