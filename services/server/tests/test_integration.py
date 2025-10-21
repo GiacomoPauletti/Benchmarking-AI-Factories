@@ -472,10 +472,22 @@ class TestErrorHandling:
     """
     
     @pytest.fixture
-    def client(self):
-        return TestClient(app)
+    def mock_server_service(self):
+        """Create a mock ServerService instance."""
+        return Mock()
     
-    def test_invalid_service_creation(self, client):
+    @pytest.fixture
+    def client(self, mock_server_service):
+        """Create a test client for the FastAPI app with mocked dependencies."""
+        from api.routes import get_server_service
+        # Override the dependency with our mock
+        app.dependency_overrides[get_server_service] = lambda: mock_server_service
+        client = TestClient(app)
+        yield client
+        # Clean up the override after the test
+        app.dependency_overrides.clear()
+    
+    def test_invalid_service_creation(self, client, mock_server_service):
         """
         Test error handling for invalid service creation requests.
         """
@@ -494,15 +506,12 @@ class TestErrorHandling:
         # Should return 422 (validation error) for empty recipe name
         assert response.status_code == 422
     
-    @patch('api.routes.ServerService')
-    def test_service_backend_errors(self, mock_service_class, client):
+    def test_service_backend_errors(self, mock_server_service, client):
         """
         Test handling of backend service errors.
         """
         # Setup mock to simulate backend failure
-        mock_service = Mock()
-        mock_service.start_service.side_effect = Exception("SLURM connection failed")
-        mock_service_class.return_value = mock_service
+        mock_server_service.start_service.side_effect = Exception("SLURM connection failed")
         
         # This should handle the backend error gracefully
         response = client.post("/api/v1/services", json={

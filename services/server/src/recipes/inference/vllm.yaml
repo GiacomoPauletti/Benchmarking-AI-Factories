@@ -5,7 +5,7 @@ version: "0.2.0"
 image: "vllm.sif"
 container_def: "vllm.def"
 ports:
-  - 8000
+  - 8001
 environment:
   CUDA_VISIBLE_DEVICES: "0"
   VLLM_HOST: "0.0.0.0"

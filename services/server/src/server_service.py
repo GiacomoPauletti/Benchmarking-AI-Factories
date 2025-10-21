@@ -13,9 +13,6 @@ from service_manager import ServiceManager
 from utils.recipe_loader import RecipeLoader
 from utils.endpoint_resolver import EndpointResolver
 
-DEFAULT_VLLM_PORT = 8001
-DEFAULT_QDRANT_PORT = 6333
-
 class ServerService:
     """Main server service class with SLURM-based orchestration."""
 
@@ -29,6 +26,36 @@ class ServerService:
         # Initialize helper utilities
         self.recipe_loader = RecipeLoader(self.recipes_dir)
         self.endpoint_resolver = EndpointResolver(self.deployer, self.service_manager, self.recipe_loader)
+        
+        # Lazy-loaded service handlers (instantiated on first access)
+        self._vllm_service = None
+        self._vector_db_service = None
+    
+    @property
+    def vllm_service(self):
+        """Lazy-load VLLM service handler."""
+        if self._vllm_service is None:
+            from services.vllm_service import VllmService
+            self._vllm_service = VllmService(
+                self.deployer, 
+                self.service_manager, 
+                self.endpoint_resolver, 
+                self.logger
+            )
+        return self._vllm_service
+    
+    @property
+    def vector_db_service(self):
+        """Lazy-load vector database service handler."""
+        if self._vector_db_service is None:
+            from services.vector_db_service import VectorDbService
+            self._vector_db_service = VectorDbService(
+                self.deployer,
+                self.service_manager,
+                self.endpoint_resolver,
+                self.logger
+            )
+        return self._vector_db_service
 
     def start_service(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Start a service based on recipe using SLURM + Apptainer."""
@@ -122,383 +149,22 @@ class ServerService:
 
     def find_vllm_services(self) -> List[Dict[str, Any]]:
         """Find running VLLM services and their endpoints."""
-        services = self.list_running_services()
-        vllm_services = []
-        
-        for service in services:
-            # Check if this is a VLLM service based on name or recipe
-            service_name = service.get("name", "").lower()
-            recipe_name = service.get("recipe_name", "").lower()
-            
-            # Match both vllm services
-            is_vllm_service = (
-                "vllm" in service_name or 
-                "vllm" in recipe_name or
-                any("vllm" in str(val).lower() for val in service.values() if isinstance(val, str))
-            )
-            
-            if is_vllm_service:
-                job_id = service.get("id")
-                # self.logger.debug("Resolving endpoint for vllm job %s", job_id)
-                endpoint = self._get_vllm_endpoint(job_id)
-                # self.logger.info("Resolved endpoint for job %s -> %s", job_id, endpoint)
-                # Get status
-                status = service.get("status", "unknown")
-                vllm_services.append({
-                    "id": job_id,
-                    "name": service.get("name"),
-                    "recipe_name": service.get("recipe_name", "unknown"),
-                    "endpoint": endpoint,
-                    "status": status  
-                })
-        
-        return vllm_services
+        return self.vllm_service.find_services()
     
     def find_vector_db_services(self) -> List[Dict[str, Any]]:
         """Find running vector database services and their endpoints."""
-        services = self.list_running_services()
-        vector_db_services = []
-        
-        for service in services:
-            recipe_name = service.get("recipe_name", "").lower()
-            
-            # Match vector-db category
-            if "vector-db" in recipe_name or recipe_name in ["qdrant", "chroma", "faiss"]:
-                job_id = service.get("id")
-                endpoint = self._get_vector_db_endpoint(job_id)
-                status = service.get("status", "unknown")
-                vector_db_services.append({
-                    "id": job_id,
-                    "name": service.get("name"),
-                    "recipe_name": service.get("recipe_name", "unknown"),
-                    "endpoint": endpoint,
-                    "status": status
-                })
-        
-        return vector_db_services
+        return self.vector_db_service.find_services()
     
-    def _get_vector_db_endpoint(self, job_id: str) -> Optional[str]:
-        """Get the endpoint for a vector database service running on SLURM."""
-        return self.endpoint_resolver.resolve(job_id, default_port=DEFAULT_QDRANT_PORT)
     
-    def _get_vllm_endpoint(self, job_id: str) -> Optional[str]:
-        """Get the endpoint for a VLLM service running on SLURM."""
-        endpoint = self.endpoint_resolver.resolve(job_id, default_port=DEFAULT_VLLM_PORT)
-        if endpoint:
-            self.logger.debug("_get_vllm_endpoint returning %s for job %s", endpoint, job_id)
-        return endpoint
-
-    def get_vllm_models(self, service_id: str, timeout: int = 5) -> List[str]:
+    def get_vllm_models(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
         """Query a running VLLM service for available models.
-
-        Returns a list of model ids (strings). If discovery fails an empty list
-        is returned and the error is logged.
+        
+        Returns a dict with either:
+        - {"success": True, "models": [list of model ids]}
+        - {"success": False, "error": "...", "message": "...", "models": []}
         """
-        try:
-            endpoint = self._get_vllm_endpoint(service_id)
-            if not endpoint:
-                self.logger.debug("No endpoint found for service %s when querying models", service_id)
-                return []
-
-            resp = requests.get(f"{endpoint}/v1/models", timeout=timeout)
-            if not resp.ok:
-                self.logger.warning("Model discovery for %s returned %s: %s", service_id, resp.status_code, resp.text)
-                return []
-
-            self.logger.debug("Model discovery response for %s: %s", service_id, resp.text)
-
-            data = resp.json()
-            models = []
-            
-            # vLLM returns {"object": "list", "data": [...]}
-            if isinstance(data, dict):
-                # Try standard OpenAI format (data field)
-                candidates = data.get('data', [])
-                # Fallback to other possible formats
-                if not candidates:
-                    candidates = data.get('models') or data.get('served_models') or []
-                
-                if isinstance(candidates, list):
-                    for item in candidates:
-                        if isinstance(item, str):
-                            models.append(item)
-                        elif isinstance(item, dict):
-                            model_id = item.get('id') or item.get('model')
-                            if model_id:
-                                models.append(model_id)
-            elif isinstance(data, list):
-                # Direct list format
-                for item in data:
-                    if isinstance(item, str):
-                        models.append(item)
-                    elif isinstance(item, dict):
-                        model_id = item.get('id') or item.get('model')
-                        if model_id:
-                            models.append(model_id)
-
-            return models
-        except Exception:
-            self.logger.exception("Failed to discover models for service %s", service_id)
-            return []
+        return self.vllm_service.get_models(service_id, timeout)
     
-    def _is_chat_template_error(self, response: requests.Response) -> bool:
-        """Check if response indicates a chat template error."""
-        if response.status_code != 400:
-            return False
-        
-        try:
-            body = response.json()
-            if not isinstance(body, dict):
-                return False
-            
-            # Check both direct detail field and nested error.message field
-            error_text = str(body.get("detail", ""))
-            if "error" in body and isinstance(body["error"], dict):
-                error_text += " " + str(body["error"].get("message", ""))
-            
-            return "chat template" in error_text.lower()
-        except Exception:
-            return False
-
-    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Try to send prompt using chat completions endpoint."""
-        # Parse endpoint URL (e.g., "http://mel2079:8001")
-        from urllib.parse import urlparse
-        parsed = urlparse(endpoint)
-        remote_host = parsed.hostname
-        remote_port = parsed.port or 8001
-        path = "/v1/chat/completions"
-        
-        request_data = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": kwargs.get("max_tokens", 500),
-            "temperature": kwargs.get("temperature", 0.7),
-            "stream": False
-        }
-        
-        self.logger.debug("Trying chat endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
-        
-        # Use SSH to make the HTTP request
-        ssh_manager = self.deployer.ssh_manager
-        success, status_code, body = ssh_manager.http_request_via_ssh(
-            remote_host=remote_host,
-            remote_port=remote_port,
-            method="POST",
-            path=path,
-            json_data=request_data,
-            timeout=30
-        )
-        
-        # Create a mock response object that matches requests.Response interface
-        class MockResponse:
-            def __init__(self, status_code, text, ok):
-                self.status_code = status_code
-                self.text = text
-                self.ok = ok
-            
-            def json(self):
-                import json
-                return json.loads(self.text)
-        
-        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
-
-    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Try to send prompt using completions endpoint (for base models)."""
-        # Parse endpoint URL (e.g., "http://mel2079:8001")
-        from urllib.parse import urlparse
-        parsed = urlparse(endpoint)
-        remote_host = parsed.hostname
-        remote_port = parsed.port or 8001
-        path = "/v1/completions"
-        
-        request_data = {
-            "model": model,
-            "prompt": prompt,
-            "max_tokens": kwargs.get("max_tokens", 500),
-            "temperature": kwargs.get("temperature", 0.7),
-            "stream": False
-        }
-        
-        self.logger.debug("Trying completions endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
-        
-        # Use SSH to make the HTTP request
-        ssh_manager = self.deployer.ssh_manager
-        success, status_code, body = ssh_manager.http_request_via_ssh(
-            remote_host=remote_host,
-            remote_port=remote_port,
-            method="POST",
-            path=path,
-            json_data=request_data,
-            timeout=30
-        )
-        
-        # Create a mock response object that matches requests.Response interface
-        class MockResponse:
-            def __init__(self, status_code, text, ok):
-                self.status_code = status_code
-                self.text = text
-                self.ok = ok
-            
-            def json(self):
-                import json
-                return json.loads(self.text)
-        
-        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
-
-    def _parse_chat_response(self, response: requests.Response, endpoint: str, service_id: str) -> Dict[str, Any]:
-        """Parse response from chat completions endpoint."""
-        if not response.ok:
-            body = None
-            try:
-                body = response.json()
-            except Exception:
-                body = response.text
-            
-            return {
-                "success": False,
-                "error": f"vLLM returned {response.status_code}",
-                "endpoint": endpoint,
-                "status_code": response.status_code,
-                "body": body
-            }
-        
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            content = result["choices"][0]["message"]["content"]
-            return {
-                "success": True,
-                "response": content,
-                "service_id": service_id,
-                "endpoint": endpoint,
-                "endpoint_used": "chat",
-                "usage": result.get("usage", {})
-            }
-        
-        return {
-            "success": False,
-            "error": "No response generated",
-            "raw_response": result,
-            "endpoint": endpoint
-        }
-
-    def _parse_completions_response(self, response: requests.Response, endpoint: str, service_id: str) -> Dict[str, Any]:
-        """Parse response from completions endpoint."""
-        if not response.ok:
-            body = None
-            try:
-                body = response.json()
-            except Exception:
-                body = response.text
-            
-            return {
-                "success": False,
-                "error": f"vLLM completions returned {response.status_code}",
-                "endpoint": endpoint,
-                "status_code": response.status_code,
-                "body": body
-            }
-        
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            content = result["choices"][0]["text"]
-            return {
-                "success": True,
-                "response": content,
-                "service_id": service_id,
-                "endpoint": endpoint,
-                "endpoint_used": "completions",
-                "usage": result.get("usage", {})
-            }
-        
-        return {
-            "success": False,
-            "error": "No response generated from completions endpoint",
-            "raw_response": result,
-            "endpoint": endpoint
-        }
-
     def prompt_vllm_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Send a prompt to a running VLLM service.
-        
-        Tries chat endpoint first (for instruction-tuned models).
-        Falls back to completions endpoint if chat template error occurs (for base models).
-        """
-        # Find the VLLM service
-        vllm_services = self.find_vllm_services()
-        target_service = None
-        
-        for service in vllm_services:
-            if service["id"] == service_id:
-                target_service = service
-                break
-        
-        if not target_service:
-            raise RuntimeError(f"VLLM service {service_id} not found or not running")
-        
-        # Check if service is ready
-        status = target_service.get("status", "").lower()
-        if status in ["pending", "starting", "building", "configuring"]:
-            return {
-                "success": False,
-                "error": f"Service is not ready yet (status: {status})",
-                "message": "The vLLM service is still starting up. Please wait a moment and try again.",
-                "service_id": service_id,
-                "status": status,
-                "endpoint": target_service.get("endpoint")
-            }
-        
-        endpoint = target_service["endpoint"]
-        
-        # Get model name
-        model = kwargs.get("model")
-        if not model:
-            models = self.get_vllm_models(service_id)
-            model = models[0] if models else None
-
-        self.logger.debug("Preparing prompt for service %s at %s with model %s", service_id, endpoint, model)
-        
-        try:
-            # Try chat endpoint first (works for instruction-tuned models)
-            response = self._try_chat_endpoint(endpoint, model, prompt, **kwargs)
-            
-            # Check if we got a chat template error
-            if self._is_chat_template_error(response):
-                self.logger.info("Chat template error detected, retrying with completions endpoint")
-                
-                # Retry with completions endpoint (works for base models)
-                response = self._try_completions_endpoint(endpoint, model, prompt, **kwargs)
-                return self._parse_completions_response(response, endpoint, service_id)
-            
-            # No chat template error - parse as chat response
-            return self._parse_chat_response(response, endpoint, service_id)
-                
-        except requests.exceptions.RequestException as e:
-            error_str = str(e)
-            
-            # Check if it's a connection error (service not ready)
-            if "Connection refused" in error_str or "NewConnectionError" in error_str:
-                # Double-check current status
-                current_status = self.get_service_status(service_id)
-                return {
-                    "success": False,
-                    "error": "Service not available",
-                    "message": f"Cannot connect to vLLM service. The service may still be starting up (status: {current_status}). Please wait and try again.",
-                    "service_id": service_id,
-                    "status": current_status,
-                    "endpoint": endpoint,
-                    "technical_details": error_str
-                }
-            
-            # Other network errors
-            return {
-                "success": False,
-                "error": f"Failed to connect to VLLM service: {error_str}",
-                "endpoint": endpoint
-            }
-        except Exception as e:
-            self.logger.exception("Error in prompt_vllm_service")
-            return {
-                "success": False,
-                "error": f"Error processing request: {str(e)}"
-            }
+        """Send a prompt to a running VLLM service."""
+        return self.vllm_service.prompt(service_id, prompt, **kwargs)

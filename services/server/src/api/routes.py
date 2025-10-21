@@ -2,13 +2,23 @@
 API route definitions for SLURM-based service orchestration.
 """
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Depends
 from typing import List, Dict, Any, Optional
 
 from server_service import ServerService
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
 
 router = APIRouter()
+
+# Singleton instance of ServerService (created once, reused for all requests)
+_server_service_instance = None
+
+def get_server_service() -> ServerService:
+    """Dependency function to get the singleton ServerService instance."""
+    global _server_service_instance
+    if _server_service_instance is None:
+        _server_service_instance = ServerService()
+    return _server_service_instance
 
 
 @router.post("/services", response_model=ServiceResponse, summary="Create and start a new service")
@@ -20,7 +30,8 @@ async def create_service(
                 "value": {"recipe_name": "inference/vllm", "config": {"nodes": 1, "cpus": 2, "memory": "8G", "time": "00:30:00"}}
             }
         }
-    )
+    ),
+    server_service: ServerService = Depends(get_server_service)
 ):
     """Create and start a new service using SLURM + Apptainer.
 
@@ -96,7 +107,6 @@ async def create_service(
     - `failed`: Service encountered an error
     - `cancelled`: Service was stopped by user
     """
-    server_service = ServerService()
     try:
         service = server_service.start_service(
             recipe_name=request.recipe_name,
@@ -108,7 +118,7 @@ async def create_service(
 
 
 @router.get("/services", response_model=List[ServiceResponse])
-async def list_services():
+async def list_services(server_service: ServerService = Depends(get_server_service)):
     """List all services managed by this server.
 
     Returns all services that were started through this API. Does not include
@@ -137,13 +147,12 @@ async def list_services():
     ]
     ```
     """
-    server_service = ServerService()
     services = server_service.list_running_services()
     return services
 
 
 @router.get("/services/{service_id}", response_model=ServiceResponse)
-async def get_service(service_id: str):
+async def get_service(service_id: str, server_service: ServerService = Depends(get_server_service)):
     """Get detailed information about a specific service.
 
     **Path Parameters:**
@@ -158,7 +167,6 @@ async def get_service(service_id: str):
     **Example:**
     - GET `/api/v1/services/3642874`
     """
-    server_service = ServerService()
     service = server_service.get_service(service_id)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -166,7 +174,7 @@ async def get_service(service_id: str):
 
 
 @router.delete("/services/{service_id}")
-async def stop_service(service_id: str):
+async def stop_service(service_id: str, server_service: ServerService = Depends(get_server_service)):
     """Stop a running service by cancelling its SLURM job.
 
     This endpoint cancels the SLURM job associated with the service, which will:
@@ -188,7 +196,6 @@ async def stop_service(service_id: str):
 
     **Note:** This operation is immediate and cannot be undone. The service will be terminated gracefully.
     """
-    server_service = ServerService()
     success = server_service.stop_service(service_id)
     if success:
         return {"message": f"Service {service_id} stopped successfully"}
@@ -197,7 +204,7 @@ async def stop_service(service_id: str):
 
 
 @router.get("/services/{service_id}/logs")
-async def get_service_logs(service_id: str):
+async def get_service_logs(service_id: str, server_service: ServerService = Depends(get_server_service)):
     """Get SLURM logs (stdout and stderr) from a service.
 
     Retrieves the job output logs written by SLURM. These logs contain:
@@ -221,13 +228,12 @@ async def get_service_logs(service_id: str):
 
     **Note:** Logs may not be available immediately after job creation. They become available once the job starts running.
     """
-    server_service = ServerService()
     logs = server_service.get_service_logs(service_id)
     return {"logs": logs}
 
 
 @router.get("/services/{service_id}/status")
-async def get_service_status(service_id: str):
+async def get_service_status(service_id: str, server_service: ServerService = Depends(get_server_service)):
     """Get the current detailed status of a service.
 
     This endpoint returns the real-time status by checking both SLURM state and parsing log files
@@ -254,13 +260,12 @@ async def get_service_status(service_id: str):
     }
     ```
     """
-    server_service = ServerService()
     status = server_service.get_service_status(service_id)
     return {"status": status}
 
 
 @router.get("/recipes", response_model=List[RecipeResponse])
-async def list_recipes():
+async def list_recipes(server_service: ServerService = Depends(get_server_service)):
     """List all available service recipes.
 
     Recipes are YAML templates that define how to deploy services on SLURM.
@@ -293,13 +298,12 @@ async def list_recipes():
     - `vector-db`: Vector database services for RAG applications
     - `simple`: Basic test/demo services
     """
-    server_service = ServerService()
     recipes = server_service.list_available_recipes()
     return recipes
 
 
 @router.get("/recipes/{recipe_name}", response_model=RecipeResponse)
-async def get_recipe(recipe_name: str):
+async def get_recipe(recipe_name: str, server_service: ServerService = Depends(get_server_service)):
     """Get detailed information about a specific recipe.
 
     **Path Parameters:**
@@ -314,7 +318,6 @@ async def get_recipe(recipe_name: str):
     **Example:**
     - GET `/api/v1/recipes/inference/vllm`
     """
-    server_service = ServerService()
     recipes = server_service.list_available_recipes()
     
     # Find recipe by name or path
@@ -330,7 +333,7 @@ async def get_recipe(recipe_name: str):
 
 
 @router.get("/vllm/services")
-async def list_vllm_services():
+async def list_vllm_services(server_service: ServerService = Depends(get_server_service)):
     """List all running vLLM inference services with their endpoints.
 
     This endpoint discovers vLLM services among all running services and resolves their network endpoints.
@@ -366,7 +369,6 @@ async def list_vllm_services():
 
     **Note:** Only services with status "running" are ready to accept prompt requests.
     """
-    server_service = ServerService()
     try:
         vllm_services = server_service.find_vllm_services()
         return {"vllm_services": vllm_services}
@@ -375,7 +377,7 @@ async def list_vllm_services():
 
 
 @router.get("/vector-db/services")
-async def list_vector_db_services():
+async def list_vector_db_services(server_service: ServerService = Depends(get_server_service)):
     """List all running vector database services.
 
     Returns a list of vector database services (Qdrant, Chroma, etc.) with their endpoints.
@@ -395,7 +397,6 @@ async def list_vector_db_services():
     }
     ```
     """
-    server_service = ServerService()
     try:
         vector_db_services = server_service.find_vector_db_services()
         return {"vector_db_services": vector_db_services}
@@ -415,7 +416,8 @@ async def prompt_vllm_service(
             "summary": "Prompt specifying model",
             "value": {"prompt": "Hello", "model": "gpt2", "max_tokens": 64}
         }
-    })
+    }),
+    server_service: ServerService = Depends(get_server_service)
 ):
     """Send a text prompt to a running vLLM inference service and get a response.
 
@@ -465,7 +467,6 @@ async def prompt_vllm_service(
 
     **Note:** The vLLM service must be fully initialized (status="running") before it can accept prompts.
     """
-    server_service = ServerService()
     try:
         prompt = request.get("prompt")
         if not prompt:
@@ -490,7 +491,7 @@ async def prompt_vllm_service(
 
 
 @router.get("/vllm/{service_id}/models")
-async def get_vllm_models(service_id: str):
+async def get_vllm_models(service_id: str, server_service: ServerService = Depends(get_server_service)):
     """Get the list of models served by a running vLLM service.
 
     Queries the vLLM service's /v1/models endpoint to discover which models are loaded and available.
@@ -499,34 +500,48 @@ async def get_vllm_models(service_id: str):
     **Path Parameters:**
     - `service_id`: SLURM job ID of the vLLM service
 
-    **Returns:**
+    **Returns (Success):**
     ```json
     {
-      "models": ["Qwen/Qwen3-0.6B", "gpt2"]
+      "success": true,
+      "models": ["Qwen/Qwen3-0.6B", "gpt2"],
+      "service_id": "3642874",
+      "endpoint": "http://mel2079:8000"
+    }
+    ```
+
+    **Returns (Service Not Ready):**
+    ```json
+    {
+      "success": false,
+      "error": "Service is not ready yet (status: starting)",
+      "message": "The vLLM service is still starting up (status: starting). Please wait a moment and try again.",
+      "service_id": "3642874",
+      "status": "starting",
+      "models": []
     }
     ```
 
     **Returns (No Models):**
     ```json
     {
-      "models": []
+      "success": true,
+      "models": [],
+      "service_id": "3642874",
+      "endpoint": "http://mel2079:8000"
     }
     ```
-
-    **Errors:**
-    - 500: Failed to connect to vLLM service or parse response
 
     **Example:**
     - GET `/api/v1/vllm/3642874/models`
 
     **Note:** 
-    - The vLLM service must be in "running" status to respond
-    - Empty array may indicate the service is still initializing or has no models loaded
+    - The response now includes success status and detailed error messages
+    - Check the `success` field to determine if the operation succeeded
     - Model names can be used in the `model` parameter of the prompt endpoint
     """
-    server_service = ServerService()
     try:
-        models = server_service.get_vllm_models(service_id)
-        return {"models": models}
+        result = server_service.get_vllm_models(service_id)
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

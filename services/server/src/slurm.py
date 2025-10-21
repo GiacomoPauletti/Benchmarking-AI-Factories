@@ -30,7 +30,7 @@ class SlurmDeployer:
         self.ssh_manager = SSHManager()
         self.ssh_user = self.ssh_manager.ssh_user
         self.ssh_host = self.ssh_manager.ssh_host
-        ^
+        
         # Use SSH_USER as the username for SLURM operations
         self.username = self.ssh_user
         

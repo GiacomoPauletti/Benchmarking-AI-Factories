@@ -10,12 +10,10 @@ From: qdrant/qdrant:latest
     chmod -R 777 /qdrant_data
 
 %environment
-    export QDRANT__SERVICE__HTTP_PORT=6333
     export QDRANT__STORAGE__STORAGE_PATH=/workspace/qdrant_data
 
 %runscript
     echo "Starting Qdrant vector database..."
-    echo "REST API: ${QDRANT__SERVICE__HTTP_PORT:-6333}"
     echo "Storage: ${QDRANT__STORAGE__STORAGE_PATH:-/qdrant/storage}"
     
     # Find and execute qdrant binary

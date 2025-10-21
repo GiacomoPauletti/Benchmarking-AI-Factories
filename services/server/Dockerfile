@@ -73,4 +73,5 @@ if [ -n \"$SSH_USER\" ] && [ -n \"$SSH_HOST\" ] && [ -n \"$REMOTE_BASE_PATH\" ];
 else \
   echo 'Skipping recipe sync (SSH config not set)'; \
 fi && \
+echo 'http://localhost:8001' > /app/.server-endpoint && \
 exec uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload"]

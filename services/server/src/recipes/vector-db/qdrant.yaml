@@ -6,8 +6,8 @@ image: "qdrant.sif"
 container_def: "qdrant.def"
 ports:
   - 6333  # REST API
-environment:
-  QDRANT__SERVICE__HTTP_PORT: "6333"
+#environment:
+#  QDRANT__SERVICE__HTTP_PORT: "6333"
 resources:
   nodes: "1"
   cpu: "4"
