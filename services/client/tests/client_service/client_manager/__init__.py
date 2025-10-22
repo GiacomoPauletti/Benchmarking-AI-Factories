@@ -1,0 +1,1 @@
+# Client manager tests package
