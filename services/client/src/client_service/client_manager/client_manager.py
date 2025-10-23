@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, List
 import requests
 import socket
 
-from client_service.client_manager.client_group import ClientGroup
+from client_service.client_manager.client_group import ClientGroup, ClientGroupStatus
 
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
@@ -87,7 +87,7 @@ class ClientManager:
             
             try:
                 # Create ClientGroup - it handles the dispatching internally
-                client_group = ClientGroup(benchmark_id, num_clients, self._server_addr, self._client_service_addr, time_limit, self._use_container)
+                client_group = ClientGroup(benchmark_id, num_clients, self._server_addr, time_limit, self._use_container)
                 self._client_groups[benchmark_id] = client_group
                 self._logger.info(f"Added client group {benchmark_id}: expecting {num_clients} with time limit {time_limit}, container mode: {self._use_container}")
                 return ClientManagerResponseStatus.OK
@@ -102,19 +102,6 @@ class ClientManager:
                 del self._client_groups[benchmark_id]
                 self._logger.info(f"Removed client group {benchmark_id}")
 
-    def register_client(self, benchmark_id: int, client_address: str) -> bool:
-        """
-        Called by a client *process* to register its HTTP address (e.g. "http://10.0.0.2:9000").
-        Returns True if registered, False if the group does not exist.
-        """
-        with self._lock:
-            group = self._client_groups.get(benchmark_id)
-            if group is None:
-                self._logger.warning(f"Tried to register client for unknown benchmark {benchmark_id}")
-                return False
-
-            return group.register_client_address(client_address)
-
     def list_groups(self) -> List[int]:
         """Return the list of registered group ids."""
         with self._lock:
@@ -128,22 +115,6 @@ class ClientManager:
                 return None
             return group.get_info()
 
-    def wait_for_clients(self, benchmark_id: int, timeout: float = 30.0, poll_interval: float = 0.5) -> bool:
-        """
-        Wait until the client registers or timeout expires. 
-        Returns True if client registers, False otherwise.
-        """
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self._lock:
-                group = self._client_groups.get(benchmark_id)
-                if group is None:
-                    return False
-                if group.has_client_registered():
-                    return True
-            time.sleep(poll_interval)
-        return False
-
     def run_client_group(self, benchmark_id: int, timeout: float = 5.0) -> List[Dict[str, Any]]:
         """
         Forward a POST /run request to the registered client process of the group.
@@ -153,14 +124,16 @@ class ClientManager:
         with self._lock:
             group = self._client_groups.get(benchmark_id)
             if group is None:
-                raise ValueError(f"Unknown benchmark id {benchmark_id}")
+                return [{"error": "unknown benchmark_id", "benchmark_id": benchmark_id}]
             client_addr = group.get_client_address()
 
         results: List[Dict[str, Any]] = []
-        if client_addr is None:
-            self._logger.warning(f"No client process registered for benchmark {benchmark_id}")
-            return [{"error": "no client process registered", "benchmark_id": benchmark_id}]
+        if group.get_status() != ClientGroupStatus.RUNNING:
+            self._logger.warning(f"Client group {benchmark_id} is not in RUNNING state")
+            results.append({"error": "client group not running", "benchmark_id": benchmark_id})
+            return results
 
+        client_addr = group.get_client_address()
         url = f"{client_addr}/run"
         try:
             r = requests.post(url, timeout=timeout)

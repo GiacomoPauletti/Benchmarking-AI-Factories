@@ -39,18 +39,17 @@ app.include_router(monitor_proxy_router)
 
 # ======================================== MAIN =========================================
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        logging.fatal("Invalid number of arguments. Required: num_clients server_addr client_service_addr benchmark_id")
+    if len(sys.argv) != 4:
+        logging.fatal("Invalid number of arguments. Required: num_clients server_addr benchmark_id")
         sys.exit(1)
 
     print("Starting Client Process...")
 
     client_count = int(sys.argv[1])
     server_addr = sys.argv[2]
-    client_service_addr = sys.argv[3]
-    benchmark_id = int(sys.argv[4])
+    benchmark_id = int(sys.argv[3])
     
-    logging.debug(f"Command line parameters: {sys.argv[1]} {sys.argv[2]} {sys.argv[3]} {sys.argv[4]}")
+    logging.debug(f"Command line parameters: {sys.argv[1]} {sys.argv[2]} {sys.argv[3]}")
 
     logging.debug(f"Creating {client_count} clients for benchmark {benchmark_id}.")
     # Create clients but don't start them yet
@@ -70,27 +69,30 @@ if __name__ == "__main__":
         benchmark_id=benchmark_id,
         clients=clients,
         server_addr=server_addr,
-        client_service_addr=client_service_addr,
         local_address=local_addr
     )
 
     logging.debug(f"Client service router configured with {len(clients)} clients for benchmark {benchmark_id}")
     
-
-    # Register this client process with the client_service
-    import requests
+    # Write client address to signal file for client_service to discover
+    # This replaces the previous HTTP POST to /connect endpoint
     try:
-        response = requests.post(
-            f"{client_service_addr}/api/v1/client-group/{benchmark_id}/connect",
-            json={"client_address": local_addr}
-        )
-        if response.status_code == 201:
-            logging.info(f"Successfully registered with client_service for benchmark {benchmark_id} at {local_addr}")
-        else:
-            logging.error(f"Failed to register with client_service: {response.status_code} - {response.text}")
+        import os
+        # Use environment variable or default path on MeluXina
+        remote_base_path = os.environ.get('REMOTE_BASE_PATH', f'/home/users/{os.environ.get("USER", "u103213")}/Benchmarking-AI-Factories')
+        signal_file = f"{remote_base_path}/{benchmark_id}_addr.txt"
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(signal_file), exist_ok=True)
+        
+        with open(signal_file, 'w') as f:
+            f.write(local_addr)
+        
+        logging.info(f"Wrote client address {local_addr} to signal file {signal_file}")
     except Exception as e:
-        logging.error(f"Error registering with client_service: {e}")
-
+        logging.error(f"Failed to write signal file: {e}")
+        # Continue anyway - this is not critical for client execution
+    
     # Start the FastAPI server
     logging.info(f"Starting FastAPI server on port 8080 for benchmark {benchmark_id}")
     uvicorn.run(app, host=local_ip, port=8080) # type: ignore

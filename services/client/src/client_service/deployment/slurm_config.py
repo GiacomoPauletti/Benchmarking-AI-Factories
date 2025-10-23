@@ -15,21 +15,48 @@ logger = logging.getLogger(__name__)
 
 
 class SlurmConfig:
+    """SLURM configuration manager (Singleton).
+    
+    Manages SLURM REST API configuration and JWT token handling.
+    """
+    
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls):
+        """Create or return the singleton instance."""
+        if cls._instance is None:
+            cls._instance = super(SlurmConfig, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(self):
+        # Prevent re-initialization of singleton
+        if self._initialized:
+            return
+            
         self._url = DEFAULT_URL
         self._api_ver = DEFAULT_API_VER
         self._account = DEFAULT_ACCOUNT
         self._user_name = self._detect_username()
         self._token: Optional[SlurmToken] = None
         
-        # Generate token automatically
-        logger.info("Initializing SlurmConfig and generating JWT token...")
-        raw_token = self.create_new_token()
+        # Try to get token from environment first
+        logger.info("Initializing SlurmConfig singleton...")
+        raw_token = self.create_new_token()  # Without SSH manager, only checks environment
         if raw_token:
             self._token = SlurmToken(raw_token)
-            logger.info("SlurmConfig initialized successfully with valid token")
+            logger.info("SlurmConfig singleton initialized successfully with token from environment")
         else:
-            logger.warning("SlurmConfig initialized but no token available")
+            logger.info("SlurmConfig initialized without token (will need SSH manager to fetch)")
+        
+        self._initialized = True
+    
+    @classmethod
+    def get_instance(cls):
+        """Get the singleton instance."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
 
     def _detect_username(self) -> str:
         """Automatically detect the current user"""
@@ -45,30 +72,66 @@ class SlurmConfig:
             logger.warning("Could not detect username automatically")
             return ""
 
-    def create_new_token(self, lifetime: int = 300) -> Optional[str]:
+    def get_slurm_token(self, ssh_manager) -> str:
+        """Fetch a fresh SLURM JWT token from MeluXina via SSH.
+        
+        Args:
+            ssh_manager: SSHManager instance to execute remote commands
+            
+        Returns:
+            SLURM JWT token string
+            
+        Raises:
+            RuntimeError: If token fetch fails
+        """
+        logger.info("Fetching SLURM JWT token from MeluXina...")
+        success, stdout, stderr = ssh_manager.execute_remote_command("scontrol token", timeout=10)
+        
+        if not success:
+            raise RuntimeError(f"Failed to fetch SLURM token: {stderr}")
+        
+        # Parse output: "SLURM_JWT=eyJhbGc..."
+        for line in stdout.strip().split('\n'):
+            if line.startswith('SLURM_JWT='):
+                token = line.split('=', 1)[1].strip()
+                logger.info("Successfully fetched SLURM JWT token")
+                return token
+        
+        logger.error("SLURM token not found in command output. Raising error.")
+        raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
+
+    def create_new_token(self, ssh_manager=None, lifetime: int = 300) -> Optional[str]:
         """
         Create a new JWT token for Slurm authentication.
         
-        This method is DISABLED in container mode. Tokens are generated on the host
-        and passed to the container via environment variables.
+        If ssh_manager is provided, will fetch token via SSH.
+        Otherwise, checks environment for existing token.
         
         Args:
-            lifetime: Token lifetime in seconds (ignored in container mode)
+            ssh_manager: Optional SSHManager instance for fetching token via SSH
+            lifetime: Token lifetime in seconds (ignored when using SSH)
             
         Returns:
-            JWT token string from environment or None if not available
+            JWT token string or None if not available
         """
-        logger.warning("create_new_token() called - token generation is disabled in container mode")
-        logger.info("Tokens are generated on the host and passed via SLURM_JWT environment variable")
+        # Try SSH method first if SSH manager is provided
+        if ssh_manager:
+            try:
+                logger.info("Fetching new token via SSH...")
+                return self.get_slurm_token(ssh_manager)
+            except Exception as e:
+                logger.error(f"Failed to fetch token via SSH: {e}")
+                logger.info("Falling back to environment variable")
         
-        # Only check for existing token in environment
+        # Fallback to environment variable
         env_token = os.getenv('SLURM_JWT')
         if env_token:
             logger.info("Using token from SLURM_JWT environment variable")
             return env_token
         else:
             logger.error("No SLURM_JWT token found in environment")
-            logger.error("This indicates the host failed to generate a token")
+            if not ssh_manager:
+                logger.error("No SSH manager provided and no environment token available")
             return None
 
     @classmethod
@@ -104,7 +167,7 @@ class SlurmConfig:
     @staticmethod
     def tmp_load_default():
         """Create default configuration with auto-detection"""
-        return SlurmConfig()
+        return SlurmConfig.get_instance()
 
         # Getter methods for external access
     @property

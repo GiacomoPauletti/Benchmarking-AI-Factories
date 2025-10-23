@@ -18,37 +18,78 @@ The AI Factory Client Services system is designed to orchestrate performance tes
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.8+ (for native execution)
+- Docker & Docker Compose (for containerized execution) 
 - Slurm cluster access (for HPC deployment)
-- Valid JWT token for Slurm REST API
-- Apptainer (optional, for container mode)
+- SSH access to HPC cluster (MeluXina)
+- Valid SSH keys for cluster authentication
 
 ### Installation
 
 ```bash
 # Clone repository
 git clone <repository-url>
-cd Benchmarking-AI-Factories/services/client
+cd Benchmarking-AI-Factories
 
-# Install dependencies
-pip install -r requirements.txt
+# Set up environment
+cp .env.example .env
+# Edit .env with your SSH credentials
 
-# Build containers (optional)
-./scripts/build_all.sh
+# Start all services
+docker compose up -d
+
+# Or start only client service
+docker compose up -d client
+
+# View logs
+docker compose logs -f client
+
+# Stop services
+docker compose down
 ```
 
-### Quick Launch
+### Configuration
+
+Edit the `.env` file with your MeluXina credentials:
 
 ```bash
-# Start client service
-python src/main.py http://your-server:8000
-
-# With custom Slurm configuration
-python src/main.py http://your-server:8000 config/slurm.conf
-
-# With container support
-python src/main.py http://your-server:8000 --container
+SSH_HOST=login.lxp.lu
+SSH_PORT=8822
+SSH_USER=your_meluxina_username
+SSH_KEY_PATH=~/.ssh/id_rsa
+REMOTE_BASE_PATH=/home/users/your_meluxina_username/Benchmarking-AI-Factories
 ```
+
+### Custom Configuration
+
+You can override default settings using environment variables:
+
+```bash
+# Custom server address and port
+CLIENT_SERVICE_SERVER_ADDR=http://192.168.1.100:8001 \
+CLIENT_SERVICE_PORT=8003 \
+CLIENT_SERVICE_CONTAINER_MODE=true \
+docker compose up -d client
+
+# Enable container mode for MeluXina clients
+CLIENT_SERVICE_CONTAINER_MODE=true docker compose up -d client
+```
+
+### Architecture
+
+- **Client Service**: Runs locally in Docker container
+- **Clients**: Run on MeluXina HPC cluster via SSH
+- **Communication**: SSH reverse tunnels for client-service communication
+- **Deployment**: SLURM jobs submitted via SSH to launch clients on MeluXina
+
+### Key Features
+
+- 🐳 **Docker-first**: Simple `docker compose up -d client` to start
+- 🔐 **SSH Integration**: Automatic SSH tunnels and job submission  
+- 🔄 **Hot Reload**: Source code changes reflected immediately
+- 📊 **API Documentation**: Auto-generated at http://localhost:8002/docs
+- 🏗️ **SLURM Integration**: Direct job submission to MeluXina
+- 📦 **Container Support**: Apptainer containers on MeluXina side
 
 ## 📁 Repository Organization
 

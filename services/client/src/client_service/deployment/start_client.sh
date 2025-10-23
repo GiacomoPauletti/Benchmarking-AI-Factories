@@ -3,7 +3,7 @@
 # Client Process Launcher (Minimal)
 # =============================================================================
 # Description: Launches individual AI Factory Client Process (Internal Use)
-# Usage: ./start_client.sh <num_clients> <server_addr> <client_service_addr> <benchmark_id> [--container]
+# Usage: ./start_client.sh <num_clients> <server_addr> <benchmark_id> [--container] [--signal-file path]
 # Note: This is a minimal version for internal use - no interactive output
 # =============================================================================
 
@@ -12,12 +12,28 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_MODE=false
 CONTAINER_IMAGE="client_container.sif"
+SIGNAL_FILE=""
 
-# Parse container flag if present
-if [ "$5" = "--container" ]; then
-    CONTAINER_MODE=true
-    echo "Container mode enabled"
-fi
+# Parse optional flags
+shift 3  # Skip the first 3 required arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --container)
+            CONTAINER_MODE=true
+            echo "Container mode enabled"
+            shift
+            ;;
+        --signal-file)
+            SIGNAL_FILE="$2"
+            echo "Signal file: $SIGNAL_FILE"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            shift
+            ;;
+    esac
+done
 
 # Basic validation function (silent)
 # validate_args() {
@@ -42,8 +58,7 @@ fi
 
 NUM_CLIENTS="$1"
 SERVER_ADDR="$2"
-CLIENT_SERVICE_ADDR="$3"
-BENCHMARK_ID="$4"
+BENCHMARK_ID="$3"
 
 
 # Check if we're in the correct directory or if container image exists
@@ -92,15 +107,19 @@ else
 fi
 
 # Start the client process
+export CLIENT_SIGNAL_FILE="$SIGNAL_FILE"  # Export for client process to use
+
 if [ "$CONTAINER_MODE" = "true" ]; then
     # Start with container
     CLIENT_DIR="$SCRIPT_DIR/../../client"
-    echo "Starting client container with: $NUM_CLIENTS $SERVER_ADDR $CLIENT_SERVICE_ADDR $BENCHMARK_ID"
+    echo "Starting client container with: $NUM_CLIENTS $SERVER_ADDR $BENCHMARK_ID"
     exec apptainer run \
         --bind /home/users/${USER}:/home/users/${USER} \
-        "$CLIENT_DIR/$CONTAINER_IMAGE" "$NUM_CLIENTS" "$SERVER_ADDR" "$CLIENT_SERVICE_ADDR" "$BENCHMARK_ID"
+        --env CLIENT_SIGNAL_FILE="$SIGNAL_FILE" \
+        --env REMOTE_BASE_PATH="${REMOTE_BASE_PATH}" \
+        "$CLIENT_DIR/$CONTAINER_IMAGE" "$NUM_CLIENTS" "$SERVER_ADDR" "$BENCHMARK_ID"
 else
     # Start native process (redirect stderr to avoid startup messages if needed)
-    echo "Starting native client with: $NUM_CLIENTS $SERVER_ADDR $CLIENT_SERVICE_ADDR $BENCHMARK_ID"
-    exec python3 -m client.main "$NUM_CLIENTS" "$SERVER_ADDR" "$CLIENT_SERVICE_ADDR" "$BENCHMARK_ID"
+    echo "Starting native client with: $NUM_CLIENTS $SERVER_ADDR $BENCHMARK_ID"
+    exec python3 -m client.main "$NUM_CLIENTS" "$SERVER_ADDR" "$BENCHMARK_ID"
 fi

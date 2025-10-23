@@ -20,7 +20,6 @@ class StatusResponse(BaseModel):
     benchmark_id: int
     num_clients: int
     server_addr: str
-    client_service_addr: str
     local_address: str
     created_at: float
 

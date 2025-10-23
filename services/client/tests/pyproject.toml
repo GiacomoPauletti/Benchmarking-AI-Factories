@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (run with real MeluXina connection)",
+    "unit: marks tests as unit tests (fast, isolated tests)"
+]
+
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py", "tests.py"]
+python_classes = ["Test*"]  
+python_functions = ["test_*"]
+
+# Add verbose output for integration tests
+addopts = ["-v", "--tb=short"]

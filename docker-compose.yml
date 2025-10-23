@@ -34,13 +34,45 @@ services:
     tty: true
     restart: unless-stopped
 
-  # TODO: Add other services when ready
-  # client:
-  #   build:
-  #     context: ./services/client
-  #     dockerfile: Dockerfile
-  #   container_name: benchmarking-ai-client
-  #   ...
+  client:
+    build:
+      context: ./services/client
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-client
+    ports:
+      - "8002:8002"
+    volumes:
+      # Mount source code for hot-reload during development
+      - ./services/client/src:/app/src
+      - ./services/client/tests:/app/tests
+      - ./services/client/scripts:/app/scripts
+      - ./services/client/logs:/app/logs
+      # Mount SSH keys for MeluXina access
+      - ~/.ssh:/tmp/host-ssh:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      
+      # Application Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    # Load additional service-specific variables
+    env_file:
+      - .env
+    network_mode: host
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    command: >
+      python -m main
+      ${CLIENT_SERVICE_SERVER_ADDR:-http://localhost:8001}
+      --host ${CLIENT_SERVICE_HOST:-0.0.0.0}
+      --port ${CLIENT_SERVICE_PORT:-8002}
+      ${CLIENT_SERVICE_CONTAINER_MODE:+--container}
   
   # monitoring:
   #   build:

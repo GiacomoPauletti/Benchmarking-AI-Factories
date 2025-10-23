@@ -33,7 +33,6 @@ class ClientGroup:
         self._benchmark_id: Optional[int] = None
         self._clients: List = []
         self._server_addr: Optional[str] = None
-        self._client_service_addr: Optional[str] = None
         self._local_address: Optional[str] = None
         self._created_at = time.time()
         self._logger = logging.getLogger("client.client_group")
@@ -42,12 +41,11 @@ class ClientGroup:
         self._logger.info("ClientGroup singleton initialized")
     
     def configure(self, benchmark_id: int, clients: List, server_addr: str, 
-                 client_service_addr: str, local_address: str):
+                 local_address: str):
         """Configure the client group with initial parameters"""
         self._benchmark_id = benchmark_id
         self._clients = clients
         self._server_addr = server_addr
-        self._client_service_addr = client_service_addr
         self._local_address = local_address
         
         self._logger.info(f"ClientGroup configured: benchmark_id={benchmark_id}, "
@@ -73,10 +71,7 @@ class ClientGroup:
         """Get the server address"""
         return self._server_addr
     
-    @property
-    def client_service_addr(self) -> Optional[str]:
-        """Get the client service address"""
-        return self._client_service_addr
+
     
     @property
     def local_address(self) -> Optional[str]:
@@ -139,7 +134,6 @@ class ClientGroup:
             "benchmark_id": self._benchmark_id,
             "num_clients": len(self._clients),
             "server_addr": self._server_addr,
-            "client_service_addr": self._client_service_addr,
             "local_address": self._local_address,
             "created_at": self._created_at
         }
