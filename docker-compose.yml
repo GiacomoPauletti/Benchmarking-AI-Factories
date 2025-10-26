@@ -126,7 +126,6 @@ services:
 
 networks:
   ai-factory:
-    name: ai-factory-network
 
 volumes:
   grafana-storage:
