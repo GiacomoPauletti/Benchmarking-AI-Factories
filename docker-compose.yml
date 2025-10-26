@@ -15,6 +15,7 @@ services:
       - ./services/server/huggingface_cache:/app/huggingface_cache
       # Mount SSH keys for MeluXina access
       - ~/.ssh:/tmp/host-ssh:ro
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
       # SSH Configuration for MeluXina
       - SSH_HOST=${SSH_HOST}
@@ -22,6 +23,7 @@ services:
       - SSH_USER=${SSH_USER}
       - SSH_KEY_PATH=${SSH_KEY_PATH}
       - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
       # Application Configuration
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
