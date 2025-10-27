@@ -404,6 +404,308 @@ async def list_vector_db_services(server_service: ServerService = Depends(get_se
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/vector-db/{service_id}/collections")
+async def get_collections(service_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Get list of collections from a vector database service.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the vector DB service
+
+    **Returns (Success):**
+    ```json
+    {
+      "success": true,
+      "collections": ["my_documents", "embeddings"],
+      "service_id": "3642875",
+      "endpoint": "http://mel2079:6333"
+    }
+    ```
+
+    **Returns (Service Not Ready):**
+    ```json
+    {
+      "success": false,
+      "error": "Service is not ready yet (status: starting)",
+      "message": "The vector DB service is still starting up. Please wait.",
+      "collections": []
+    }
+    ```
+    """
+    try:
+        result = server_service.get_collections(service_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vector-db/{service_id}/collections/{collection_name}")
+async def get_collection_info(
+    service_id: str,
+    collection_name: str,
+    server_service: ServerService = Depends(get_server_service)
+):
+    """Get detailed information about a specific collection.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the vector DB service
+    - `collection_name`: Name of the collection
+
+    **Returns (Success):**
+    ```json
+    {
+      "success": true,
+      "collection_info": {
+        "status": "green",
+        "vectors_count": 1000,
+        "indexed_vectors_count": 1000,
+        "config": {
+          "params": {
+            "vectors": {
+              "size": 384,
+              "distance": "Cosine"
+            }
+          }
+        }
+      },
+      "service_id": "3642875",
+      "collection_name": "my_documents"
+    }
+    ```
+    """
+    try:
+        result = server_service.get_collection_info(service_id, collection_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/vector-db/{service_id}/collections/{collection_name}")
+async def create_collection(
+    service_id: str,
+    collection_name: str,
+    request: Dict[str, Any] = Body(..., examples={
+        "basic": {
+            "summary": "Create a basic collection",
+            "value": {"vector_size": 384, "distance": "Cosine"}
+        },
+        "euclidean": {
+            "summary": "Create collection with Euclidean distance",
+            "value": {"vector_size": 768, "distance": "Euclid"}
+        }
+    }),
+    server_service: ServerService = Depends(get_server_service)
+):
+    """Create a new collection in the vector database.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the vector DB service
+    - `collection_name`: Name for the new collection
+
+    **Request Body:**
+    - `vector_size` (required): Dimension of vectors (e.g., 384, 768, 1536)
+    - `distance` (optional): Distance metric - "Cosine" (default), "Euclid", or "Dot"
+
+    **Returns (Success):**
+    ```json
+    {
+      "success": true,
+      "message": "Collection 'my_documents' created successfully",
+      "collection_name": "my_documents",
+      "vector_size": 384,
+      "distance": "Cosine"
+    }
+    ```
+
+    **Example:**
+    ```bash
+    curl -X PUT "http://localhost:8001/api/v1/vector-db/3642875/collections/my_docs" \\
+      -H "Content-Type: application/json" \\
+      -d '{"vector_size": 384, "distance": "Cosine"}'
+    ```
+    """
+    try:
+        vector_size = request.get("vector_size")
+        if not vector_size:
+            raise HTTPException(status_code=400, detail="vector_size is required")
+        
+        distance = request.get("distance", "Cosine")
+        result = server_service.create_collection(service_id, collection_name, vector_size, distance)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/vector-db/{service_id}/collections/{collection_name}")
+async def delete_collection(
+    service_id: str,
+    collection_name: str,
+    server_service: ServerService = Depends(get_server_service)
+):
+    """Delete a collection from the vector database.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the vector DB service
+    - `collection_name`: Name of the collection to delete
+
+    **Returns (Success):**
+    ```json
+    {
+      "success": true,
+      "message": "Collection 'my_documents' deleted successfully",
+      "collection_name": "my_documents"
+    }
+    ```
+
+    **Example:**
+    ```bash
+    curl -X DELETE "http://localhost:8001/api/v1/vector-db/3642875/collections/my_docs"
+    ```
+    """
+    try:
+        result = server_service.delete_collection(service_id, collection_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/vector-db/{service_id}/collections/{collection_name}/points")
+async def upsert_points(
+    service_id: str,
+    collection_name: str,
+    request: Dict[str, Any] = Body(..., examples={
+        "simple": {
+            "summary": "Insert a single point",
+            "value": {
+                "points": [
+                    {
+                        "id": 1,
+                        "vector": [0.1, 0.2, 0.3, 0.4],
+                        "payload": {"text": "Example document"}
+                    }
+                ]
+            }
+        },
+        "multiple": {
+            "summary": "Insert multiple points",
+            "value": {
+                "points": [
+                    {"id": 1, "vector": [0.1, 0.2, 0.3], "payload": {"text": "First doc"}},
+                    {"id": 2, "vector": [0.4, 0.5, 0.6], "payload": {"text": "Second doc"}}
+                ]
+            }
+        }
+    }),
+    server_service: ServerService = Depends(get_server_service)
+):
+    """Insert or update points (vectors with payloads) in a collection.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the vector DB service
+    - `collection_name`: Name of the collection
+
+    **Request Body:**
+    - `points` (required): List of points to upsert
+      - Each point must have: `id`, `vector`, and optional `payload`
+
+    **Returns (Success):**
+    ```json
+    {
+      "success": true,
+      "message": "Upserted 2 points to collection 'my_documents'",
+      "num_points": 2
+    }
+    ```
+
+    **Example:**
+    ```bash
+    curl -X PUT "http://localhost:8001/api/v1/vector-db/3642875/collections/my_docs/points" \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "points": [
+          {"id": 1, "vector": [0.1, 0.2, 0.3], "payload": {"text": "Hello world"}}
+        ]
+      }'
+    ```
+    """
+    try:
+        points = request.get("points")
+        if not points or not isinstance(points, list):
+            raise HTTPException(status_code=400, detail="points must be a non-empty list")
+        
+        result = server_service.upsert_points(service_id, collection_name, points)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/vector-db/{service_id}/collections/{collection_name}/points/search")
+async def search_points(
+    service_id: str,
+    collection_name: str,
+    request: Dict[str, Any] = Body(..., examples={
+        "basic": {
+            "summary": "Basic similarity search",
+            "value": {
+                "query_vector": [0.1, 0.2, 0.3, 0.4],
+                "limit": 5
+            }
+        }
+    }),
+    server_service: ServerService = Depends(get_server_service)
+):
+    """Search for similar vectors in a collection.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the vector DB service
+    - `collection_name`: Name of the collection to search
+
+    **Request Body:**
+    - `query_vector` (required): The query vector to find similar items
+    - `limit` (optional): Maximum number of results (default: 10)
+
+    **Returns (Success):**
+    ```json
+    {
+      "success": true,
+      "results": [
+        {
+          "id": 1,
+          "score": 0.95,
+          "payload": {"text": "Similar document"}
+        }
+      ],
+      "num_results": 1
+    }
+    ```
+
+    **Example:**
+    ```bash
+    curl -X POST "http://localhost:8001/api/v1/vector-db/3642875/collections/my_docs/points/search" \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "query_vector": [0.1, 0.2, 0.3],
+        "limit": 5
+      }'
+    ```
+    """
+    try:
+        query_vector = request.get("query_vector")
+        if not query_vector or not isinstance(query_vector, list):
+            raise HTTPException(status_code=400, detail="query_vector must be a non-empty list")
+        
+        limit = request.get("limit", 10)
+        result = server_service.search_points(service_id, collection_name, query_vector, limit)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/vllm/{service_id}/prompt", summary="Send a prompt to a running vLLM service")
 async def prompt_vllm_service(
     service_id: str,

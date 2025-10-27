@@ -33,7 +33,13 @@ class VllmService(BaseService):
             else:
                 self.logger.debug("No endpoint yet for vllm job %s (status: %s)", job_id, service.get("status"))
             
-            status = service.get("status", "unknown")
+            # Get detailed service-specific status instead of basic SLURM status
+            try:
+                is_ready, status = self._check_service_ready(job_id, service)
+            except Exception as e:
+                self.logger.warning(f"Failed to check readiness for service {job_id}: {e}")
+                status = service.get("status", "unknown")
+            
             vllm_services.append({
                 "id": job_id,
                 "name": service.get("name"),
@@ -146,7 +152,7 @@ class VllmService(BaseService):
             }
 
     def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str]:
-        """Check if a service is ready to accept requests.
+        """Check if a vLLM service is ready to accept requests.
         
         Args:
             service_id: The service ID to check
@@ -155,17 +161,43 @@ class VllmService(BaseService):
         Returns:
             Tuple of (is_ready: bool, status: str) where status is the current LIVE status from SLURM
         """
-        # Get the current LIVE status from SLURM (don't trust cached status)
+        # Get the current LIVE status from SLURM
         try:
-            status = self.deployer.get_job_status(service_id).lower()
+            basic_status = self.deployer.get_job_status(service_id).lower()
         except Exception as e:
             self.logger.warning(f"Failed to get status for service {service_id}: {e}")
-            status = service_info.get("status", "unknown").lower()
+            basic_status = service_info.get("status", "unknown").lower()
         
-        # Check if service is ready
-        is_ready = status not in ["pending", "starting", "building", "configuring"]
+        # If not running yet, return basic status
+        if basic_status != "running":
+            is_ready = basic_status not in ["pending", "building"]
+            return is_ready, basic_status
         
-        return is_ready, status
+        # For running jobs, check logs with vLLM-specific indicators
+        try:
+            detailed_status = self.deployer.get_detailed_status_from_logs(
+                service_id,
+                ready_indicators=[
+                    'Application startup complete',
+                    'Uvicorn running on',
+                    'vLLM API server running'
+                ],
+                starting_indicators=[
+                    'Starting vLLM',
+                    'Starting container',
+                    'Running vLLM container',
+                    'Loading model'
+                ]
+            )
+            
+            is_ready = detailed_status not in ["pending", "building", "starting"]
+            return is_ready, detailed_status
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get detailed status for service {service_id}: {e}")
+            # Fallback to basic status
+            is_ready = basic_status not in ["pending", "building", "starting"]
+            return is_ready, basic_status
 
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a running VLLM service.

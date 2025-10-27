@@ -104,10 +104,18 @@ class ServerService:
         services_with_status = []
         for stored_service in registered_services:
             service_id = stored_service["id"]
+            recipe_name = stored_service.get("recipe_name", "")
             
-            # Get current status from SLURM
+            # Get detailed status based on service type
             try:
-                status = self.deployer.get_job_status(service_id)
+                # Determine service type from recipe name
+                if recipe_name.startswith("inference/vllm"):
+                    is_ready, status = self.vllm_service._check_service_ready(service_id, stored_service)
+                elif recipe_name.startswith("vector-db/"):
+                    is_ready, status = self.vector_db_service._check_service_ready(service_id, stored_service)
+                else:
+                    # Fallback to basic SLURM status for unknown types
+                    status = self.deployer.get_job_status(service_id)
             except Exception as e:
                 self.logger.warning(f"Failed to get status for service {service_id}: {e}")
                 status = "unknown"
@@ -129,8 +137,22 @@ class ServerService:
         # First check if we have stored information
         stored_service = self.service_manager.get_service(service_id)
         if stored_service:
-            # Update with current detailed status from SLURM (detailed=True by default)
-            current_status = self.deployer.get_job_status(service_id)
+            recipe_name = stored_service.get("recipe_name", "")
+            
+            # Get detailed status based on service type
+            try:
+                if recipe_name.startswith("inference/vllm"):
+                    is_ready, current_status = self.vllm_service._check_service_ready(service_id, stored_service)
+                elif recipe_name.startswith("vector-db/"):
+                    is_ready, current_status = self.vector_db_service._check_service_ready(service_id, stored_service)
+                else:
+                    # Fallback to basic SLURM status for unknown types
+                    current_status = self.deployer.get_job_status(service_id)
+            except Exception as e:
+                self.logger.warning(f"Failed to get status for service {service_id}: {e}")
+                current_status = "unknown"
+            
+            # Update status if it changed
             if current_status != stored_service.get("status"):
                 self.service_manager.update_service_status(service_id, current_status)
                 stored_service = stored_service.copy()
@@ -155,6 +177,32 @@ class ServerService:
         """Find running vector database services and their endpoints."""
         return self.vector_db_service.find_services()
     
+    def get_collections(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
+        """Get list of collections from a vector database service."""
+        return self.vector_db_service.get_collections(service_id, timeout)
+    
+    def get_collection_info(self, service_id: str, collection_name: str, timeout: int = 5) -> Dict[str, Any]:
+        """Get detailed information about a specific collection."""
+        return self.vector_db_service.get_collection_info(service_id, collection_name, timeout)
+    
+    def create_collection(self, service_id: str, collection_name: str, vector_size: int, 
+                         distance: str = "Cosine", timeout: int = 10) -> Dict[str, Any]:
+        """Create a new collection in the vector database."""
+        return self.vector_db_service.create_collection(service_id, collection_name, vector_size, distance, timeout)
+    
+    def delete_collection(self, service_id: str, collection_name: str, timeout: int = 10) -> Dict[str, Any]:
+        """Delete a collection from the vector database."""
+        return self.vector_db_service.delete_collection(service_id, collection_name, timeout)
+    
+    def upsert_points(self, service_id: str, collection_name: str, points: List[Dict[str, Any]], 
+                     timeout: int = 30) -> Dict[str, Any]:
+        """Insert or update points in a collection."""
+        return self.vector_db_service.upsert_points(service_id, collection_name, points, timeout)
+    
+    def search_points(self, service_id: str, collection_name: str, query_vector: List[float], 
+                     limit: int = 10, timeout: int = 10) -> Dict[str, Any]:
+        """Search for similar vectors in a collection."""
+        return self.vector_db_service.search_points(service_id, collection_name, query_vector, limit, timeout)
     
     def get_vllm_models(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
         """Query a running VLLM service for available models.

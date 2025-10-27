@@ -25,6 +25,23 @@ docker compose up server
 cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
 ./services/server/run-tests.sh
 
+#### CLEAN UP ####
+# Clear logs folder (ignores files that can't be removed)
+rm -f ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/logs/* 2>/dev/null || true
+
+# Alternative: Clear from anywhere
+cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
+rm -f services/server/logs/* 2>/dev/null || true
+
+# Clean up Qdrant data directories on MeluXina (removes ALL vector-db data)
+ssh u103056@login.lxp.lu "rm -rf /project/home/p200981/u103056/Benchmarking-AI-Factories/services/server/qdrant_data*"
+
+# Clean up specific Qdrant instance data (replace JOB_ID with actual job ID)
+ssh u103056@login.lxp.lu "rm -rf /project/home/p200981/u103056/Benchmarking-AI-Factories/services/server/qdrant_data_JOB_ID"
+
+# Remove orphaned lock files (if Qdrant crashed)
+ssh u103056@login.lxp.lu "find /project/home/p200981/u103056/Benchmarking-AI-Factories/services/server/qdrant_data* -name 'LOCK' -delete"
+
 #### API TESTING (Local Server) ####
 # Server runs on http://localhost:8001
 
@@ -46,16 +63,39 @@ create inference/vllm
 vllm list
 
 # Check which models are loaded in a service
-vllm models 3656129
+vllm models 3664648
 
 # Send prompts 
-prompt 3656129 'Tell me a joke about programming'
+prompt 3664648 'Tell me a joke about programming'
 
 # Create vecdb qdrant service
 create vector-db/qdrant
 
 # List all vecdb services
 vectordb list
+
+# List collections in a vector-db service
+vectordb collections 3664650
+
+# Get detailed info about a collection
+vectordb info 3664650 my_documents
+
+# Create a new collection (384-dim vectors with Cosine similarity)
+vectordb create 3664650 my_documents 3 Cosine
+
+# Create collection with Euclidean distance
+vectordb create 3664650 embeddings 30 Euclid
+
+# Insert/update points (vectors with payloads) into a collection
+vectordb upsert 3664650 my_documents '[{"id":1,"vector":[0.1,0.2,0.3],"payload":{"text":"hello"}}]'
+
+# Search for similar vectors
+vectordb search 3664650 my_documents '[0.15,0.25,0.35]' 5
+vectordb search 3664650 my_documents '[4.15,-0.25,7.35]' 5
+
+# Delete a collection
+vectordb delete 3664650 my_documents
+
 
 #### API CURL EXAMPLES ####
 # Create vLLM with custom model AND custom resources

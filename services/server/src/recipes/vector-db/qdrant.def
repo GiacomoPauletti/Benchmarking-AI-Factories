@@ -10,11 +10,18 @@ From: qdrant/qdrant:latest
     chmod -R 777 /qdrant_data
 
 %environment
-    export QDRANT__STORAGE__STORAGE_PATH=/workspace/qdrant_data
+    # Storage path will be set via APPTAINERENV_QDRANT__STORAGE__STORAGE_PATH from SLURM job
 
 %runscript
     echo "Starting Qdrant vector database..."
-    echo "Storage: ${QDRANT__STORAGE__STORAGE_PATH:-/qdrant/storage}"
+    
+    # Use job-specific storage path if provided, otherwise use default
+    # This allows multiple Qdrant instances to run simultaneously
+    STORAGE_PATH="${QDRANT__STORAGE__STORAGE_PATH:-/workspace/qdrant_data}"
+    echo "Storage: ${STORAGE_PATH}"
+    
+    # Ensure storage directory exists
+    mkdir -p "${STORAGE_PATH}"
     
     # Find and execute qdrant binary
     if [ -f /qdrant/qdrant ]; then
