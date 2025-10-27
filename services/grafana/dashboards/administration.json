@@ -18,9 +18,314 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 2,
+  "id": 1,
   "links": [],
   "panels": [
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "actions": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false,
+            "wrapText": true
+          },
+          "links": [],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Category"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "pill"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "name"
+          }
+        ]
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/recipes",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Recipes",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {},
+            "indexByName": {
+              "category": 3,
+              "description": 4,
+              "name": 0,
+              "path": 2,
+              "version": 1
+            },
+            "renameByName": {
+              "category": "Category",
+              "description": "Description",
+              "name": "Name",
+              "path": "Path",
+              "version": "Version"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "actions": [
+            {
+              "confirmation": "Are you sure you want to cancel the service",
+              "fetch": {
+                "body": "{ \"status\": \"cancelled\" }",
+                "headers": [
+                  [
+                    "Content-Type",
+                    "application/json"
+                  ]
+                ],
+                "method": "POST",
+                "queryParams": [],
+                "url": "http://${server}:${port}/api/v1/services/${__data.fields.id}"
+              },
+              "style": {
+                "backgroundColor": "#F2495C"
+              },
+              "title": "Cancel service",
+              "type": "fetch"
+            }
+          ],
+          "color": {
+            "fixedColor": "purple",
+            "mode": "shades"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false,
+            "wrapText": true
+          },
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Details",
+              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}﻿&var-port=﻿${port:queryparam}﻿&var-service=${__data.fields.ID}"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "pill"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "columns": [],
+          "computed_columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/services",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Services",
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "delimiter": ",",
+            "source": "config"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "time",
+                "targetField": "created_at"
+              },
+              {
+                "destinationType": "enum",
+                "enumConfig": {
+                  "text": [
+                    "unknown",
+                    "cancelled",
+                    "failed",
+                    "completed",
+                    "running",
+                    "starting",
+                    "building",
+                    "pending"
+                  ]
+                },
+                "targetField": "status"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Actions": true,
+              "Links": true,
+              "config": true,
+              "id": false
+            },
+            "includeByName": {},
+            "indexByName": {
+              "config": 6,
+              "created_at": 3,
+              "id": 0,
+              "name": 1,
+              "nodes": 5,
+              "recipe_name": 4,
+              "status": 2
+            },
+            "renameByName": {
+              "config": "",
+              "created_at": "Created at",
+              "id": "ID",
+              "name": "Name",
+              "nodes": "# of nodes",
+              "recipe_name": "Recipe name",
+              "status": "Status"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
     {
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -31,10 +336,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 5,
+        "h": 13,
         "w": 8,
         "x": 0,
-        "y": 0
+        "y": 14
       },
       "id": 1,
       "options": {
@@ -187,7 +492,7 @@
           }
         }
       ],
-      "title": "Start benchmark",
+      "title": "Start service",
       "type": "volkovlabs-form-panel"
     },
     {
@@ -203,7 +508,7 @@
         "h": 13,
         "w": 16,
         "x": 8,
-        "y": 0
+        "y": 14
       },
       "id": 2,
       "options": {
@@ -387,7 +692,7 @@
           "refId": "B"
         }
       ],
-      "title": "New recipe",
+      "title": "New recipe (TODO)",
       "type": "volkovlabs-form-panel"
     }
   ],
