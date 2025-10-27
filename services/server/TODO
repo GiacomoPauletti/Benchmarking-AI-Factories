@@ -2,10 +2,9 @@ DOCS:
 - Create diagram showcasing CI (testing) pipeline. Add this to the docs. Explain that GitHub Actions Or Gitlab could be used, but that we do it manually for now.
 - Create architecture diagram for server service. Add to docs.
 OTHER:
-- Test multi-node vllm.
 - Create vec-db examples with documents. Document these examples.
-- In services, create base classes for inference and for vectordb. The vllm and qdrant 
-services should subclass them.
+- Create test live API workloads using vec-db and inference.
+- Test multi-node vllm.
 - Create HF auth mechanism.
 
 

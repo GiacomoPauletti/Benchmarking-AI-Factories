@@ -1,13 +1,13 @@
-"""Vector database service-specific operations."""
+"""Qdrant-specific vector database service implementation."""
 
 from typing import Dict, List, Optional, Any
 import requests
-from .base_service import BaseService
+from .vector_db_service import VectorDbService
 
 DEFAULT_QDRANT_PORT = 6333
 
-class VectorDbService(BaseService):
-    """Handles all vector database-specific operations."""
+class QdrantService(VectorDbService):
+    """Handles all Qdrant-specific vector database operations."""
 
     def find_services(self) -> List[Dict[str, Any]]:
         """Find running vector database services and their endpoints."""
@@ -64,7 +64,7 @@ class VectorDbService(BaseService):
         
         # If not running yet, return basic status
         if basic_status != "running":
-            is_ready = basic_status not in ["pending", "building"]
+            is_ready = basic_status not in ["pending", "building", "starting"]
             return is_ready, basic_status
         
         # For running jobs, check logs with vector-db specific indicators
@@ -88,13 +88,9 @@ class VectorDbService(BaseService):
             if detailed_status == 'running':
                 return True, 'running'
             
-            # If detailed status is still starting, check if endpoint is available
-            # (some services like Qdrant are ready even if logs don't show the exact indicator)
+            # If detailed status is still starting, service is NOT ready yet
+            # (we need to wait for the log indicators showing it's actually listening)
             if detailed_status == 'starting':
-                endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_QDRANT_PORT)
-                if endpoint:
-                    self.logger.debug(f"Service {service_id} logs show 'starting' but endpoint is available: {endpoint}")
-                    return True, 'running'
                 return False, 'starting'
             
             # For building or other statuses
@@ -103,10 +99,8 @@ class VectorDbService(BaseService):
             
         except Exception as e:
             self.logger.warning(f"Failed to get detailed status for service {service_id}: {e}")
-            # Fallback: if we have an endpoint, assume it's ready
-            endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_QDRANT_PORT)
-            if endpoint:
-                return True, 'running'
+            # Fallback: return basic status without assuming readiness
+            # We should NOT assume it's ready just because we can construct an endpoint URL
             return False, basic_status
 
     def get_collections(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:

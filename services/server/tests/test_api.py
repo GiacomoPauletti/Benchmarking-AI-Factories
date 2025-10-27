@@ -451,7 +451,7 @@ class TestVLLMServiceLogic:
         """
         Test that chat template errors are correctly detected.
         """
-        from services.vllm_service import VllmService
+        from services.inference import VllmService
         
         # Mock response with chat template error
         mock_response = Mock()
@@ -488,12 +488,12 @@ class TestVLLMServiceLogic:
         is_error = vllm_service._is_chat_template_error(mock_response)
         assert is_error is False
     
-    @patch('services.vllm_service.requests')
+    @patch('services.inference.vllm_service.requests')
     def test_model_discovery_openai_format(self, mock_requests):
         """
         Test model discovery with OpenAI API format (data field).
         """
-        from services.vllm_service import VllmService
+        from services.inference import VllmService
         
         # Mock the requests.get call
         mock_response = Mock()
@@ -534,7 +534,7 @@ class TestVLLMServiceLogic:
         """
         Test parsing successful chat response.
         """
-        from services.vllm_service import VllmService
+        from services.inference import VllmService
         
         mock_response = Mock()
         mock_response.ok = True
@@ -574,7 +574,7 @@ class TestVLLMServiceLogic:
         """
         Test parsing successful completions response.
         """
-        from services.vllm_service import VllmService
+        from services.inference import VllmService
         
         mock_response = Mock()
         mock_response.ok = True
@@ -782,7 +782,7 @@ class TestVllmServiceUnit:
     @pytest.fixture
     def vllm_service(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
         """Create a VllmService instance with mocked dependencies."""
-        from services.vllm_service import VllmService
+        from services.inference import VllmService
         
         service = VllmService(
             deployer=mock_deployer,

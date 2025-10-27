@@ -1,7 +1,15 @@
 """Service-specific handlers for different service types."""
 
 from .base_service import BaseService
-from .vllm_service import VllmService
-from .vector_db_service import VectorDbService
 
-__all__ = ['BaseService', 'VllmService', 'VectorDbService']
+# Import from new hierarchical structure
+from .inference import InferenceService, VllmService
+from .vector_db import VectorDbService, QdrantService
+
+__all__ = [
+    'BaseService',
+    'InferenceService',
+    'VllmService', 
+    'VectorDbService',
+    'QdrantService'
+]

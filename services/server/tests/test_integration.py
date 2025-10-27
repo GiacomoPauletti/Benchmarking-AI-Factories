@@ -523,6 +523,375 @@ class TestErrorHandling:
         assert response.status_code == 500
 
 
+class TestVectorDbDocumentSearch:
+    """
+    Integration test for vector database document similarity search.
+    
+    This test demonstrates a realistic use case: creating a mini document search system
+    where documents are embedded as vectors and searched using semantic similarity.
+    """
+    
+    @pytest.fixture
+    def server_endpoint(self):
+        """Get the live server endpoint if available."""
+        endpoint_file = Path("/app/services/server/.server-endpoint")
+        if not endpoint_file.exists():
+            pytest.skip("No live server endpoint available - skipping vector-db integration tests")
+        
+        endpoint = endpoint_file.read_text().strip()
+        if not endpoint:
+            pytest.skip("Empty server endpoint file - skipping vector-db integration tests")
+        
+        return endpoint
+    
+    @pytest.fixture
+    def sample_documents(self):
+        """
+        Sample documents with pre-computed mock embeddings.
+        
+        These represent semantic embeddings for different topics:
+        - Animals/pets (cat, dog)
+        - Technology/AI (machine learning, programming)
+        - Nature (flowers, ocean)
+        
+        Using 5-dimensional vectors for simplicity and speed.
+        """
+        return [
+            {
+                "id": 1,
+                "text": "The cat sat on the mat and purred contentedly.",
+                "topic": "animals",
+                # Embedding represents: high on "animals", low on "tech", medium on "nature"
+                "vector": [0.9, 0.1, 0.5, 0.3, 0.2]
+            },
+            {
+                "id": 2,
+                "text": "Dogs are loyal companions and great pets for families.",
+                "topic": "animals",
+                # Similar to cat doc: high on "animals"
+                "vector": [0.85, 0.15, 0.4, 0.35, 0.25]
+            },
+            {
+                "id": 3,
+                "text": "Machine learning algorithms can recognize patterns in data.",
+                "topic": "technology",
+                # High on "tech", low on "animals"
+                "vector": [0.1, 0.9, 0.2, 0.7, 0.6]
+            },
+            {
+                "id": 4,
+                "text": "Programming requires logical thinking and problem solving skills.",
+                "topic": "technology",
+                # Similar to ML doc: high on "tech"
+                "vector": [0.15, 0.85, 0.25, 0.75, 0.65]
+            },
+            {
+                "id": 5,
+                "text": "The ocean waves crashed against the rocky shore.",
+                "topic": "nature",
+                # High on "nature", low on others
+                "vector": [0.2, 0.1, 0.9, 0.3, 0.4]
+            }
+        ]
+    
+    @pytest.fixture
+    def query_vectors(self):
+        """
+        Query vectors representing different search intents.
+        
+        Each query vector should match documents from specific topics.
+        """
+        return {
+            "pets": {
+                "vector": [0.9, 0.1, 0.4, 0.3, 0.2],  # Similar to animal docs
+                "expected_topics": ["animals"],
+                "description": "Query about pets/animals"
+            },
+            "ai_technology": {
+                "vector": [0.1, 0.9, 0.2, 0.7, 0.6],  # Similar to tech docs
+                "expected_topics": ["technology"],
+                "description": "Query about AI/technology"
+            },
+            "environment": {
+                "vector": [0.2, 0.1, 0.9, 0.3, 0.4],  # Similar to nature docs
+                "expected_topics": ["nature"],
+                "description": "Query about nature/environment"
+            }
+        }
+    
+    def test_vector_db_full_workflow(self, server_endpoint, sample_documents, query_vectors):
+        """
+        Test complete vector database workflow: create → insert → search → verify → delete.
+        
+        This is a end-to-end test demonstrating:
+        1. Creating a vector database service
+        2. Creating a collection with specific dimensions
+        3. Inserting documents with vector embeddings
+        4. Searching for similar documents
+        5. Verifying search results match expected semantics
+        6. Testing different distance metrics
+        7. Cleaning up resources
+        """
+        import time
+        
+        # Step 1: Create a Qdrant vector database service
+        print("\n=== Step 1: Creating Vector DB Service ===")
+        create_service_response = requests.post(
+            f"{server_endpoint}/api/v1/services",
+            json={
+                "recipe_name": "vector-db/qdrant",
+                "config": {"nodes": 1}
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        assert create_service_response.status_code in [200, 201], \
+            f"Failed to create vector-db service: {create_service_response.text}"
+        
+        service_data = create_service_response.json()
+        service_id = service_data["id"]
+        print(f"Created vector-db service: {service_id}")
+        
+        # Step 2: Wait for service to be running
+        print("\n=== Step 2: Waiting for Service to be Ready ===")
+        max_wait = 180  # 3 minutes max
+        wait_interval = 10
+        total_waited = 0
+        service_ready = False
+        
+        while total_waited < max_wait:
+            status_response = requests.get(
+                f"{server_endpoint}/api/v1/services/{service_id}/status",
+                timeout=10
+            )
+            if status_response.status_code == 200:
+                status_data = status_response.json()
+                current_status = status_data.get("status", "unknown")
+                print(f"  Status: {current_status} (waited {total_waited}s)")
+                
+                if current_status == "running":
+                    service_ready = True
+                    break
+            
+            time.sleep(wait_interval)
+            total_waited += wait_interval
+        
+        assert service_ready, \
+            f"Vector-db service did not become ready within {max_wait} seconds"
+        print(f"Service is ready after {total_waited}s")
+        
+        # Step 3: Create a collection for our documents
+        print("\n=== Step 3: Creating Collection ===")
+        collection_name = "test_documents"
+        vector_dim = len(sample_documents[0]["vector"])  # 5 dimensions
+        
+        create_collection_response = requests.put(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{collection_name}",
+            json={
+                "vector_size": vector_dim,
+                "distance": "Cosine"  # Use cosine similarity
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        assert create_collection_response.status_code == 200, \
+            f"Failed to create collection: {create_collection_response.text}"
+        print(f"Created collection '{collection_name}' with {vector_dim}-dim vectors (Cosine distance)")
+        
+        # Step 4: Verify collection was created
+        print("\n=== Step 4: Verifying Collection ===")
+        collections_response = requests.get(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections",
+            timeout=10
+        )
+        
+        assert collections_response.status_code == 200
+        collections_data = collections_response.json()
+        assert collections_data["success"], "Failed to list collections"
+        assert collection_name in collections_data["collections"], \
+            f"Collection '{collection_name}' not found in list"
+        print(f"Collection verified in collections list")
+        
+        # Step 5: Insert documents with embeddings
+        print("\n=== Step 5: Inserting Documents ===")
+        points = [
+            {
+                "id": doc["id"],
+                "vector": doc["vector"],
+                "payload": {
+                    "text": doc["text"],
+                    "topic": doc["topic"]
+                }
+            }
+            for doc in sample_documents
+        ]
+        
+        upsert_response = requests.put(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{collection_name}/points",
+            json={"points": points},
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        assert upsert_response.status_code == 200, \
+            f"Failed to upsert points: {upsert_response.text}"
+        upsert_data = upsert_response.json()
+        assert upsert_data["success"], "Upsert operation failed"
+        print(f"Inserted {len(points)} documents with embeddings")
+        
+        # Step 6: Get collection info to verify points were added
+        print("\n=== Step 6: Verifying Collection Info ===")
+        info_response = requests.get(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{collection_name}",
+            timeout=10
+        )
+        
+        assert info_response.status_code == 200
+        info_data = info_response.json()
+        assert info_data["success"], "Failed to get collection info"
+        print(f"Collection info: {info_data.get('info', {}).get('points_count', 'N/A')} points")
+        
+        # Step 7: Test semantic search - Query for pet/animal documents
+        print("\n=== Step 7: Testing Semantic Search ===")
+        for query_name, query_data in query_vectors.items():
+            print(f"\n  Testing query: {query_data['description']}")
+            
+            search_response = requests.post(
+                f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{collection_name}/points/search",
+                json={
+                    "query_vector": query_data["vector"],
+                    "limit": 3
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            
+            assert search_response.status_code == 200, \
+                f"Search failed for {query_name}: {search_response.text}"
+            
+            search_data = search_response.json()
+            assert search_data["success"], f"Search operation failed for {query_name}"
+            assert "results" in search_data, "No results in search response"
+            
+            results = search_data["results"]
+            assert len(results) > 0, f"No results returned for {query_name}"
+            
+            # Verify top result matches expected topic
+            top_result = results[0]
+            assert "payload" in top_result, "Result missing payload"
+            result_topic = top_result["payload"].get("topic")
+            
+            print(f"    Top result: '{top_result['payload'].get('text', 'N/A')[:50]}...'")
+            print(f"    Topic: {result_topic}, Score: {top_result.get('score', 'N/A')}")
+            
+            # Check if topic matches expectation
+            assert result_topic in query_data["expected_topics"], \
+                f"Expected topics {query_data['expected_topics']}, got {result_topic}"
+            print(f"    Search returned correct topic")
+        
+        # Step 8: Test search with different limit
+        print("\n=== Step 8: Testing Search Limits ===")
+        for limit in [1, 2, 3]:
+            search_response = requests.post(
+                f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{collection_name}/points/search",
+                json={
+                    "query_vector": query_vectors["pets"]["vector"],
+                    "limit": limit
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            
+            assert search_response.status_code == 200
+            search_data = search_response.json()
+            assert search_data["success"]
+            assert len(search_data["results"]) <= limit, \
+                f"Expected at most {limit} results, got {len(search_data['results'])}"
+            print(f"  Limit {limit}: returned {len(search_data['results'])} results")
+        
+        # Step 9: Test with Euclidean distance (create new collection)
+        print("\n=== Step 9: Testing Euclidean Distance ===")
+        euclidean_collection = "test_documents_euclidean"
+        
+        create_euclidean_response = requests.put(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{euclidean_collection}",
+            json={
+                "vector_size": vector_dim,
+                "distance": "Euclid"
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        assert create_euclidean_response.status_code == 200
+        print(f"  Created collection with Euclidean distance")
+        
+        # Insert same documents
+        upsert_euclidean_response = requests.put(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{euclidean_collection}/points",
+            json={"points": points},
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        assert upsert_euclidean_response.status_code == 200
+        print(f"  Inserted documents into Euclidean collection")
+        
+        # Search with Euclidean distance
+        search_euclidean_response = requests.post(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{euclidean_collection}/points/search",
+            json={
+                "query_vector": query_vectors["pets"]["vector"],
+                "limit": 2
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        assert search_euclidean_response.status_code == 200
+        euclidean_results = search_euclidean_response.json()
+        assert euclidean_results["success"]
+        print(f"  Search with Euclidean distance successful")
+        
+        # Step 10: Clean up - delete collections
+        print("\n=== Step 10: Cleaning Up ===")
+        for coll in [collection_name, euclidean_collection]:
+            delete_response = requests.delete(
+                f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{coll}",
+                timeout=10
+            )
+            
+            assert delete_response.status_code == 200, \
+                f"Failed to delete collection {coll}: {delete_response.text}"
+            print(f"  Deleted collection '{coll}'")
+        
+        # Verify collections were deleted
+        final_collections_response = requests.get(
+            f"{server_endpoint}/api/v1/vector-db/{service_id}/collections",
+            timeout=10
+        )
+        
+        assert final_collections_response.status_code == 200
+        final_collections = final_collections_response.json()
+        assert collection_name not in final_collections.get("collections", [])
+        assert euclidean_collection not in final_collections.get("collections", [])
+        print(f"  Verified collections deleted")
+        
+        # Step 11: Stop the vector-db service
+        print("\n=== Step 11: Stopping Service ===")
+        stop_response = requests.delete(
+            f"{server_endpoint}/api/v1/services/{service_id}",
+            timeout=10
+        )
+        
+        assert stop_response.status_code in [200, 404]
+        print(f"  Service stopped")
+        
+        print("\n=== Vector DB Full Workflow Test Complete ===\n")
+
+
 if __name__ == "__main__":
     # Allow running integration tests directly: python test_integration.py
     pytest.main([__file__, "-v"])

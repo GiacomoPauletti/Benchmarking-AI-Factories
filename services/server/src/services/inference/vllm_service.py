@@ -1,14 +1,14 @@
-"""VLLM service-specific operations."""
+"""vLLM-specific inference service implementation."""
 
 from typing import Dict, List, Optional, Any
 import requests
-from .base_service import BaseService
+from .inference_service import InferenceService
 
 DEFAULT_VLLM_PORT = 8001
 
 
-class VllmService(BaseService):
-    """Handles all VLLM-specific operations."""
+class VllmService(InferenceService):
+    """Handles all vLLM-specific inference operations."""
 
     def find_services(self) -> List[Dict[str, Any]]:
         """Find running VLLM services and their endpoints."""
@@ -170,7 +170,7 @@ class VllmService(BaseService):
         
         # If not running yet, return basic status
         if basic_status != "running":
-            is_ready = basic_status not in ["pending", "building"]
+            is_ready = basic_status not in ["pending", "building", "starting"]
             return is_ready, basic_status
         
         # For running jobs, check logs with vLLM-specific indicators

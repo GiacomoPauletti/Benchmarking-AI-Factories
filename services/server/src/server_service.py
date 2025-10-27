@@ -33,9 +33,9 @@ class ServerService:
     
     @property
     def vllm_service(self):
-        """Lazy-load VLLM service handler."""
+        """Lazy-load vLLM service handler."""
         if self._vllm_service is None:
-            from services.vllm_service import VllmService
+            from services.inference import VllmService
             self._vllm_service = VllmService(
                 self.deployer, 
                 self.service_manager, 
@@ -46,10 +46,10 @@ class ServerService:
     
     @property
     def vector_db_service(self):
-        """Lazy-load vector database service handler."""
+        """Lazy-load Qdrant vector database service handler."""
         if self._vector_db_service is None:
-            from services.vector_db_service import VectorDbService
-            self._vector_db_service = VectorDbService(
+            from services.vector_db import QdrantService
+            self._vector_db_service = QdrantService(
                 self.deployer,
                 self.service_manager,
                 self.endpoint_resolver,
@@ -117,7 +117,10 @@ class ServerService:
                     # Fallback to basic SLURM status for unknown types
                     status = self.deployer.get_job_status(service_id)
             except Exception as e:
-                self.logger.warning(f"Failed to get status for service {service_id}: {e}")
+                self.logger.exception(f"Failed to get status for service {service_id}: {e}")
+                print(f"ERROR: Failed to get status for service {service_id}: {e}")
+                import traceback
+                traceback.print_exc()
                 status = "unknown"
             
             # Use our stored information and update with current detailed status
@@ -149,7 +152,10 @@ class ServerService:
                     # Fallback to basic SLURM status for unknown types
                     current_status = self.deployer.get_job_status(service_id)
             except Exception as e:
-                self.logger.warning(f"Failed to get status for service {service_id}: {e}")
+                self.logger.exception(f"Failed to get status for service {service_id}: {e}")
+                print(f"ERROR: Failed to get status for service {service_id}: {e}")
+                import traceback
+                traceback.print_exc()
                 current_status = "unknown"
             
             # Update status if it changed
