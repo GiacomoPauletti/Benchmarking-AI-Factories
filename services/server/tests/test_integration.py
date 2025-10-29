@@ -189,15 +189,15 @@ class TestLiveServerIntegration:
         assert "version" in recipe
         assert "path" in recipe
         
-        # Test getting a specific recipe
-        recipe_name = recipe["name"]
-        recipe_response = requests.get(f"{server_endpoint}/api/v1/recipes/{recipe_name}", timeout=10)
+        # Test getting a specific recipe by path (new query parameter approach)
+        recipe_path = recipe["path"]
+        recipe_response = requests.get(f"{server_endpoint}/api/v1/recipes?path={recipe_path}", timeout=10)
         assert recipe_response.status_code == 200
         recipe_details = recipe_response.json()
-        assert recipe_details["name"] == recipe_name
+        assert recipe_details["path"] == recipe_path
         
         # Test getting non-existent recipe
-        nonexistent_response = requests.get(f"{server_endpoint}/api/v1/recipes/nonexistent_recipe", timeout=10)
+        nonexistent_response = requests.get(f"{server_endpoint}/api/v1/recipes?path=nonexistent_recipe", timeout=10)
         assert nonexistent_response.status_code == 404
     
     def test_live_server_vllm_operations(self, server_endpoint):
@@ -205,7 +205,7 @@ class TestLiveServerIntegration:
         Test VLLM-specific operations against a live server.
         """
         # Test listing VLLM services
-        vllm_response = requests.get(f"{server_endpoint}/api/v1/vllm/services", timeout=10)
+        vllm_response = requests.get(f"{server_endpoint}/api/v1/vllm/services", timeout=30)
         assert vllm_response.status_code == 200
         vllm_data = vllm_response.json()
         assert "vllm_services" in vllm_data
@@ -217,7 +217,7 @@ class TestLiveServerIntegration:
             service_id = service["id"]
             
             # Test model discovery
-            models_response = requests.get(f"{server_endpoint}/api/v1/vllm/{service_id}/models", timeout=10)
+            models_response = requests.get(f"{server_endpoint}/api/v1/vllm/{service_id}/models", timeout=30)
             assert models_response.status_code == 200
             models_data = models_response.json()
             assert "models" in models_data
@@ -232,7 +232,7 @@ class TestLiveServerIntegration:
                     "temperature": 0.1
                 },
                 headers={"Content-Type": "application/json"},
-                timeout=30
+                timeout=60
             )
             # Prompt might succeed or fail depending on service state
             assert prompt_response.status_code in [200, 500]
@@ -655,7 +655,7 @@ class TestVectorDbDocumentSearch:
         
         # Step 2: Wait for service to be running
         print("\n=== Step 2: Waiting for Service to be Ready ===")
-        max_wait = 180  # 3 minutes max
+        max_wait = 300  # 5 minutes max (increased for HPC)
         wait_interval = 10
         total_waited = 0
         service_ready = False
@@ -663,7 +663,7 @@ class TestVectorDbDocumentSearch:
         while total_waited < max_wait:
             status_response = requests.get(
                 f"{server_endpoint}/api/v1/services/{service_id}/status",
-                timeout=10
+                timeout=30
             )
             if status_response.status_code == 200:
                 status_data = status_response.json()

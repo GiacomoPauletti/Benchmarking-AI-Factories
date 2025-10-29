@@ -140,7 +140,7 @@ class TestAPIEndpoints:
     
     def test_stop_service_endpoint(self, mock_server_service, client):
         """
-        Test stopping a service.
+        Test stopping a service (DEPRECATED - using DELETE).
         """
         mock_server_service.stop_service.return_value = True
         
@@ -161,11 +161,68 @@ class TestAPIEndpoints:
         assert response.status_code == 404
         assert "Service not found" in response.json()["detail"]
     
+    def test_update_service_status_cancelled(self, mock_server_service, client):
+        """
+        Test cancelling a service via POST status update (recommended approach).
+        """
+        mock_server_service.stop_service.return_value = True
+        mock_server_service.service_manager.update_service_status.return_value = True
+        
+        response = client.post(
+            "/api/v1/services/test-123/status",
+            json={"status": "cancelled"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["service_id"] == "test-123"
+        assert data["status"] == "cancelled"
+        assert "status updated" in data["message"]
+        
+        mock_server_service.stop_service.assert_called_once_with("test-123")
+        mock_server_service.service_manager.update_service_status.assert_called_once_with("test-123", "cancelled")
+    
+    def test_update_service_status_invalid(self, mock_server_service, client):
+        """
+        Test updating service status with invalid value returns 400.
+        """
+        response = client.post(
+            "/api/v1/services/test-123/status",
+            json={"status": "invalid_status"}
+        )
+        assert response.status_code == 400
+        assert "Unsupported status value" in response.json()["detail"]
+    
+    def test_update_service_status_missing_field(self, mock_server_service, client):
+        """
+        Test updating service status without status field returns 400.
+        """
+        response = client.post(
+            "/api/v1/services/test-123/status",
+            json={}
+        )
+        assert response.status_code == 400
+        assert "Missing 'status' field" in response.json()["detail"]
+    
+    def test_update_service_status_not_found(self, mock_server_service, client):
+        """
+        Test updating status of non-existent service returns 404.
+        """
+        mock_server_service.stop_service.return_value = False
+        
+        response = client.post(
+            "/api/v1/services/nonexistent/status",
+            json={"status": "cancelled"}
+        )
+        assert response.status_code == 404
+        assert "Service not found" in response.json()["detail"]
+    
     def test_get_service_logs_endpoint(self, mock_server_service, client):
         """
         Test getting service logs.
         """
-        mock_server_service.get_service_logs.return_value = "SLURM STDOUT (test-123_123.out):\nService started successfully\n"
+        mock_server_service.get_service_logs.return_value = {
+            "logs": "SLURM STDOUT (test-123_123.out):\nService started successfully\n"
+        }
         
         response = client.get("/api/v1/services/test-123/logs")
         assert response.status_code == 200
@@ -179,7 +236,7 @@ class TestAPIEndpoints:
         """
         Test getting service status.
         """
-        mock_server_service.get_service_status.return_value = "running"
+        mock_server_service.get_service_status.return_value = {"status": "running"}
         
         response = client.get("/api/v1/services/test-123/status")
         assert response.status_code == 200
@@ -218,9 +275,53 @@ class TestAPIEndpoints:
         
         mock_server_service.list_available_recipes.assert_called_once()
     
-    def test_get_recipe_endpoint(self, mock_server_service, client):
+    def test_get_recipe_by_path(self, mock_server_service, client):
         """
-        Test getting details of a specific recipe.
+        Test getting details of a specific recipe by path.
+        """
+        mock_server_service.list_available_recipes.return_value = [
+            {
+                "name": "vLLM Inference Service",
+                "category": "inference",
+                "description": "VLLM inference service",
+                "version": "1.0",
+                "path": "inference/vllm"
+            }
+        ]
+        
+        response = client.get("/api/v1/recipes?path=inference/vllm")
+        assert response.status_code == 200
+        recipe = response.json()
+        assert recipe["name"] == "vLLM Inference Service"
+        assert recipe["category"] == "inference"
+        assert recipe["path"] == "inference/vllm"
+        
+        mock_server_service.list_available_recipes.assert_called_once()
+    
+    def test_get_recipe_by_name(self, mock_server_service, client):
+        """
+        Test getting details of a specific recipe by name.
+        """
+        mock_server_service.list_available_recipes.return_value = [
+            {
+                "name": "vLLM Inference Service",
+                "category": "inference",
+                "description": "VLLM inference service",
+                "version": "1.0",
+                "path": "inference/vllm"
+            }
+        ]
+        
+        response = client.get("/api/v1/recipes?name=vLLM%20Inference%20Service")
+        assert response.status_code == 200
+        recipe = response.json()
+        assert recipe["name"] == "vLLM Inference Service"
+        
+        mock_server_service.list_available_recipes.assert_called_once()
+    
+    def test_get_recipe_no_params(self, mock_server_service, client):
+        """
+        Test getting recipes without parameters returns list of all recipes.
         """
         mock_server_service.list_available_recipes.return_value = [
             {
@@ -232,13 +333,12 @@ class TestAPIEndpoints:
             }
         ]
         
-        response = client.get("/api/v1/recipes/vllm")
+        response = client.get("/api/v1/recipes")
+        # This should return the list of all recipes
         assert response.status_code == 200
-        recipe = response.json()
-        assert recipe["name"] == "vllm"
-        assert recipe["category"] == "inference"
-        
-        mock_server_service.list_available_recipes.assert_called_once()
+        recipes = response.json()
+        assert isinstance(recipes, list)
+        assert len(recipes) == 1
     
     def test_get_recipe_not_found(self, mock_server_service, client):
         """
@@ -246,7 +346,7 @@ class TestAPIEndpoints:
         """
         mock_server_service.list_available_recipes.return_value = []
         
-        response = client.get("/api/v1/recipes/nonexistent")
+        response = client.get("/api/v1/recipes?path=nonexistent")
         assert response.status_code == 404
         assert "Recipe not found" in response.json()["detail"]
     
@@ -495,21 +595,19 @@ class TestVLLMServiceLogic:
         """
         from services.inference import VllmService
         
-        # Mock the requests.get call
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.text = '{"object": "list", "data": [{"id": "gpt2", "object": "model"}]}'
-        mock_response.json.return_value = {
-            "object": "list",
-            "data": [
-                {"id": "gpt2", "object": "model", "created": 1234567890}
-            ]
-        }
-        mock_requests.get.return_value = mock_response
-        
         # Create VllmService with mocked dependencies
         mock_deployer = Mock()
         mock_deployer.get_job_status.return_value = "running"
+        
+        # Mock SSH manager to simulate HTTP request via SSH
+        mock_ssh_manager = Mock()
+        mock_ssh_manager.http_request_via_ssh.return_value = (
+            True,  # success
+            200,   # status_code
+            '{"object": "list", "data": [{"id": "gpt2", "object": "model", "created": 1234567890}]}'  # body
+        )
+        mock_deployer.ssh_manager = mock_ssh_manager
+        
         mock_service_manager = Mock()
         mock_service_manager.get_service.return_value = {
             "id": "test-123",
@@ -914,19 +1012,17 @@ class TestVllmServiceUnit:
         # Mock endpoint resolver
         mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
         
-        # Mock HTTP request
-        with patch('requests.get') as mock_get:
-            mock_get.return_value.ok = True
-            mock_get.return_value.status_code = 200
-            mock_get.return_value.json.return_value = {
-                "data": [
-                    {"id": "model1"},
-                    {"id": "model2"}
-                ]
-            }
-            
-            # Call get_models
-            result = vllm_service.get_models("123")
+        # Mock SSH manager to simulate HTTP request via SSH
+        mock_ssh_manager = Mock()
+        mock_ssh_manager.http_request_via_ssh.return_value = (
+            True,  # success
+            200,   # status_code
+            '{"data": [{"id": "model1"}, {"id": "model2"}]}'  # body
+        )
+        mock_deployer.ssh_manager = mock_ssh_manager
+        
+        # Call get_models
+        result = vllm_service.get_models("123")
         
         # Should return dict with success and models
         assert result["success"] is True
@@ -939,6 +1035,15 @@ class TestVllmServiceUnit:
         
         # Verify endpoint was resolved
         mock_endpoint_resolver.resolve.assert_called_once_with("123", default_port=8001)
+        
+        # Verify SSH tunnel was used
+        mock_ssh_manager.http_request_via_ssh.assert_called_once_with(
+            remote_host="node1",
+            remote_port=8000,
+            method="GET",
+            path="/v1/models",
+            timeout=5
+        )
 
 
 # Fixture to create test client once per module

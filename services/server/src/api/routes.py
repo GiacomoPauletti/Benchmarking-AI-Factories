@@ -175,7 +175,13 @@ async def get_service(service_id: str, server_service: ServerService = Depends(g
 
 @router.delete("/services/{service_id}")
 async def stop_service(service_id: str, server_service: ServerService = Depends(get_server_service)):
-    """Stop a running service by cancelling its SLURM job.
+    """DEPRECATED: Use POST /api/v1/services/{service_id}/status instead.
+    
+    Stop a running service by cancelling its SLURM job.
+
+    **DEPRECATION NOTICE:** This endpoint is deprecated in favor of the POST endpoint which
+    better preserves service metadata for post-mortem analysis and Grafana integration.
+    Use `POST /api/v1/services/{service_id}/status` with `{"status": "cancelled"}` instead.
 
     This endpoint cancels the SLURM job associated with the service, which will:
     1. Terminate the running container
@@ -191,8 +197,15 @@ async def stop_service(service_id: str, server_service: ServerService = Depends(
     **Errors:**
     - 404: Service not found or already stopped
 
-    **Example:**
+    **Example (DEPRECATED):**
     - DELETE `/api/v1/services/3642874`
+    
+    **Recommended Alternative:**
+    ```bash
+    curl -X POST http://localhost:8001/api/v1/services/3642874/status \\
+      -H "Content-Type: application/json" \\
+      -d '{"status": "cancelled"}'
+    ```
 
     **Note:** This operation is immediate and cannot be undone. The service will be terminated gracefully.
     """
@@ -228,8 +241,7 @@ async def get_service_logs(service_id: str, server_service: ServerService = Depe
 
     **Note:** Logs may not be available immediately after job creation. They become available once the job starts running.
     """
-    logs = server_service.get_service_logs(service_id)
-    return {"logs": logs}
+    return server_service.get_service_logs(service_id)
 
 
 @router.get("/services/{service_id}/status")
@@ -260,70 +272,131 @@ async def get_service_status(service_id: str, server_service: ServerService = De
     }
     ```
     """
-    status = server_service.get_service_status(service_id)
-    return {"status": status}
+    return server_service.get_service_status(service_id)
 
 
-@router.get("/recipes", response_model=List[RecipeResponse])
-async def list_recipes(server_service: ServerService = Depends(get_server_service)):
-    """List all available service recipes.
+@router.post("/services/{service_id}/status")
+async def update_service_status(
+    service_id: str,
+    status_update: Dict[str, str] = Body(..., examples={
+        "cancel": {
+            "summary": "Cancel a running service",
+            "value": {"status": "cancelled"}
+        }
+    }),
+    server_service: ServerService = Depends(get_server_service)
+):
+    """Update the status of a service (primarily for cancelling).
 
-    Recipes are YAML templates that define how to deploy services on SLURM.
-    Each recipe specifies the container image, resource requirements, and runtime configuration.
+    This endpoint allows updating a service's status. Currently supports cancelling services
+    by setting status to "cancelled", which stops the SLURM job and frees compute resources.
+    Service metadata and logs are preserved for post-mortem analysis.
+
+    **Path Parameters:**
+    - `service_id`: The SLURM job ID of the service
+
+    **Request Body:**
+    - `status`: New status to set. Supported values:
+        - `"cancelled"`: Cancel the running SLURM job
 
     **Returns:**
-    - Array of recipe objects, each containing:
-        - `name`: Recipe identifier (e.g., "vLLM Inference Service")
-        - `category`: Recipe category (e.g., "inference", "storage", "vector-db")
-        - `description`: Human-readable description
-        - `version`: Recipe version
-        - `path`: Path to access the recipe (e.g., "inference/vllm")
+    - Success message with service ID and new status
+
+    **Errors:**
+    - 400: Invalid status value
+    - 404: Service not found or failed to update
+    - 500: Error during status update
+
+    **Example Request:**
+    ```bash
+    curl -X POST http://localhost:8001/api/v1/services/3642874/status \\
+      -H "Content-Type: application/json" \\
+      -d '{"status": "cancelled"}'
+    ```
 
     **Example Response:**
     ```json
-    [
-      {
-        "name": "vLLM Inference Service",
-        "category": "inference",
-        "description": "High-performance LLM inference server",
-        "version": "1.0.0",
-        "path": "inference/vllm"
-      }
-    ]
+    {
+      "message": "Service 3642874 status updated to cancelled",
+      "service_id": "3642874",
+      "status": "cancelled"
+    }
     ```
 
-    **Recipe Categories:**
-    - `inference`: ML model inference services (vLLM, TensorFlow Serving, etc.)
-    - `storage`: Data storage solutions
-    - `vector-db`: Vector database services for RAG applications
-    - `simple`: Basic test/demo services
+    **Note:** This is the recommended way to stop services (instead of DELETE) as it preserves
+    service records for logging and post-mortem analysis, which is essential for Grafana integration.
     """
-    recipes = server_service.list_available_recipes()
-    return recipes
+    new_status = status_update.get("status")
+    
+    if not new_status:
+        raise HTTPException(status_code=400, detail="Missing 'status' field in request body")
+    
+    # Currently only support cancelling services
+    if new_status == "cancelled":
+        success = server_service.stop_service(service_id)
+        if success:
+            # Update the service status in the service manager
+            server_service.service_manager.update_service_status(service_id, "cancelled")
+            return {
+                "message": f"Service {service_id} status updated to {new_status}",
+                "service_id": service_id,
+                "status": new_status
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Service not found or failed to stop")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported status value: '{new_status}'. Currently only 'cancelled' is supported."
+        )
 
 
-@router.get("/recipes/{recipe_name}", response_model=RecipeResponse)
-async def get_recipe(recipe_name: str, server_service: ServerService = Depends(get_server_service)):
-    """Get detailed information about a specific recipe.
+@router.get("/recipes")
+async def list_or_get_recipe(
+    path: Optional[str] = None,
+    name: Optional[str] = None,
+    server_service: ServerService = Depends(get_server_service)
+):
+    """List all available recipes OR get a specific recipe by path/name.
 
-    **Path Parameters:**
-    - `recipe_name`: Recipe name or path (e.g., "vLLM Inference Service" or "inference/vllm")
+    **Behavior:**
+    - Without query parameters: Returns list of all available recipes
+    - With `path` or `name`: Returns a single matching recipe
+
+    **Query Parameters (Optional):**
+    - `path`: Recipe path (e.g., "inference/vllm", "vector-db/qdrant")
+    - `name`: Recipe display name (e.g., "vLLM Inference Service")
 
     **Returns:**
-    - Recipe object with name, category, description, version, and path
+    - If no parameters: Array of all recipe objects
+    - If path/name specified: Single recipe object
 
     **Errors:**
-    - 404: Recipe not found
+    - 404: Recipe not found (when path/name specified)
 
-    **Example:**
-    - GET `/api/v1/recipes/inference/vllm`
+    **Examples:**
+    - List all: `GET /api/v1/recipes`
+    - Get by path: `GET /api/v1/recipes?path=inference/vllm`
+    - Get by path: `GET /api/v1/recipes?path=vector-db/qdrant`
+    - Get by name: `GET /api/v1/recipes?name=vLLM%20Inference%20Service`
+
+    **Recipe Object Fields:**
+    - `name`: Recipe display name
+    - `category`: Category (inference, storage, vector-db, etc.)
+    - `description`: Human-readable description
+    - `version`: Recipe version
+    - `path`: Path identifier (e.g., "inference/vllm")
     """
     recipes = server_service.list_available_recipes()
     
-    # Find recipe by name or path
+    # If no search criteria provided, return all recipes
+    if not path and not name:
+        return recipes
+    
+    # Otherwise, find specific recipe by path or name
     recipe = None
     for r in recipes:
-        if r["name"] == recipe_name or r["path"] == recipe_name:
+        if (path and r.get("path") == path) or (name and r.get("name") == name):
             recipe = r
             break
     
@@ -706,6 +779,8 @@ async def search_points(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
 @router.post("/vllm/{service_id}/prompt", summary="Send a prompt to a running vLLM service")
 async def prompt_vllm_service(
     service_id: str,
@@ -847,3 +922,4 @@ async def get_vllm_models(service_id: str, server_service: ServerService = Depen
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+

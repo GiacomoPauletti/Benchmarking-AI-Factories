@@ -63,10 +63,10 @@ create inference/vllm
 vllm list
 
 # Check which models are loaded in a service
-vllm models 3664648
+vllm models 3671711
 
 # Send prompts 
-prompt 3664648 'Tell me a joke about programming'
+prompt 3671711 'Tell me a joke about programming'
 
 # Create vecdb qdrant service
 create vector-db/qdrant

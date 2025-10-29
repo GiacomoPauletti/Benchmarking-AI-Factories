@@ -137,43 +137,54 @@ class ServerService:
     
     def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
         """Get details of a specific service."""
-        # First check if we have stored information
         stored_service = self.service_manager.get_service(service_id)
         if stored_service:
-            recipe_name = stored_service.get("recipe_name", "")
-            
-            # Get detailed status based on service type
-            try:
-                if recipe_name.startswith("inference/vllm"):
-                    is_ready, current_status = self.vllm_service._check_service_ready(service_id, stored_service)
-                elif recipe_name.startswith("vector-db/"):
-                    is_ready, current_status = self.vector_db_service._check_service_ready(service_id, stored_service)
-                else:
-                    # Fallback to basic SLURM status for unknown types
-                    current_status = self.deployer.get_job_status(service_id)
-            except Exception as e:
-                self.logger.exception(f"Failed to get status for service {service_id}: {e}")
-                print(f"ERROR: Failed to get status for service {service_id}: {e}")
-                import traceback
-                traceback.print_exc()
-                current_status = "unknown"
-            
-            # Update status if it changed
+            status_dict = self.get_service_status(service_id)
+            current_status = status_dict.get("status")
             if current_status != stored_service.get("status"):
                 self.service_manager.update_service_status(service_id, current_status)
                 stored_service = stored_service.copy()
                 stored_service["status"] = current_status
             return stored_service
         return None
-    
-    def get_service_logs(self, service_id: str) -> str:
-        """Get slurm logs from a service."""
+
+    def get_service_logs(self, service_id: str) -> Dict[str, str]:
+        """Get slurm logs from a service.
+        
+        Returns:
+            Dictionary with 'logs' field containing the log output
+        """
         self.logger.debug("Fetching logs for service %s", service_id)
-        return self.deployer.get_job_logs(service_id)
+        logs = self.deployer.get_job_logs(service_id)
+        return {"logs": logs}
     
-    def get_service_status(self, service_id: str) -> str:
-        """Get current detailed status of a service."""
-        return self.deployer.get_job_status(service_id)
+    def get_service_status(self, service_id: str) -> Dict[str, str]:
+        """Get current detailed status of a service.
+        
+        Returns:
+            Dictionary with 'status' field containing the current service status
+        """
+        # Get detailed status based on service type
+        stored_service = self.service_manager.get_service(service_id)
+        if not stored_service:
+            return {"status": "not_found"}
+        
+        try:
+            recipe_name = stored_service.get("recipe_name", "")
+            if recipe_name.startswith("inference/vllm"):
+                is_ready, current_status = self.vllm_service._check_service_ready(service_id, stored_service)
+            elif recipe_name.startswith("vector-db/"):
+                is_ready, current_status = self.vector_db_service._check_service_ready(service_id, stored_service)
+            else:
+                # Fallback to basic SLURM status for unknown types
+                current_status = self.deployer.get_job_status(service_id)
+        except Exception as e:
+            self.logger.exception(f"Failed to get status for service {service_id}: {e}")
+            print(f"ERROR: Failed to get status for service {service_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            current_status = "unknown"
+        return {"status": current_status}
 
     def find_vllm_services(self) -> List[Dict[str, Any]]:
         """Find running VLLM services and their endpoints."""
@@ -222,3 +233,4 @@ class ServerService:
     def prompt_vllm_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a running VLLM service."""
         return self.vllm_service.prompt(service_id, prompt, **kwargs)
+    

@@ -92,7 +92,38 @@ class VllmService(InferenceService):
                     "models": []
                 }
 
-            resp = requests.get(f"{endpoint}/v1/models", timeout=timeout)
+            # Parse endpoint URL and use SSH tunneling to reach compute node (same as prompt endpoint)
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            remote_host = parsed.hostname
+            remote_port = parsed.port or 8001
+            path = "/v1/models"
+            
+            self.logger.debug("Querying models via SSH: %s:%s%s", remote_host, remote_port, path)
+            
+            # Use SSH to make the HTTP request (tunnels through login node to compute node)
+            ssh_manager = self.deployer.ssh_manager
+            success, status_code, body = ssh_manager.http_request_via_ssh(
+                remote_host=remote_host,
+                remote_port=remote_port,
+                method="GET",
+                path=path,
+                timeout=timeout
+            )
+            
+            # Create a mock response object that matches requests.Response interface
+            class MockResponse:
+                def __init__(self, status_code, text, ok):
+                    self.status_code = status_code
+                    self.text = text
+                    self.ok = ok
+                
+                def json(self):
+                    import json
+                    return json.loads(self.text)
+            
+            resp = MockResponse(status_code, body, status_code >= 200 and status_code < 300)
+            
             if not resp.ok:
                 self.logger.warning("Model discovery for %s returned %s: %s", service_id, resp.status_code, resp.text)
                 return {

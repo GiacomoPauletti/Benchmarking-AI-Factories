@@ -2,6 +2,7 @@
 
 from typing import Dict, List, Optional, Any
 import requests
+import json
 from .vector_db_service import VectorDbService
 
 DEFAULT_QDRANT_PORT = 6333
