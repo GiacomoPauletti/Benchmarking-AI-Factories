@@ -175,6 +175,110 @@ interactive_mode() {
                     fi
                 fi
                 ;;
+            "vectordb"|"vector-db")
+                if [ -z "$1" ]; then
+                    echo "Vector DB Commands:"
+                    echo "  vectordb list                                    - List running vector database services"
+                    echo "  vectordb collections <service_id>                - List collections in a service"
+                    echo "  vectordb info <service_id> <collection>          - Get collection info"
+                    echo "  vectordb create <service_id> <collection> <size> [distance] - Create collection"
+                    echo "  vectordb delete <service_id> <collection>        - Delete collection"
+                    echo "  vectordb upsert <service_id> <collection> <json> - Upsert points (JSON array)"
+                    echo "  vectordb search <service_id> <collection> <json> [limit] - Search similar vectors"
+                    echo "Usage: vectordb <subcommand>"
+                else
+                    case "$1" in
+                        "list")
+                            api_call "GET" "/api/v1/vector-db/services"
+                            ;;
+                        "collections")
+                            if [ -z "$2" ]; then
+                                echo "Usage: vectordb collections <service_id>"
+                            else
+                                api_call "GET" "/api/v1/vector-db/$2/collections"
+                            fi
+                            ;;
+                        "info")
+                            if [ -z "$2" ] || [ -z "$3" ]; then
+                                echo "Usage: vectordb info <service_id> <collection_name>"
+                            else
+                                api_call "GET" "/api/v1/vector-db/$2/collections/$3"
+                            fi
+                            ;;
+                        "create")
+                            if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
+                                echo "Usage: vectordb create <service_id> <collection_name> <vector_size> [distance]"
+                                echo "Example: vectordb create 12345 my_docs 384 Cosine"
+                            else
+                                distance="${5:-Cosine}"
+                                payload="{\"vector_size\": $4, \"distance\": \"$distance\"}"
+                                api_call "PUT" "/api/v1/vector-db/$2/collections/$3" "$payload"
+                            fi
+                            ;;
+                        "delete")
+                            if [ -z "$2" ] || [ -z "$3" ]; then
+                                echo "Usage: vectordb delete <service_id> <collection_name>"
+                            else
+                                echo "Deleting collection $3 from service $2..."
+                                api_call "DELETE" "/api/v1/vector-db/$2/collections/$3"
+                            fi
+                            ;;
+                        "upsert")
+                            if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
+                                echo "Usage: vectordb upsert <service_id> <collection_name> <points_json>"
+                                echo "Example: vectordb upsert 12345 my_docs '[{\"id\":1,\"vector\":[0.1,0.2],\"payload\":{\"text\":\"hello\"}}]'"
+                            else
+                                service_id="$2"
+                                collection="$3"
+                                # Reconstruct JSON from all remaining arguments (handles space-split JSON)
+                                shift 3  # Remove first 3 args (vectordb, upsert, service_id)
+                                json_data=""
+                                for arg in "$@"; do
+                                    json_data="$json_data$arg"
+                                done
+                                # Remove surrounding single quotes if present
+                                json_data="${json_data#\'}"
+                                json_data="${json_data%\'}"
+                                # Build the payload JSON (json_data is already a JSON array, don't quote it)
+                                payload='{"points": '"$json_data"'}'
+                                api_call "PUT" "/api/v1/vector-db/$service_id/collections/$collection/points" "$payload"
+                            fi
+                            ;;
+                        "search")
+                            if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
+                                echo "Usage: vectordb search <service_id> <collection_name> <query_vector_json> [limit]"
+                                echo "Example: vectordb search 12345 my_docs '[0.1,0.2,0.3]' 5"
+                            else
+                                service_id="$2"
+                                collection="$3"
+                                # Reconstruct query vector from potentially split arguments
+                                shift 3  # Remove first 3 args
+                                json_data=""
+                                for arg in "$@"; do
+                                    if [[ "$arg" =~ ^[0-9]+$ ]]; then
+                                        # This is the limit parameter
+                                        limit="$arg"
+                                        break
+                                    else
+                                        json_data="$json_data$arg"
+                                    fi
+                                done
+                                # Remove surrounding single quotes if present
+                                json_data="${json_data#\'}"
+                                json_data="${json_data%\'}"
+                                limit="${limit:-10}"
+                                # Build the payload JSON (json_data is already a JSON array, don't quote it)
+                                payload='{"query_vector": '"$json_data"', "limit": '"$limit"'}'
+                                api_call "POST" "/api/v1/vector-db/$service_id/collections/$collection/points/search" "$payload"
+                            fi
+                            ;;
+                        *)
+                            echo "Unknown Vector DB command: $1"
+                            echo "Available: list, collections, info, create, delete, upsert, search"
+                            ;;
+                    esac
+                fi
+                ;;
             "vllm")
                 if [ -z "$1" ]; then
                     echo "VLLM Commands:"
@@ -279,6 +383,16 @@ interactive_mode() {
                 echo "  vllm list           - List running VLLM services"
                 echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
                 echo "  prompt <id> <prompt> - Shorthand for vllm prompt"
+                echo ""
+                echo "Vector DB commands:"
+                echo "  vectordb list                           - List running vector DB services"
+                echo "  vectordb collections <id>               - List collections in service"
+                echo "  vectordb info <id> <collection>         - Get collection info"
+                echo "  vectordb create <id> <coll> <size> [dist] - Create collection"
+                echo "  vectordb delete <id> <collection>       - Delete collection"
+                echo "  vectordb upsert <id> <coll> <json>      - Insert/update points"
+                echo "  vectordb search <id> <coll> <json> [lim] - Search similar vectors"
+                echo ""
                 echo "  endpoint            - Show current server endpoint"
                 echo "  clear               - Clear screen and show status"
                 echo "  help                - Show this help"
@@ -287,8 +401,12 @@ interactive_mode() {
                 echo "Examples:"
                 echo "  recipes"
                 echo "  create inference/vllm_dummy"
+                echo "  create vector-db/qdrant"
                 echo "  service abc123"
                 echo "  vllm list"
+                echo "  vectordb list"
+                echo "  vectordb collections 12345"
+                echo "  vectordb create 12345 my_docs 384 Cosine"
                 echo "  prompt 12345 'Tell me a joke'"
                 ;;
             *)
@@ -367,6 +485,78 @@ case "${1}" in
             exit 1
         fi
         api_call "DELETE" "/api/v1/services/$2"
+        ;;
+    "vectordb"|"vector-db")
+        case "${2}" in
+            "list")
+                api_call "GET" "/api/v1/vector-db/services"
+                ;;
+            "collections")
+                if [ -z "${3}" ]; then
+                    echo "Usage: $0 vectordb collections <service_id>"
+                    exit 1
+                fi
+                api_call "GET" "/api/v1/vector-db/${3}/collections"
+                ;;
+            "info")
+                if [ -z "${3}" ] || [ -z "${4}" ]; then
+                    echo "Usage: $0 vectordb info <service_id> <collection_name>"
+                    exit 1
+                fi
+                api_call "GET" "/api/v1/vector-db/${3}/collections/${4}"
+                ;;
+            "create")
+                if [ -z "${3}" ] || [ -z "${4}" ] || [ -z "${5}" ]; then
+                    echo "Usage: $0 vectordb create <service_id> <collection_name> <vector_size> [distance]"
+                    echo "Example: $0 vectordb create 12345 my_docs 384 Cosine"
+                    exit 1
+                fi
+                distance="${6:-Cosine}"
+                payload="{\"vector_size\": ${5}, \"distance\": \"$distance\"}"
+                api_call "PUT" "/api/v1/vector-db/${3}/collections/${4}" "$payload"
+                ;;
+            "delete")
+                if [ -z "${3}" ] || [ -z "${4}" ]; then
+                    echo "Usage: $0 vectordb delete <service_id> <collection_name>"
+                    exit 1
+                fi
+                echo "Deleting collection ${4} from service ${3}..."
+                api_call "DELETE" "/api/v1/vector-db/${3}/collections/${4}"
+                ;;
+            "upsert")
+                if [ -z "${3}" ] || [ -z "${4}" ] || [ -z "${5}" ]; then
+                    echo "Usage: $0 vectordb upsert <service_id> <collection_name> <points_json>"
+                    echo "Example: $0 vectordb upsert 12345 my_docs '[{\"id\":1,\"vector\":[0.1,0.2],\"payload\":{\"text\":\"hello\"}}]'"
+                    exit 1
+                fi
+                # Build the payload JSON - ${5} is already a JSON array string
+                payload='{"points": '"${5}"'}'
+                api_call "PUT" "/api/v1/vector-db/${3}/collections/${4}/points" "$payload"
+                ;;
+            "search")
+                if [ -z "${3}" ] || [ -z "${4}" ] || [ -z "${5}" ]; then
+                    echo "Usage: $0 vectordb search <service_id> <collection_name> <query_vector_json> [limit]"
+                    echo "Example: $0 vectordb search 12345 my_docs '[0.1,0.2,0.3]' 5"
+                    exit 1
+                fi
+                limit="${6:-10}"
+                # Build the payload JSON - ${5} is already a JSON array string
+                payload='{"query_vector": '"${5}"', "limit": '"$limit"'}'
+                api_call "POST" "/api/v1/vector-db/${3}/collections/${4}/points/search" "$payload"
+                ;;
+            *)
+                echo "Usage: $0 vectordb <subcommand>"
+                echo "Available subcommands:"
+                echo "  list                                         - List running vector database services"
+                echo "  collections <service_id>                     - List collections in a service"
+                echo "  info <service_id> <collection>               - Get collection info"
+                echo "  create <service_id> <collection> <size> [distance] - Create collection"
+                echo "  delete <service_id> <collection>             - Delete collection"
+                echo "  upsert <service_id> <collection> <json>      - Upsert points (JSON array)"
+                echo "  search <service_id> <collection> <json> [limit] - Search similar vectors"
+                exit 1
+                ;;
+        esac
         ;;
     "vllm")
         case "${2}" in
@@ -462,6 +652,16 @@ case "${1}" in
         echo "  vllm list           - List running VLLM services"
         echo "  vllm prompt <id> <prompt> - Send prompt to VLLM service"
         echo "  prompt <id> <prompt> - Shorthand for vllm prompt"
+        echo ""
+        echo "Vector DB Commands:"
+        echo "  vectordb list                               - List running vector DB services"
+        echo "  vectordb collections <id>                   - List collections in service"
+        echo "  vectordb info <id> <collection>             - Get collection info"
+        echo "  vectordb create <id> <coll> <size> [dist]   - Create collection"
+        echo "  vectordb delete <id> <collection>           - Delete collection"
+        echo "  vectordb upsert <id> <coll> <json>          - Insert/update points"
+        echo "  vectordb search <id> <coll> <json> [limit]  - Search similar vectors"
+        echo ""
         echo "  endpoint            - Show current server endpoint"
         echo "  help                - Show this help"
         echo ""
@@ -470,8 +670,14 @@ case "${1}" in
         echo "  $0 status"
         echo "  $0 recipes"
         echo "  $0 create inference/vllm_dummy"
+        echo "  $0 create vector-db/qdrant"
         echo "  $0 service abc123"
         echo "  $0 vllm list"
+        echo "  $0 vectordb list"
+        echo "  $0 vectordb collections 12345"
+        echo "  $0 vectordb create 12345 my_docs 384 Cosine"
+        echo "  $0 vectordb upsert 12345 my_docs '[{\"id\":1,\"vector\":[0.1,0.2]}]'"
+        echo "  $0 vectordb search 12345 my_docs '[0.1,0.2]' 5"
         echo "  $0 prompt 12345 'Tell me a joke'"
         ;;
     *)

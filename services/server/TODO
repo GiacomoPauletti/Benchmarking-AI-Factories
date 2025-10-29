@@ -1,11 +1,25 @@
 DOCS:
-- Document Server better (remove outsdated docs).
-- Create diagram showcasing CI (testing) pipeline. Add this to the docs.
-OTHER:
+- Create diagram showcasing CI (testing) pipeline. Add this to the docs. Explain that GitHub Actions Or Gitlab could be used, but that we do it manually for now.
+- Create architecture diagram for server service. Add to docs.
+- Document vec-db and vllm example python workflow script: Link to them in the docs.
+
+MAIN:
+- Create vec-db examples with documents.  
+- Analyse monitoring class (scraper for server) and query vllm metric endpoint (need to
+create that endpoint on vllm container?)
+- Fix qdrant endpoint not resolving. Then fix embedding in examples. Then possibly create RAG?
+- SSHManager class to global utils?
 - Test multi-node vllm.
+
+Optional:
+- Create RAG automatically on the vllm and vec-db sides (not on client or server).
+- Fix RAG augmented example.
+- Create proper CI pipeline with actions: 
+    - build: docker image with python code, etc.. is built. 
+    - test: docker image is passed into test environment. Runs and must pass specific tests.
 - Create HF auth mechanism.
-- Create vec-db mechanism. Separate vllm and vec-db logic from slurm deployer logic?
-- Pull.
+
+
 
 Things to Benchmark:
 vllm:

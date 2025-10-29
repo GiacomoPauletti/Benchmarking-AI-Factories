@@ -169,7 +169,14 @@ class SlurmDeployer:
             return False
     
     def get_job_status(self, job_id: str) -> str:
-        """Get the status of a SLURM job by job ID via REST API, always checking logs for more detailed status if running."""
+        """Get the status of a SLURM job by job ID via REST API.
+        
+        Args:
+            job_id: The SLURM job ID
+            
+        Returns:
+            Slurm Status string: 'pending', 'running', 'completed', 'failed', etc.
+        """
         try:
             response = requests.get(
                 f"{self.base_url}/job/{job_id}",
@@ -189,29 +196,39 @@ class SlurmDeployer:
                     else:
                         status = str(job_state).lower()
                     basic_status = self._normalize_slurm_state(status)
-                    if basic_status != 'running':
-                        return basic_status
-                    # If running, check logs for more detail
-                    try:
-                        return self._get_detailed_status_from_logs(job_id)
-                    except Exception as e:
-                        self.logger.error(f"Error parsing logs for detailed status of job {job_id}: {e}")
-                        return 'running'
+                    
+                    return basic_status
+
             return "completed"
+
         except Exception as e:
             raise RuntimeError(f"Failed to get job status from SLURM API: {str(e)}")
     
-    def _get_detailed_status_from_logs(self, job_id: str) -> str:
+    def get_detailed_status_from_logs(self, job_id: str, ready_indicators: List[str] = None, 
+                                       starting_indicators: List[str] = None) -> str:
         """Parse job logs to determine detailed status for running jobs.
         
-        Returns one of: 'building', 'starting', 'running', 'completed'
+        This is a helper method that services can use to implement their own
+        service-specific readiness detection.
+        
+        Args:
+            job_id: The SLURM job ID
+            ready_indicators: List of strings that indicate service is fully ready
+            starting_indicators: List of strings that indicate service is starting
+            
+        Returns:
+            One of: 'building', 'starting', 'running', 'completed'
         """
+        # Default indicators for backward compatibility (vLLM-specific)
+        if ready_indicators is None:
+            ready_indicators = ['Application startup complete', 'Uvicorn running on']
+        if starting_indicators is None:
+            starting_indicators = ['Starting container', 'Running vLLM container', 'Starting vLLM']
+        
         logs = self.get_job_logs(job_id)
         
         # Check if log files don't exist yet or are empty
-        # This typically means the job just started running
         if 'File not found' in logs and logs.count('File not found') >= 2:
-            # Both stdout and stderr don't exist yet
             return 'starting'
         
         # Check if container exited
@@ -221,21 +238,21 @@ class SlurmDeployer:
         # Check for building phase
         if 'Building Apptainer image' in logs or 'apptainer build' in logs.lower():
             if 'Container build successful' in logs or 'Starting container' in logs:
-                # Build finished, move to next check
-                pass
+                pass  # Build finished, continue checking
             else:
                 return 'building'
         
-        # Check if application is fully ready
-        if 'Application startup complete' in logs or 'Uvicorn running on' in logs:
-            return 'running'
+        # Check if application is fully ready (using provided indicators)
+        for indicator in ready_indicators:
+            if indicator in logs:
+                return 'running'
         
-        # Check for starting phase (container started but app not ready yet)
-        if 'Starting container' in logs or 'Running vLLM container' in logs or 'Starting vLLM' in logs:
-            return 'starting'
+        # Check for starting phase (using provided indicators)
+        for indicator in starting_indicators:
+            if indicator in logs:
+                return 'starting'
         
-        # Default to starting for very new jobs, not running
-        # This handles the case where logs exist but don't have clear indicators yet
+        # Default to starting for jobs without clear indicators
         return 'starting'
     
     def list_jobs(self, user_filter: str = None) -> list:
@@ -630,12 +647,21 @@ exit $container_exit_code
         
         # Export recipe-specific environment variables
         for key, value in (recipe_env or {}).items():
-            env_vars.append(f"export {key}='{value}'")
+            # Don't quote values that contain shell variables (e.g., ${SLURM_JOB_ID})
+            # so they get expanded at runtime
+            if '${' in value or '$(' in value:
+                env_vars.append(f'export {key}="{value}"')
+            else:
+                env_vars.append(f"export {key}='{value}'")
 
         # Add APPTAINERENV_ prefixed versions for Apptainer to pick up
         # Apptainer automatically imports APPTAINERENV_* variables
         for key, value in (recipe_env or {}).items():
-            env_vars.append(f"export APPTAINERENV_{key}='{value}'")
+            # Don't quote values that contain shell variables
+            if '${' in value or '$(' in value:
+                env_vars.append(f'export APPTAINERENV_{key}="{value}"')
+            else:
+                env_vars.append(f"export APPTAINERENV_{key}='{value}'")
 
         if 'VLLM_WORKDIR' not in (recipe_env or {}):
             env_vars.append("export VLLM_WORKDIR='/workspace' || true")

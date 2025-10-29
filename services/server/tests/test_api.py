@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from main import app
+from api.routes import get_server_service
 
 
 class TestAPIEndpoints:
@@ -33,9 +34,19 @@ class TestAPIEndpoints:
     """
     
     @pytest.fixture
-    def client(self):
-        """Create a test client for the FastAPI app."""
-        return TestClient(app)
+    def mock_server_service(self):
+        """Create a mock ServerService instance."""
+        return Mock()
+    
+    @pytest.fixture
+    def client(self, mock_server_service):
+        """Create a test client for the FastAPI app with mocked dependencies."""
+        # Override the dependency with our mock
+        app.dependency_overrides[get_server_service] = lambda: mock_server_service
+        client = TestClient(app)
+        yield client
+        # Clean up the override after the test
+        app.dependency_overrides.clear()
     
     def test_health_endpoint(self, client):
         """
@@ -65,14 +76,12 @@ class TestAPIEndpoints:
         assert "AI Factory Server Service" in data["service"]
         assert data["status"] == "running"
     
-    @patch('api.routes.ServerService')
-    def test_create_service_endpoint(self, mock_service_class, client):
+    def test_create_service_endpoint(self, mock_server_service, client):
         """
         Test the service creation endpoint with mocked ServerService.
         """
-        # Create a mock service instance
-        mock_service = Mock()
-        mock_service.start_service.return_value = {
+        # Configure the mock to return expected data
+        mock_server_service.start_service.return_value = {
             "id": "12345",
             "name": "test-service",
             "recipe_name": "inference/vllm",
@@ -81,8 +90,6 @@ class TestAPIEndpoints:
             "config": {"nodes": 1},
             "created_at": "2025-10-08T10:00:00"
         }
-        # When ServerService() is called, return our mock
-        mock_service_class.return_value = mock_service
         
         # Make the API call
         response = client.post("/api/v1/services", json={
@@ -97,15 +104,13 @@ class TestAPIEndpoints:
         assert data["recipe_name"] == "inference/vllm"
         
         # Verify the mock was called correctly
-        mock_service.start_service.assert_called_once()
+        mock_server_service.start_service.assert_called_once()
     
-    @patch('api.routes.ServerService')
-    def test_get_service_endpoint(self, mock_service_class, client):
+    def test_get_service_endpoint(self, mock_server_service, client):
         """
         Test getting individual service details.
         """
-        mock_service = Mock()
-        mock_service.get_service.return_value = {
+        mock_server_service.get_service.return_value = {
             "id": "test-123",
             "name": "test-service",
             "recipe_name": "inference/vllm",
@@ -114,7 +119,6 @@ class TestAPIEndpoints:
             "config": {"nodes": 1},
             "created_at": "2025-10-09T10:00:00"
         }
-        mock_service_class.return_value = mock_service
         
         response = client.get("/api/v1/services/test-123")
         assert response.status_code == 200
@@ -122,58 +126,103 @@ class TestAPIEndpoints:
         assert data["id"] == "test-123"
         assert data["status"] == "running"
         
-        mock_service.get_service.assert_called_once_with("test-123")
+        mock_server_service.get_service.assert_called_once_with("test-123")
     
-    @patch('api.routes.ServerService')
-    def test_get_service_not_found(self, mock_service_class, client):
+    def test_get_service_not_found(self, mock_server_service, client):
         """
         Test getting a non-existent service returns 404.
         """
-        mock_service = Mock()
-        mock_service.get_service.return_value = None
-        mock_service_class.return_value = mock_service
+        mock_server_service.get_service.return_value = None
         
         response = client.get("/api/v1/services/nonexistent")
         assert response.status_code == 404
         assert "Service not found" in response.json()["detail"]
     
-    @patch('api.routes.ServerService')
-    def test_stop_service_endpoint(self, mock_service_class, client):
+    def test_stop_service_endpoint(self, mock_server_service, client):
         """
-        Test stopping a service.
+        Test stopping a service (DEPRECATED - using DELETE).
         """
-        mock_service = Mock()
-        mock_service.stop_service.return_value = True
-        mock_service_class.return_value = mock_service
+        mock_server_service.stop_service.return_value = True
         
         response = client.delete("/api/v1/services/test-123")
         assert response.status_code == 200
         data = response.json()
         assert "stopped successfully" in data["message"]
         
-        mock_service.stop_service.assert_called_once_with("test-123")
+        mock_server_service.stop_service.assert_called_once_with("test-123")
     
-    @patch('api.routes.ServerService')
-    def test_stop_service_not_found(self, mock_service_class, client):
+    def test_stop_service_not_found(self, mock_server_service, client):
         """
         Test stopping a non-existent service returns 404.
         """
-        mock_service = Mock()
-        mock_service.stop_service.return_value = False
-        mock_service_class.return_value = mock_service
+        mock_server_service.stop_service.return_value = False
         
         response = client.delete("/api/v1/services/nonexistent")
         assert response.status_code == 404
         assert "Service not found" in response.json()["detail"]
     
-    @patch('api.routes.ServerService')
-    def test_get_service_logs_endpoint(self, mock_service_class, client):
+    def test_update_service_status_cancelled(self, mock_server_service, client):
+        """
+        Test cancelling a service via POST status update (recommended approach).
+        """
+        mock_server_service.stop_service.return_value = True
+        mock_server_service.service_manager.update_service_status.return_value = True
+        
+        response = client.post(
+            "/api/v1/services/test-123/status",
+            json={"status": "cancelled"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["service_id"] == "test-123"
+        assert data["status"] == "cancelled"
+        assert "status updated" in data["message"]
+        
+        mock_server_service.stop_service.assert_called_once_with("test-123")
+        mock_server_service.service_manager.update_service_status.assert_called_once_with("test-123", "cancelled")
+    
+    def test_update_service_status_invalid(self, mock_server_service, client):
+        """
+        Test updating service status with invalid value returns 400.
+        """
+        response = client.post(
+            "/api/v1/services/test-123/status",
+            json={"status": "invalid_status"}
+        )
+        assert response.status_code == 400
+        assert "Unsupported status value" in response.json()["detail"]
+    
+    def test_update_service_status_missing_field(self, mock_server_service, client):
+        """
+        Test updating service status without status field returns 400.
+        """
+        response = client.post(
+            "/api/v1/services/test-123/status",
+            json={}
+        )
+        assert response.status_code == 400
+        assert "Missing 'status' field" in response.json()["detail"]
+    
+    def test_update_service_status_not_found(self, mock_server_service, client):
+        """
+        Test updating status of non-existent service returns 404.
+        """
+        mock_server_service.stop_service.return_value = False
+        
+        response = client.post(
+            "/api/v1/services/nonexistent/status",
+            json={"status": "cancelled"}
+        )
+        assert response.status_code == 404
+        assert "Service not found" in response.json()["detail"]
+    
+    def test_get_service_logs_endpoint(self, mock_server_service, client):
         """
         Test getting service logs.
         """
-        mock_service = Mock()
-        mock_service.get_service_logs.return_value = "SLURM STDOUT (test-123_123.out):\nService started successfully\n"
-        mock_service_class.return_value = mock_service
+        mock_server_service.get_service_logs.return_value = {
+            "logs": "SLURM STDOUT (test-123_123.out):\nService started successfully\n"
+        }
         
         response = client.get("/api/v1/services/test-123/logs")
         assert response.status_code == 200
@@ -181,31 +230,26 @@ class TestAPIEndpoints:
         assert "logs" in data
         assert "Service started successfully" in data["logs"]
         
-        mock_service.get_service_logs.assert_called_once_with("test-123")
+        mock_server_service.get_service_logs.assert_called_once_with("test-123")
     
-    @patch('api.routes.ServerService')
-    def test_get_service_status_endpoint(self, mock_service_class, client):
+    def test_get_service_status_endpoint(self, mock_server_service, client):
         """
         Test getting service status.
         """
-        mock_service = Mock()
-        mock_service.get_service_status.return_value = "running"
-        mock_service_class.return_value = mock_service
+        mock_server_service.get_service_status.return_value = {"status": "running"}
         
         response = client.get("/api/v1/services/test-123/status")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "running"
         
-        mock_service.get_service_status.assert_called_once_with("test-123")
+        mock_server_service.get_service_status.assert_called_once_with("test-123")
     
-    @patch('api.routes.ServerService')
-    def test_list_recipes_endpoint(self, mock_service_class, client):
+    def test_list_recipes_endpoint(self, mock_server_service, client):
         """
         Test listing all available recipes.
         """
-        mock_service = Mock()
-        mock_service.list_available_recipes.return_value = [
+        mock_server_service.list_available_recipes.return_value = [
             {
                 "name": "vllm",
                 "category": "inference",
@@ -221,7 +265,6 @@ class TestAPIEndpoints:
                 "path": "inference/triton"
             }
         ]
-        mock_service_class.return_value = mock_service
         
         response = client.get("/api/v1/recipes")
         assert response.status_code == 200
@@ -230,15 +273,57 @@ class TestAPIEndpoints:
         assert recipes[0]["name"] == "vllm"
         assert recipes[1]["name"] == "triton"
         
-        mock_service.list_available_recipes.assert_called_once()
+        mock_server_service.list_available_recipes.assert_called_once()
     
-    @patch('api.routes.ServerService')
-    def test_get_recipe_endpoint(self, mock_service_class, client):
+    def test_get_recipe_by_path(self, mock_server_service, client):
         """
-        Test getting details of a specific recipe.
+        Test getting details of a specific recipe by path.
         """
-        mock_service = Mock()
-        mock_service.list_available_recipes.return_value = [
+        mock_server_service.list_available_recipes.return_value = [
+            {
+                "name": "vLLM Inference Service",
+                "category": "inference",
+                "description": "VLLM inference service",
+                "version": "1.0",
+                "path": "inference/vllm"
+            }
+        ]
+        
+        response = client.get("/api/v1/recipes?path=inference/vllm")
+        assert response.status_code == 200
+        recipe = response.json()
+        assert recipe["name"] == "vLLM Inference Service"
+        assert recipe["category"] == "inference"
+        assert recipe["path"] == "inference/vllm"
+        
+        mock_server_service.list_available_recipes.assert_called_once()
+    
+    def test_get_recipe_by_name(self, mock_server_service, client):
+        """
+        Test getting details of a specific recipe by name.
+        """
+        mock_server_service.list_available_recipes.return_value = [
+            {
+                "name": "vLLM Inference Service",
+                "category": "inference",
+                "description": "VLLM inference service",
+                "version": "1.0",
+                "path": "inference/vllm"
+            }
+        ]
+        
+        response = client.get("/api/v1/recipes?name=vLLM%20Inference%20Service")
+        assert response.status_code == 200
+        recipe = response.json()
+        assert recipe["name"] == "vLLM Inference Service"
+        
+        mock_server_service.list_available_recipes.assert_called_once()
+    
+    def test_get_recipe_no_params(self, mock_server_service, client):
+        """
+        Test getting recipes without parameters returns list of all recipes.
+        """
+        mock_server_service.list_available_recipes.return_value = [
             {
                 "name": "vllm",
                 "category": "inference",
@@ -247,36 +332,29 @@ class TestAPIEndpoints:
                 "path": "inference/vllm"
             }
         ]
-        mock_service_class.return_value = mock_service
         
-        response = client.get("/api/v1/recipes/vllm")
+        response = client.get("/api/v1/recipes")
+        # This should return the list of all recipes
         assert response.status_code == 200
-        recipe = response.json()
-        assert recipe["name"] == "vllm"
-        assert recipe["category"] == "inference"
-        
-        mock_service.list_available_recipes.assert_called_once()
+        recipes = response.json()
+        assert isinstance(recipes, list)
+        assert len(recipes) == 1
     
-    @patch('api.routes.ServerService')
-    def test_get_recipe_not_found(self, mock_service_class, client):
+    def test_get_recipe_not_found(self, mock_server_service, client):
         """
         Test getting a non-existent recipe returns 404.
         """
-        mock_service = Mock()
-        mock_service.list_available_recipes.return_value = []
-        mock_service_class.return_value = mock_service
+        mock_server_service.list_available_recipes.return_value = []
         
-        response = client.get("/api/v1/recipes/nonexistent")
+        response = client.get("/api/v1/recipes?path=nonexistent")
         assert response.status_code == 404
         assert "Recipe not found" in response.json()["detail"]
     
-    @patch('api.routes.ServerService')
-    def test_list_vllm_services_endpoint(self, mock_service_class, client):
+    def test_list_vllm_services_endpoint(self, mock_server_service, client):
         """
         Test listing VLLM services.
         """
-        mock_service = Mock()
-        mock_service.find_vllm_services.return_value = [
+        mock_server_service.find_vllm_services.return_value = [
             {
                 "id": "vllm-123",
                 "name": "vllm-service",
@@ -285,7 +363,6 @@ class TestAPIEndpoints:
                 "status": "running"
             }
         ]
-        mock_service_class.return_value = mock_service
         
         response = client.get("/api/v1/vllm/services")
         assert response.status_code == 200
@@ -294,22 +371,19 @@ class TestAPIEndpoints:
         assert len(data["vllm_services"]) == 1
         assert data["vllm_services"][0]["id"] == "vllm-123"
         
-        mock_service.find_vllm_services.assert_called_once()
+        mock_server_service.find_vllm_services.assert_called_once()
     
-    @patch('api.routes.ServerService')
-    def test_prompt_vllm_service_endpoint(self, mock_service_class, client):
+    def test_prompt_vllm_service_endpoint(self, mock_server_service, client):
         """
         Test sending a prompt to a VLLM service.
         """
-        mock_service = Mock()
-        mock_service.prompt_vllm_service.return_value = {
+        mock_server_service.prompt_vllm_service.return_value = {
             "success": True,
             "response": "Hello, this is a test response from VLLM.",
             "service_id": "vllm-123",
             "endpoint": "http://node001:8000",
             "usage": {"prompt_tokens": 5, "completion_tokens": 10}
         }
-        mock_service_class.return_value = mock_service
         
         response = client.post("/api/v1/vllm/vllm-123/prompt", json={
             "prompt": "Hello, how are you?",
@@ -322,32 +396,23 @@ class TestAPIEndpoints:
         assert "Hello, this is a test response" in data["response"]
         assert data["service_id"] == "vllm-123"
         
-        mock_service.prompt_vllm_service.assert_called_once_with(
+        mock_server_service.prompt_vllm_service.assert_called_once_with(
             "vllm-123", "Hello, how are you?", max_tokens=50, temperature=0.8
         )
     
-    @patch('api.routes.ServerService')
-    def test_prompt_vllm_service_missing_prompt(self, mock_service_class, client):
+    def test_prompt_vllm_service_missing_prompt(self, mock_server_service, client):
         """
         Test VLLM prompting with missing prompt returns 400.
         """
-        # Even though we don't use the service for validation errors,
-        # we need to mock it so the endpoint doesn't fail during initialization
-        mock_service = Mock()
-        mock_service_class.return_value = mock_service
-        
         response = client.post("/api/v1/vllm/vllm-123/prompt", json={})
         assert response.status_code == 400 or response.status_code == 422  # FastAPI validation error
         # Note: FastAPI might return 422 for missing required fields
     
-    @patch('api.routes.ServerService')
-    def test_prompt_vllm_service_backend_error(self, mock_service_class, client):
+    def test_prompt_vllm_service_backend_error(self, mock_server_service, client):
         """
         Test VLLM prompting with backend error.
         """
-        mock_service = Mock()
-        mock_service.prompt_vllm_service.side_effect = Exception("VLLM service unavailable")
-        mock_service_class.return_value = mock_service
+        mock_server_service.prompt_vllm_service.side_effect = Exception("VLLM service unavailable")
         
         response = client.post("/api/v1/vllm/vllm-123/prompt", json={
             "prompt": "Test prompt"
@@ -355,32 +420,33 @@ class TestAPIEndpoints:
         assert response.status_code == 500
         assert "VLLM service unavailable" in response.json()["detail"]
     
-    @patch('api.routes.ServerService')
-    def test_get_vllm_models_endpoint(self, mock_service_class, client):
+    def test_get_vllm_models_endpoint(self, mock_server_service, client):
         """
         Test getting available models from a VLLM service.
         """
-        mock_service = Mock()
-        mock_service.get_vllm_models.return_value = ["gpt2", "Qwen/Qwen2.5-0.5B-Instruct"]
-        mock_service_class.return_value = mock_service
+        mock_server_service.get_vllm_models.return_value = {
+            "success": True,
+            "models": ["gpt2", "Qwen/Qwen2.5-0.5B-Instruct"],
+            "service_id": "vllm-123",
+            "endpoint": "http://node:8000"
+        }
         
         response = client.get("/api/v1/vllm/vllm-123/models")
         assert response.status_code == 200
         data = response.json()
+        assert data["success"] is True
         assert "models" in data
         assert len(data["models"]) == 2
         assert "gpt2" in data["models"]
         assert "Qwen/Qwen2.5-0.5B-Instruct" in data["models"]
         
-        mock_service.get_vllm_models.assert_called_once_with("vllm-123")
+        mock_server_service.get_vllm_models.assert_called_once_with("vllm-123")
     
-    @patch('api.routes.ServerService')
-    def test_prompt_vllm_service_not_ready(self, mock_service_class, client):
+    def test_prompt_vllm_service_not_ready(self, mock_server_service, client):
         """
         Test prompting a VLLM service that is still starting.
         """
-        mock_service = Mock()
-        mock_service.prompt_vllm_service.return_value = {
+        mock_server_service.prompt_vllm_service.return_value = {
             "success": False,
             "error": "Service is not ready yet (status: starting)",
             "message": "The vLLM service is still starting up. Please wait a moment and try again.",
@@ -388,7 +454,6 @@ class TestAPIEndpoints:
             "status": "starting",
             "endpoint": "http://node001:8000"
         }
-        mock_service_class.return_value = mock_service
         
         response = client.post("/api/v1/vllm/vllm-123/prompt", json={
             "prompt": "Test prompt"
@@ -400,13 +465,11 @@ class TestAPIEndpoints:
         assert "starting up" in data["message"]
         assert data["status"] == "starting"
     
-    @patch('api.routes.ServerService')
-    def test_prompt_vllm_service_connection_refused(self, mock_service_class, client):
+    def test_prompt_vllm_service_connection_refused(self, mock_server_service, client):
         """
         Test prompting a VLLM service with connection refused error.
         """
-        mock_service = Mock()
-        mock_service.prompt_vllm_service.return_value = {
+        mock_server_service.prompt_vllm_service.return_value = {
             "success": False,
             "error": "Service not available",
             "message": "Cannot connect to vLLM service. The service may still be starting up (status: running). Please wait and try again.",
@@ -415,7 +478,6 @@ class TestAPIEndpoints:
             "endpoint": "http://node001:8000",
             "technical_details": "Connection refused"
         }
-        mock_service_class.return_value = mock_service
         
         response = client.post("/api/v1/vllm/vllm-123/prompt", json={
             "prompt": "Test prompt"
@@ -426,13 +488,11 @@ class TestAPIEndpoints:
         assert "not available" in data["error"]
         assert "may still be starting" in data["message"]
     
-    @patch('api.routes.ServerService')
-    def test_create_service_with_custom_model(self, mock_service_class, client):
+    def test_create_service_with_custom_model(self, mock_server_service, client):
         """
         Test creating a VLLM service with custom model via environment variables.
         """
-        mock_service = Mock()
-        mock_service.start_service.return_value = {
+        mock_server_service.start_service.return_value = {
             "id": "12345",
             "name": "vllm-custom",
             "recipe_name": "inference/vllm",
@@ -450,7 +510,6 @@ class TestAPIEndpoints:
             },
             "created_at": "2025-10-14T10:00:00"
         }
-        mock_service_class.return_value = mock_service
         
         # Create service with custom model and resources
         response = client.post("/api/v1/services", json={
@@ -475,8 +534,8 @@ class TestAPIEndpoints:
         assert data["config"]["resources"]["cpu"] == "8"
         
         # Verify the mock was called with the right config (using keyword arguments)
-        mock_service.start_service.assert_called_once()
-        call_args = mock_service.start_service.call_args
+        mock_server_service.start_service.assert_called_once()
+        call_args = mock_server_service.start_service.call_args
         assert call_args.kwargs["recipe_name"] == "inference/vllm"
         assert call_args.kwargs["config"]["environment"]["VLLM_MODEL"] == "gpt2"
         assert call_args.kwargs["config"]["resources"]["cpu"] == "8"
@@ -492,7 +551,7 @@ class TestVLLMServiceLogic:
         """
         Test that chat template errors are correctly detected.
         """
-        from server_service import ServerService
+        from services.inference import VllmService
         
         # Mock response with chat template error
         mock_response = Mock()
@@ -504,12 +563,15 @@ class TestVLLMServiceLogic:
             }
         }
         
-        # Patch both SSHManager and SlurmDeployer during ServerService creation
-        with patch('server_service.SlurmDeployer') as mock_deployer:
-            mock_deployer.return_value = Mock()
-            service = ServerService()
-            is_error = service._is_chat_template_error(mock_response)
-            assert is_error is True
+        # Create VllmService with mocked dependencies
+        mock_deployer = Mock()
+        mock_service_manager = Mock()
+        mock_endpoint_resolver = Mock()
+        mock_logger = Mock()
+        
+        vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+        is_error = vllm_service._is_chat_template_error(mock_response)
+        assert is_error is True
         
         # Test with different error
         mock_response.json.return_value = {
@@ -518,59 +580,59 @@ class TestVLLMServiceLogic:
                 "type": "BadRequestError"
             }
         }
-        with patch('server_service.SlurmDeployer') as mock_deployer:
-            mock_deployer.return_value = Mock()
-            service = ServerService()
-            is_error = service._is_chat_template_error(mock_response)
-            assert is_error is False
+        is_error = vllm_service._is_chat_template_error(mock_response)
+        assert is_error is False
         
         # Test with non-400 status
         mock_response.status_code = 500
-        with patch('server_service.SlurmDeployer') as mock_deployer:
-            mock_deployer.return_value = Mock()
-            service = ServerService()
-            is_error = service._is_chat_template_error(mock_response)
-            assert is_error is False
+        is_error = vllm_service._is_chat_template_error(mock_response)
+        assert is_error is False
     
-    @patch('server_service.requests')
+    @patch('services.inference.vllm_service.requests')
     def test_model_discovery_openai_format(self, mock_requests):
         """
         Test model discovery with OpenAI API format (data field).
         """
-        from server_service import ServerService
+        from services.inference import VllmService
         
-        # Mock the endpoint discovery
-        mock_service_instance = Mock()
-        mock_service_instance._get_vllm_endpoint = Mock(return_value="http://test:8001")
+        # Create VllmService with mocked dependencies
+        mock_deployer = Mock()
+        mock_deployer.get_job_status.return_value = "running"
         
-        # Mock the requests.get call
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.text = '{"object": "list", "data": [{"id": "gpt2", "object": "model"}]}'
-        mock_response.json.return_value = {
-            "object": "list",
-            "data": [
-                {"id": "gpt2", "object": "model", "created": 1234567890}
-            ]
+        # Mock SSH manager to simulate HTTP request via SSH
+        mock_ssh_manager = Mock()
+        mock_ssh_manager.http_request_via_ssh.return_value = (
+            True,  # success
+            200,   # status_code
+            '{"object": "list", "data": [{"id": "gpt2", "object": "model", "created": 1234567890}]}'  # body
+        )
+        mock_deployer.ssh_manager = mock_ssh_manager
+        
+        mock_service_manager = Mock()
+        mock_service_manager.get_service.return_value = {
+            "id": "test-123",
+            "status": "running",
+            "recipe_name": "inference/vllm"
         }
-        mock_requests.get.return_value = mock_response
+        mock_endpoint_resolver = Mock()
+        mock_endpoint_resolver.resolve = Mock(return_value="http://test:8001")
+        mock_logger = Mock()
         
-        with patch('server_service.SlurmDeployer') as mock_deployer:
-            mock_deployer.return_value = Mock()
-            service = ServerService()
-            service._get_vllm_endpoint = Mock(return_value="http://test:8001")
-            
-            models = service.get_vllm_models("test-123")
-            
-            assert "gpt2" in models
-            assert len(models) == 1
+        vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+        
+        result = vllm_service.get_models("test-123")
+        
+        # Now returns dict with success and models
+        assert result["success"] is True
+        assert "gpt2" in result["models"]
+        assert len(result["models"]) == 1
     
     @patch('server_service.requests')
     def test_parse_chat_response_success(self, mock_requests):
         """
         Test parsing successful chat response.
         """
-        from server_service import ServerService
+        from services.inference import VllmService
         
         mock_response = Mock()
         mock_response.ok = True
@@ -590,23 +652,27 @@ class TestVLLMServiceLogic:
             }
         }
         
-        with patch('server_service.SlurmDeployer') as mock_deployer:
-            mock_deployer.return_value = Mock()
-            service = ServerService()
-            result = service._parse_chat_response(mock_response, "http://test:8001", "test-123")
-            
-            assert result["success"] is True
-            assert result["response"] == "This is a test response"
-            assert result["service_id"] == "test-123"
-            assert result["endpoint_used"] == "chat"
-            assert result["usage"]["prompt_tokens"] == 10
+        # Create VllmService with mocked dependencies
+        mock_deployer = Mock()
+        mock_service_manager = Mock()
+        mock_endpoint_resolver = Mock()
+        mock_logger = Mock()
+        
+        vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+        result = vllm_service._parse_chat_response(mock_response, "http://test:8001", "test-123")
+        
+        assert result["success"] is True
+        assert result["response"] == "This is a test response"
+        assert result["service_id"] == "test-123"
+        assert result["endpoint_used"] == "chat"
+        assert result["usage"]["prompt_tokens"] == 10
     
     @patch('server_service.requests')
     def test_parse_completions_response_success(self, mock_requests):
         """
         Test parsing successful completions response.
         """
-        from server_service import ServerService
+        from services.inference import VllmService
         
         mock_response = Mock()
         mock_response.ok = True
@@ -624,16 +690,20 @@ class TestVLLMServiceLogic:
             }
         }
         
-        with patch('server_service.SlurmDeployer') as mock_deployer:
-            mock_deployer.return_value = Mock()
-            service = ServerService()
-            result = service._parse_completions_response(mock_response, "http://test:8001", "test-123")
-            
-            assert result["success"] is True
-            assert result["response"] == "This is a completion"
-            assert result["service_id"] == "test-123"
-            assert result["endpoint_used"] == "completions"
-            assert result["usage"]["total_tokens"] == 25
+        # Create VllmService with mocked dependencies
+        mock_deployer = Mock()
+        mock_service_manager = Mock()
+        mock_endpoint_resolver = Mock()
+        mock_logger = Mock()
+        
+        vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+        result = vllm_service._parse_completions_response(mock_response, "http://test:8001", "test-123")
+        
+        assert result["success"] is True
+        assert result["response"] == "This is a completion"
+        assert result["service_id"] == "test-123"
+        assert result["endpoint_used"] == "completions"
+        assert result["usage"]["total_tokens"] == 25
 
 
 class TestSLURMDeployer:
@@ -706,9 +776,23 @@ class TestServiceWorkflows:
     when mocked, testing the integration logic without external dependencies.
     """
     
+    @pytest.fixture
+    def mock_server_service(self):
+        """Create a mock ServerService instance."""
+        return Mock()
+    
+    @pytest.fixture
+    def client(self, mock_server_service):
+        """Create a test client for the FastAPI app with mocked dependencies."""
+        # Override the dependency with our mock
+        app.dependency_overrides[get_server_service] = lambda: mock_server_service
+        client = TestClient(app)
+        yield client
+        # Clean up the override after the test
+        app.dependency_overrides.clear()
+    
     @patch('server_service.SlurmDeployer')
-    @patch('api.routes.ServerService')
-    def test_complete_service_lifecycle(self, mock_service_class, mock_deployer, client=None):
+    def test_complete_service_lifecycle(self, mock_deployer, mock_server_service, client):
         """
         Test a complete service lifecycle: create -> list -> (cleanup).
         
@@ -717,13 +801,8 @@ class TestServiceWorkflows:
         2. Created service appears in service list
         3. Service data consistency between operations
         """
-        if client is None:
-            client = TestClient(app)
-        
-        mock_service = Mock()
-        
         # Mock service creation
-        mock_service.start_service.return_value = {
+        mock_server_service.start_service.return_value = {
             "id": "workflow-test-123",
             "name": "workflow-service",
             "recipe_name": "test/recipe",
@@ -734,7 +813,7 @@ class TestServiceWorkflows:
         }
         
         # Mock service listing (includes our created service)
-        mock_service.list_running_services.return_value = [
+        mock_server_service.list_running_services.return_value = [
             {
                 "id": "workflow-test-123",
                 "name": "workflow-service",
@@ -745,8 +824,6 @@ class TestServiceWorkflows:
                 "created_at": "2025-10-08T10:00:00"
             }
         ]
-        
-        mock_service_class.return_value = mock_service
         
         # Step 1: Create service
         create_response = client.post("/api/v1/services", json={
@@ -768,8 +845,205 @@ class TestServiceWorkflows:
         assert our_service["name"] == "workflow-service"
         
         # Verify both methods were called
-        mock_service.start_service.assert_called_once()
-        mock_service.list_running_services.assert_called_once()
+        mock_server_service.start_service.assert_called_once()
+        mock_server_service.list_running_services.assert_called_once()
+
+
+class TestVllmServiceUnit:
+    """
+    Unit tests for VllmService methods.
+    
+    These tests exercise VllmService implementation directly with mocked
+    dependencies to catch implementation bugs that high-level API tests miss.
+    """
+    
+    @pytest.fixture
+    def mock_deployer(self):
+        """Create a mock SlurmDeployer."""
+        return Mock()
+    
+    @pytest.fixture
+    def mock_service_manager(self):
+        """Create a mock ServiceManager."""
+        return Mock()
+    
+    @pytest.fixture
+    def mock_endpoint_resolver(self):
+        """Create a mock EndpointResolver."""
+        return Mock()
+    
+    @pytest.fixture
+    def mock_logger(self):
+        """Create a mock logger."""
+        return Mock()
+    
+    @pytest.fixture
+    def vllm_service(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
+        """Create a VllmService instance with mocked dependencies."""
+        from services.inference import VllmService
+        
+        service = VllmService(
+            deployer=mock_deployer,
+            service_manager=mock_service_manager,
+            endpoint_resolver=mock_endpoint_resolver,
+            logger=mock_logger
+        )
+        return service
+    
+    def test_find_services_filters_correctly(self, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver):
+        """Test that find_services correctly filters VLLM services."""
+        # Mock service_manager.list_services() to return mixed services
+        mock_service_manager.list_services.return_value = [
+            {"id": "123", "name": "vllm-service", "recipe_name": "inference/vllm", "status": "running"},
+            {"id": "456", "name": "postgres-db", "recipe_name": "database/postgres", "status": "running"},
+            {"id": "789", "name": "my-inference", "recipe_name": "inference/vllm", "status": "running"},
+        ]
+        
+        # Mock deployer to return live status
+        mock_deployer.get_job_status.side_effect = ["running", "running", "running"]
+        
+        # Mock endpoint resolver
+        mock_endpoint_resolver.resolve.side_effect = [
+            "http://node1:8000",
+            "http://node2:8000"
+        ]
+        
+        # Call find_services
+        result = vllm_service.find_services()
+        
+        # Should only return VLLM services (not postgres)
+        assert len(result) == 2
+        assert result[0]["id"] == "123"
+        assert result[1]["id"] == "789"
+        
+        # Verify endpoint resolver was called with correct args
+        assert mock_endpoint_resolver.resolve.call_count == 2
+        mock_endpoint_resolver.resolve.assert_any_call("123", default_port=8001)
+        mock_endpoint_resolver.resolve.assert_any_call("789", default_port=8001)
+    
+    def test_prompt_gets_live_status(self, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver):
+        """Test that prompt() fetches live status from deployer, not cached."""
+        # Mock service_manager.get_service() to return service with stale status
+        mock_service_manager.get_service.return_value = {
+            "id": "123",
+            "name": "vllm-test",
+            "status": "pending",  # Stale cached status
+            "recipe_name": "inference/vllm"
+        }
+        
+        # Mock deployer.get_job_status() to return current live status
+        mock_deployer.get_job_status.return_value = "starting"  # Live status
+        
+        # Mock endpoint resolver
+        mock_endpoint_resolver.resolve.return_value = None
+        
+        # Call prompt
+        result = vllm_service.prompt("123", "test prompt")
+        
+        # Should use live status from deployer, not cached status
+        assert result["success"] is False
+        assert "starting" in result["message"].lower()
+        assert result["status"] == "starting"
+        
+        # Verify deployer.get_job_status was called
+        mock_deployer.get_job_status.assert_called_once_with("123")
+    
+    def test_prompt_uses_correct_endpoint_resolver_method(self, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver, mock_logger):
+        """Test that prompt() calls endpoint_resolver.resolve() (not resolve_endpoint())."""
+        # Mock service exists and is running
+        mock_service_manager.get_service.return_value = {
+            "id": "123",
+            "name": "vllm-test",
+            "status": "running",
+            "recipe_name": "inference/vllm"
+        }
+        
+        # Mock live status as running
+        mock_deployer.get_job_status.return_value = "running"
+        
+        # Mock endpoint resolver to return valid endpoint
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
+        
+        # Mock SSH manager for HTTP request
+        mock_ssh_manager = Mock()
+        mock_ssh_manager.http_request_via_ssh.return_value = (
+            True,  # success
+            200,   # status_code
+            '{"id": "chat-123", "choices": [{"message": {"content": "Hello!"}}]}'  # body
+        )
+        mock_deployer.ssh_manager = mock_ssh_manager
+        
+        # Call prompt with explicit model to avoid get_models call
+        result = vllm_service.prompt("123", "test prompt", model="test-model")
+        
+        # Verify endpoint_resolver.resolve() was called (not resolve_endpoint())
+        # Should be called once for prompt
+        mock_endpoint_resolver.resolve.assert_called_once_with("123", default_port=8001)
+        
+        # Should succeed
+        assert result["success"] is True, f"Expected success but got: {result}"
+    
+    def test_prompt_service_not_found(self, vllm_service, mock_service_manager):
+        """Test that prompt() handles missing service correctly."""
+        # Mock service_manager.get_service() to return None
+        mock_service_manager.get_service.return_value = None
+        
+        # Call prompt
+        result = vllm_service.prompt("nonexistent", "test prompt")
+        
+        # Should return error dict (not raise exception)
+        assert result["success"] is False
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+    
+    def test_get_models_uses_correct_endpoint(self, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver):
+        """Test that get_models() uses the resolved endpoint correctly and returns proper dict format."""
+        # Mock service exists and is running
+        mock_service_manager.get_service.return_value = {
+            "id": "123",
+            "name": "vllm-test",
+            "status": "running",
+            "recipe_name": "inference/vllm"
+        }
+        
+        # Mock live status as running
+        mock_deployer.get_job_status.return_value = "running"
+        
+        # Mock endpoint resolver
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
+        
+        # Mock SSH manager to simulate HTTP request via SSH
+        mock_ssh_manager = Mock()
+        mock_ssh_manager.http_request_via_ssh.return_value = (
+            True,  # success
+            200,   # status_code
+            '{"data": [{"id": "model1"}, {"id": "model2"}]}'  # body
+        )
+        mock_deployer.ssh_manager = mock_ssh_manager
+        
+        # Call get_models
+        result = vllm_service.get_models("123")
+        
+        # Should return dict with success and models
+        assert result["success"] is True
+        assert "models" in result
+        assert len(result["models"]) == 2
+        assert "model1" in result["models"]
+        assert "model2" in result["models"]
+        assert result["service_id"] == "123"
+        assert result["endpoint"] == "http://node1:8000"
+        
+        # Verify endpoint was resolved
+        mock_endpoint_resolver.resolve.assert_called_once_with("123", default_port=8001)
+        
+        # Verify SSH tunnel was used
+        mock_ssh_manager.http_request_via_ssh.assert_called_once_with(
+            remote_host="node1",
+            remote_port=8000,
+            method="GET",
+            path="/v1/models",
+            timeout=5
+        )
 
 
 # Fixture to create test client once per module

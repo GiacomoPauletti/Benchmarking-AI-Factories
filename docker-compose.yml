@@ -13,6 +13,8 @@ services:
       - ./services/server/pytest.ini:/app/pytest.ini
       - ./services/server/logs:/app/logs
       - ./services/server/huggingface_cache:/app/huggingface_cache
+      # Mount server endpoint file so client can find it
+      - ./services/server/.server-endpoint:/app/.server-endpoint
       # Mount SSH keys for MeluXina access
       - ~/.ssh:/tmp/host-ssh:ro
       - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
