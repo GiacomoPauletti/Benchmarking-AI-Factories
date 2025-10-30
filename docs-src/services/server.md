@@ -1,6 +1,6 @@
 # Server API Reference
 
-The Server Service provides a comprehensive REST API for managing AI services on the MeluXina supercomputer.
+The Server Service provides REST API for managing AI services on the MeluXina supercomputer.
 
 ## Interactive API Documentation
 
