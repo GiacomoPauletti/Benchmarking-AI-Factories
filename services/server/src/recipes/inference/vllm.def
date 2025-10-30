@@ -16,6 +16,11 @@ From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
     mkdir -p /workspace/huggingface_cache
     chmod -R 777 /workspace
     chmod -R 777 /workspace/huggingface_cache
+    # create prometheus metrics directory inside workspace and set permissive permissions
+    export PROMETHEUS_MULTIPROC_DIR=/workspace/metrics
+    mkdir -p /workspace/metrics
+    chmod 777 /workspace/metrics
+
 
 %environment
     # Setup environment variables
