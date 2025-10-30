@@ -4,12 +4,11 @@ DOCS:
 - Document vec-db and vllm example python workflow script: Link to them in the docs.
 
 MAIN:
-- Create vec-db examples with documents.  
-- Analyse monitoring class (scraper for server) and query vllm metric endpoint (need to
-create that endpoint on vllm container?)
-- Fix qdrant endpoint not resolving. Then fix embedding in examples. Then possibly create RAG?
-- SSHManager class to global utils?
 - Test multi-node vllm.
+- Create vec-db examples with documents.  
+- Create fastembed functionality in qdrant. Use it for RAGs.
+- SSHManager class to global utils?
+
 
 Optional:
 - Create RAG automatically on the vllm and vec-db sides (not on client or server).
