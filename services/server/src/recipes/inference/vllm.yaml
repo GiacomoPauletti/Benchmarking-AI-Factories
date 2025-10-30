@@ -5,21 +5,15 @@ version: "0.2.0"
 image: "vllm.sif"
 container_def: "vllm.def"
 ports:
-  - 8000
+  - 8001
 environment:
   CUDA_VISIBLE_DEVICES: "0"
   VLLM_HOST: "0.0.0.0"
-  VLLM_PORT: "8000"
-resources:
+  VLLM_PORT: "8001"
+  VLLM_MODEL: "Qwen/Qwen2.5-0.5B-Instruct"  # Default model, can be overridden in config
+resources: # Default resources, can be overridden in config
+  nodes: "1"
   cpu: "2" #"8"
   memory: "32G"
+  time_limit: 15
   gpu: "1"
-deployment_config:
-  model_path: "/models"
-  tensor_parallel_size: 1
-  max_model_len: 4096
-health_check:
-  endpoint: "/health"
-  interval: 30
-  timeout: 10
-  retries: 3

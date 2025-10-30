@@ -1,0 +1,223 @@
+services:
+  # Live server for integration tests (real SLURM connection)
+  server:
+    build:
+      context: ./services/server
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-server-live
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/server/src:/app/src
+      - ./services/server/logs:/app/logs
+      - ./services/server/huggingface_cache:/app/huggingface_cache
+      # Mount SSH keys for MeluXina access
+      - ~/.ssh:/tmp/host-ssh:ro
+      # Mount .server-endpoint file location
+      - ./services/server/.server-endpoint:/app/services/server/.server-endpoint
+    environment:
+      # Real SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    command: >
+      bash -c "
+      if [ -d /tmp/host-ssh ]; then
+        echo 'Setting up SSH keys...';
+        cp /tmp/host-ssh/id_* /root/.ssh/ 2>/dev/null || true;
+        cp /tmp/host-ssh/known_hosts /root/.ssh/ 2>/dev/null || true;
+        chmod 700 /root/.ssh;
+        chmod 600 /root/.ssh/id_* 2>/dev/null || true;
+        chmod 644 /root/.ssh/*.pub 2>/dev/null || true;
+        echo 'SSH keys ready';
+      fi &&
+      mkdir -p /app/services/server &&
+      echo 'http://server:8001' > /app/services/server/.server-endpoint &&
+      uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
+      "
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Test runner
+  server-test:
+    build:
+      context: ./services/server
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-server-test
+    volumes:
+      # Mount source code
+      - ./services/server/src:/app/src
+      # Mount tests directory
+      - ./services/server/tests:/app/tests
+      # Mount test configuration
+      - ./services/server/pytest.ini:/app/pytest.ini
+      - ./services/server/requirements-dev.txt:/app/requirements-dev.txt
+      # Mount .server-endpoint file so tests can read it
+      - ./services/server/.server-endpoint:/app/services/server/.server-endpoint
+    environment:
+      # Test environment variables
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - LOG_LEVEL=DEBUG
+      - PYTHONPATH=/app/src
+      - TESTING=true
+    command: >
+      bash -c "
+      echo 'Waiting for server to be ready...' &&
+      sleep 5 &&
+      echo 'Installing test dependencies...' &&
+      pip install -q -r requirements-dev.txt &&
+      echo '' &&
+      echo 'Running tests...' &&
+      python -m pytest tests/ -v --tb=short --color=yes
+      "
+    networks:
+      - test-network
+    depends_on:
+      server:
+        condition: service_healthy
+
+networks:
+  test-network:
+    driver: bridge
+
+# TODO: Add test configurations for other microservices
+# 
+# # Client microservice tests
+# client:
+#   build:
+#     context: ./services/client
+#     dockerfile: Dockerfile
+#   container_name: benchmarking-ai-client-live
+#   volumes:
+#     - ./services/client/src:/app/src
+#     - ./services/client/logs:/app/logs
+#   environment:
+#     - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+#     - PYTHONPATH=/app/src
+#   networks:
+#     - test-network
+#   depends_on:
+#     server:
+#       condition: service_healthy
+#
+# client-test:
+#   build:
+#     context: ./services/client
+#     dockerfile: Dockerfile
+#   container_name: benchmarking-ai-client-test
+#   volumes:
+#     - ./services/client/src:/app/src
+#     - ./services/client/tests:/app/tests
+#     - ./services/client/pytest.ini:/app/pytest.ini
+#   environment:
+#     - PYTHONPATH=/app/src
+#     - TESTING=true
+#   command: >
+#     bash -c "
+#     pip install -q -r requirements-dev.txt &&
+#     python -m pytest tests/ -v --tb=short --color=yes
+#     "
+#   networks:
+#     - test-network
+#   depends_on:
+#     client:
+#       condition: service_started
+#
+# # Monitoring microservice tests
+# monitoring:
+#   build:
+#     context: ./services/monitoring
+#     dockerfile: Dockerfile
+#   container_name: benchmarking-ai-monitoring-live
+#   volumes:
+#     - ./services/monitoring/src:/app/src
+#     - ./services/monitoring/logs:/app/logs
+#   environment:
+#     - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+#     - PYTHONPATH=/app/src
+#   networks:
+#     - test-network
+#   depends_on:
+#     server:
+#       condition: service_healthy
+#
+# monitoring-test:
+#   build:
+#     context: ./services/monitoring
+#     dockerfile: Dockerfile
+#   container_name: benchmarking-ai-monitoring-test
+#   volumes:
+#     - ./services/monitoring/src:/app/src
+#     - ./services/monitoring/tests:/app/tests
+#     - ./services/monitoring/pytest.ini:/app/pytest.ini
+#   environment:
+#     - PYTHONPATH=/app/src
+#     - TESTING=true
+#   command: >
+#     bash -c "
+#     pip install -q -r requirements-dev.txt &&
+#     python -m pytest tests/ -v --tb=short --color=yes
+#     "
+#   networks:
+#     - test-network
+#   depends_on:
+#     monitoring:
+#       condition: service_started
+#
+# # Logs microservice tests
+# logs:
+#   build:
+#     context: ./services/logs
+#     dockerfile: Dockerfile
+#   container_name: benchmarking-ai-logs-live
+#   volumes:
+#     - ./services/logs/src:/app/src
+#     - ./services/logs/logs:/app/logs
+#   environment:
+#     - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+#     - PYTHONPATH=/app/src
+#   networks:
+#     - test-network
+#   depends_on:
+#     server:
+#       condition: service_healthy
+#
+# logs-test:
+#   build:
+#     context: ./services/logs
+#     dockerfile: Dockerfile
+#   container_name: benchmarking-ai-logs-test
+#   volumes:
+#     - ./services/logs/src:/app/src
+#     - ./services/logs/tests:/app/tests
+#     - ./services/logs/pytest.ini:/app/pytest.ini
+#   environment:
+#     - PYTHONPATH=/app/src
+#     - TESTING=true
+#   command: >
+#     bash -c "
+#     pip install -q -r requirements-dev.txt &&
+#     python -m pytest tests/ -v --tb=short --color=yes
+#     "
+#   networks:
+#     - test-network
+#   depends_on:
+#     logs:
+#       condition: service_started

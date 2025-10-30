@@ -1,0 +1,749 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 1,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "actions": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false,
+            "wrapText": true
+          },
+          "links": [],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Category"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "pill"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "name"
+          }
+        ]
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/recipes",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Recipes",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {},
+            "indexByName": {
+              "category": 3,
+              "description": 4,
+              "name": 0,
+              "path": 2,
+              "version": 1
+            },
+            "renameByName": {
+              "category": "Category",
+              "description": "Description",
+              "name": "Name",
+              "path": "Path",
+              "version": "Version"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "actions": [
+            {
+              "confirmation": "Are you sure you want to cancel the service",
+              "fetch": {
+                "body": "{ \"status\": \"cancelled\" }",
+                "headers": [
+                  [
+                    "Content-Type",
+                    "application/json"
+                  ]
+                ],
+                "method": "POST",
+                "queryParams": [],
+                "url": "http://${server}:${port}/api/v1/services/${__data.fields.id}"
+              },
+              "style": {
+                "backgroundColor": "#F2495C"
+              },
+              "title": "Cancel service",
+              "type": "fetch"
+            }
+          ],
+          "color": {
+            "fixedColor": "purple",
+            "mode": "shades"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false,
+            "wrapText": true
+          },
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Details",
+              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}﻿&var-port=﻿${port:queryparam}﻿&var-service=${__data.fields.ID}"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "pill"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "columns": [],
+          "computed_columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/services",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Services",
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "delimiter": ",",
+            "source": "config"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "destinationType": "time",
+                "targetField": "created_at"
+              },
+              {
+                "destinationType": "enum",
+                "enumConfig": {
+                  "text": [
+                    "unknown",
+                    "cancelled",
+                    "failed",
+                    "completed",
+                    "running",
+                    "starting",
+                    "building",
+                    "pending"
+                  ]
+                },
+                "targetField": "status"
+              }
+            ],
+            "fields": {}
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Actions": true,
+              "Links": true,
+              "config": true,
+              "id": false
+            },
+            "includeByName": {},
+            "indexByName": {
+              "config": 6,
+              "created_at": 3,
+              "id": 0,
+              "name": 1,
+              "nodes": 5,
+              "recipe_name": 4,
+              "status": 2
+            },
+            "renameByName": {
+              "config": "",
+              "created_at": "Created at",
+              "id": "ID",
+              "name": "Name",
+              "nodes": "# of nodes",
+              "recipe_name": "Recipe name",
+              "status": "Status"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "id": 1,
+      "options": {
+        "buttonGroup": {
+          "orientation": "center",
+          "size": "lg"
+        },
+        "confirmModal": {
+          "body": "Please confirm to update changed values",
+          "cancel": "Cancel",
+          "columns": {
+            "include": [
+              "name",
+              "oldValue",
+              "newValue"
+            ],
+            "name": "Label",
+            "newValue": "New Value",
+            "oldValue": "Old Value"
+          },
+          "confirm": "Confirm",
+          "elementDisplayMode": "modified",
+          "title": "Confirm update request"
+        },
+        "elementValueChanged": "",
+        "elements": [
+          {
+            "allowCustomValue": false,
+            "background": "",
+            "getOptions": "return (context.panel.data.initial || []).map(x => ({ label: x.name, value: x.path }));",
+            "id": "recipe_name",
+            "labelBackground": "",
+            "labelWidth": 20,
+            "options": [
+              {
+                "id": "3",
+                "label": "Bob",
+                "type": "number",
+                "value": 3
+              },
+              {
+                "id": "4",
+                "label": "Anne-Fred",
+                "type": "number",
+                "value": 4
+              }
+            ],
+            "optionsSource": "Query",
+            "queryOptions": {
+              "label": "name",
+              "source": "recipes",
+              "value": "path"
+            },
+            "section": "",
+            "title": "Recipe",
+            "tooltip": "The recipe for the benchmark",
+            "type": "select",
+            "uid": "da901c85-a879-47ab-81e8-1cc175b9a5c3",
+            "unit": "",
+            "value": ""
+          },
+          {
+            "id": "config.nodes",
+            "labelWidth": 20,
+            "min": 1,
+            "section": "",
+            "title": "Number of nodes",
+            "tooltip": "",
+            "type": "number",
+            "uid": "0ce34aee-a245-43c0-829c-5a3bc752df65",
+            "unit": "",
+            "value": 0
+          }
+        ],
+        "initial": {
+          "code": "context.panel.data.initial = context.panel.initial;",
+          "contentType": "application/json",
+          "getPayload": "return {}",
+          "highlight": false,
+          "highlightColor": "red",
+          "method": "query",
+          "payload": {},
+          "url": "http://${server}:${port}/api/v1/recipes"
+        },
+        "layout": {
+          "orientation": "horizontal",
+          "padding": 10,
+          "sectionVariant": "default",
+          "variant": "single"
+        },
+        "reset": {
+          "backgroundColor": "purple",
+          "foregroundColor": "yellow",
+          "icon": "process",
+          "text": "Reset",
+          "variant": "hidden"
+        },
+        "resetAction": {
+          "code": "if (context.panel.response) {\n  context.grafana.notifySuccess(['Update', 'Values updated successfully.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Update', 'An error occurred updating values.']);\n}",
+          "confirm": false,
+          "getPayload": "return {}",
+          "mode": "initial",
+          "payload": {}
+        },
+        "saveDefault": {
+          "icon": "save",
+          "text": "Save Default",
+          "variant": "hidden"
+        },
+        "submit": {
+          "backgroundColor": "purple",
+          "foregroundColor": "yellow",
+          "icon": "play",
+          "text": "Start benchmark",
+          "variant": "primary"
+        },
+        "sync": true,
+        "update": {
+          "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
+          "confirm": false,
+          "contentType": "application/json",
+          "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+          "method": "POST",
+          "payload": {},
+          "payloadMode": "all",
+          "url": "http://${server}:${port}/api/v1/services"
+        },
+        "updateEnabled": "auto"
+      },
+      "pluginVersion": "6.2.0",
+      "targets": [
+        {
+          "columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "jq-backend",
+          "refId": "recipes",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/recipes",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Start service",
+      "type": "volkovlabs-form-panel"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 16,
+        "x": 8,
+        "y": 14
+      },
+      "id": 2,
+      "options": {
+        "buttonGroup": {
+          "orientation": "center",
+          "size": "md"
+        },
+        "confirmModal": {
+          "body": "Please confirm to update changed values",
+          "cancel": "Cancel",
+          "columns": {
+            "include": [
+              "name",
+              "oldValue",
+              "newValue"
+            ],
+            "name": "Label",
+            "newValue": "New Value",
+            "oldValue": "Old Value"
+          },
+          "confirm": "Confirm",
+          "elementDisplayMode": "modified",
+          "title": "Confirm update request"
+        },
+        "elementValueChanged": "",
+        "elements": [
+          {
+            "hidden": false,
+            "id": "name",
+            "labelWidth": 20,
+            "section": "",
+            "title": "Name of the recipe",
+            "tooltip": "",
+            "type": "string",
+            "uid": "02f705de-cafa-47ce-abb3-58525ee522ee",
+            "unit": "",
+            "value": ""
+          },
+          {
+            "hidden": false,
+            "id": "category",
+            "labelWidth": 20,
+            "section": "",
+            "title": "Category",
+            "tooltip": "",
+            "type": "string",
+            "uid": "e26e2092-0bc8-4227-b6ba-a3238bcb83c5",
+            "unit": "",
+            "value": ""
+          },
+          {
+            "hidden": false,
+            "id": "description",
+            "labelWidth": 20,
+            "section": "",
+            "title": "Description",
+            "tooltip": "",
+            "type": "string",
+            "uid": "97654ae4-11e4-4206-8562-051a93ac581e",
+            "unit": "",
+            "value": ""
+          },
+          {
+            "hidden": false,
+            "id": "version",
+            "labelWidth": 20,
+            "section": "",
+            "title": "Version",
+            "tooltip": "",
+            "type": "string",
+            "uid": "56533b5b-6f42-4e23-813b-16b4199b562b",
+            "unit": "",
+            "value": ""
+          },
+          {
+            "hidden": false,
+            "id": "path",
+            "labelWidth": 20,
+            "section": "",
+            "title": "Path",
+            "tooltip": "",
+            "type": "string",
+            "uid": "08874346-4cfd-4563-a023-b50683e33dbd",
+            "unit": "",
+            "value": ""
+          },
+          {
+            "id": "content",
+            "labelWidth": 20,
+            "rows": 10,
+            "section": "",
+            "title": "Recipe content",
+            "tooltip": "",
+            "type": "textarea",
+            "uid": "a9068ed8-0dfa-4099-aed2-e112123f9cc2",
+            "unit": "",
+            "value": ""
+          }
+        ],
+        "initial": {
+          "code": "console.log(context.panel.data, context.panel.response, context.panel.initial, context.panel.elements);\n\nreturn;\n\n/**\n * Data Source\n * Requires form elements to be defined\n */\nconst dataQuery = context.utils.toDataQueryResponse(context.panel.response);\nconsole.log(dataQuery);",
+          "contentType": "application/json",
+          "getPayload": "return {}",
+          "highlight": false,
+          "highlightColor": "red",
+          "method": "-",
+          "payload": {}
+        },
+        "layout": {
+          "orientation": "horizontal",
+          "padding": 10,
+          "sectionVariant": "default",
+          "variant": "single"
+        },
+        "reset": {
+          "backgroundColor": "purple",
+          "foregroundColor": "yellow",
+          "icon": "process",
+          "text": "Reset",
+          "variant": "hidden"
+        },
+        "resetAction": {
+          "code": "if (context.panel.response) {\n  context.grafana.notifySuccess(['Update', 'Values updated successfully.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Update', 'An error occurred updating values.']);\n}",
+          "confirm": false,
+          "getPayload": "return {}",
+          "mode": "initial",
+          "payload": {}
+        },
+        "saveDefault": {
+          "icon": "save",
+          "text": "Save Default",
+          "variant": "hidden"
+        },
+        "submit": {
+          "backgroundColor": "purple",
+          "foregroundColor": "yellow",
+          "icon": "cloud-upload",
+          "text": "Submit",
+          "variant": "primary"
+        },
+        "sync": true,
+        "update": {
+          "code": "if (context.panel.response) {\n  context.grafana.notifySuccess(['Update', 'Values updated successfully.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Update', 'An error occurred updating values.']);\n}",
+          "confirm": false,
+          "contentType": "application/json",
+          "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+          "method": "-",
+          "payload": {},
+          "payloadMode": "all"
+        },
+        "updateEnabled": "auto"
+      },
+      "pluginVersion": "6.2.0",
+      "targets": [
+        {
+          "columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/recipes/{recipe_name}",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        },
+        {
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "hide": false,
+          "refId": "B"
+        }
+      ],
+      "title": "New recipe (TODO)",
+      "type": "volkovlabs-form-panel"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "localhost",
+          "value": "localhost"
+        },
+        "label": "Server url",
+        "name": "server",
+        "options": [
+          {
+            "selected": true,
+            "text": "localhost",
+            "value": "localhost"
+          }
+        ],
+        "query": "localhost",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "8001",
+          "value": "8001"
+        },
+        "label": "Port number",
+        "name": "port",
+        "options": [
+          {
+            "selected": true,
+            "text": "8001",
+            "value": "8001"
+          }
+        ],
+        "query": "8001",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Administration",
+  "uid": "adjv7d8",
+  "version": 1
+}

@@ -1,0 +1,65 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+%labels
+    Author AI Factory Team
+    Description AI Factory Client Service Container
+    Version 1.0
+
+%help
+    This container runs the AI Factory Client Service.
+    
+    Usage:
+        apptainer run client_service.sif <server_address> [slurm_config_file]
+    
+    Example:
+        apptainer run client_service.sif http://server:8000
+
+
+
+%files
+    # Copy the entire client service source code
+    client_service/         /app/src/
+    __init__.py             /app/src/
+    main.py                 /app/src/
+    requirements.txt        /app/src/
+
+%environment
+    # Set Python path and other environment variables
+    export PYTHONPATH="/app:$PYTHONPATH"
+    export PYTHONUNBUFFERED=1
+    export CLIENT_SERVICE_PORT=8001
+
+%post
+    # Update system and install dependencies
+    apt-get update && apt-get install -y \
+        curl \
+        netcat-openbsd \
+        procps \
+        && rm -rf /var/lib/apt/lists/*
+    
+    # Install Python dependencies
+    cd /app/src
+    pip install --no-cache-dir -r requirements.txt
+    
+    # Make scripts executable
+    chmod +x /app/src/client_service/deployment/start_client.sh
+
+%runscript
+    # Default runscript - starts the client service
+    cd /app/src
+    exec python3 -m main "$@"
+
+%startscript
+    # Alternative start method
+    cd /app/src
+    exec python3 -m main "$@"
+
+%test
+    # Test that Python and dependencies are installed correctly
+    python3 --version
+    python3 -c "import fastapi, uvicorn, requests; print('All dependencies installed successfully')"
+    
+    # Test that the main module can be imported
+    cd /app/src
+    python3 -c "import main; print('Main module imports successfully')"
