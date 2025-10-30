@@ -17,184 +17,170 @@ A FastAPI server for orchestrating AI workloads on SLURM clusters using Apptaine
 
 - **Service Orchestration**: Deploy and manage AI services via SLURM job submission
 - **Recipe System**: Pre-defined configurations for common AI workloads
-- **VLLM Integration**: Direct API access to running VLLM inference services
 - **REST API**: Operations for service lifecycle management
 
-### Architecture
 
-```
-┌─────────────────────────────────────┐
-│  Local Laptop (Docker)              │
-│  ┌────────────────────────────────┐ │
-│  │  FastAPI Server Container      │ │
-│  │  - API endpoints               │ │
-│  │  - Hot-reload on code changes  │ │
-│  │  - SLURM client (via SSH)      │ │
-│  └────────────────────────────────┘ │
-│           │ SSH Tunnel               │
-└───────────┼─────────────────────────┘
-            │
-            ▼
-┌─────────────────────────────────────┐
-│  MeluXina HPC Cluster               │
-│  ┌────────────────────────────────┐ │
-│  │  SLURM Job Submission          │ │
-│  │  Apptainer containers          │ │
-│  │  GPU nodes                     │ │
-│  └────────────────────────────────┘ │
-└─────────────────────────────────────┘
-```
+### Orchestration & Infrastructure
 
 The following class diagram describes the major components in the `services/server` microservice and how they relate to each other (FastAPI routing, orchestration, SLURM interaction, SSH, recipe loading and service-specific handlers).
 
 ```mermaid
 classDiagram
-    %% Core app and API
-    class FastAPIApp {
-        +root()
-        +health()
-    }
-    class APIRouter <<router>> {
-        +create_service()
-        +list_services()
-        +get_service()
-        +vllm_endpoints()
-        +vector_db_endpoints()
-    }
+%% =========================================
+%% Groups / Layers
+%% =========================================
+class FastAPIApp:::api {
+    +root()
+    +health()
+}
 
-    %% Main service orchestration
-    class ServerService {
-        -deployer: SlurmDeployer
-        -service_manager: ServiceManager
-        -recipe_loader: RecipeLoader
-        -endpoint_resolver: EndpointResolver
-        -_vllm_service
-        -_vector_db_service
-        +start_service(recipe_name, config)
-        +stop_service(service_id)
-        +list_running_services()
-        +get_service_status(service_id)
-        +get_service_logs(service_id)
-    }
+class APIRouter:::api {
+    +create_service()
+    +list_services()
+    +get_service()
+    +vllm_endpoints()
+    +vector_db_endpoints()
+}
 
-    %% SLURM + SSH
-    class SlurmDeployer {
-        -ssh_manager: SSHManager
-        +submit_job()
-        +cancel_job()
-        +get_job_status()
-        +get_job_logs()
-        +get_job_details()
-    }
+class ServerService:::core {
+    +start_service(recipe_name, config)
+    +stop_service(service_id)
+    +list_running_services()
+    +get_service_status(service_id)
+    +get_service_logs(service_id)
+}
 
-    class SSHManager {
-        +setup_slurm_rest_tunnel()
-        +fetch_remote_file()
-        +http_request_via_ssh()
-        +sync_directory_to_remote()
-    }
+class SlurmDeployer:::infra {
+    +submit_job()
+    +cancel_job()
+    +get_job_status()
+    +get_job_logs()
+    +get_job_details()
+}
 
-    %% Persistence / bookkeeping
-    class ServiceManager <<singleton>> {
-        +register_service()
-        +list_services()
-        +get_service()
-        +update_service_status()
-    }
+class SSHManager:::infra {
+    +setup_slurm_rest_tunnel()
+    +fetch_remote_file()
+    +http_request_via_ssh()
+    +sync_directory_to_remote()
+}
 
-    %% Recipes and endpoint resolution
-    class RecipeLoader {
-        +load(recipe_name)
-        +list_all()
-        +get_recipe_port()
-    }
+class ServiceManager:::infra {
+    +register_service()
+    +list_services()
+    +get_service()
+    +update_service_status()
+}
 
-    class EndpointResolver {
-        +resolve(job_id, default_port)
-    }
+class RecipeLoader:::infra {
+    +load(recipe_name)
+    +list_all()
+    +get_recipe_port()
+}
 
-    %% Base service classes and concrete implementations
-    class BaseService {
-        -deployer
-        -service_manager
-        -endpoint_resolver
-        -logger
-        +_filter_services()
-    }
+class EndpointResolver:::infra {
+    +resolve(job_id, default_port)
+}
 
-    class InferenceService {
-        <<abstract>>
-        +get_models()
-        +prompt()
-        +_check_service_ready()
-    }
+%% =========================================
+%% Main Relationships
+%% =========================================
+FastAPIApp --> APIRouter
+APIRouter --> ServerService
+ServerService *-- SlurmDeployer
+ServerService *-- ServiceManager
+ServerService *-- RecipeLoader
+ServerService *-- EndpointResolver
+SlurmDeployer --> SSHManager
+EndpointResolver --> SlurmDeployer
 
-    class VllmService {
-        +find_services()
-        +get_models()
-        +prompt()
-        +get_metrics()
-    }
-
-    class VectorDbService {
-        <<abstract>>
-        +get_collections()
-        +create_collection()
-        +upsert_points()
-        +search_points()
-    }
-
-    class QdrantService {
-        +find_services()
-        +get_collections()
-        +create_collection()
-        +upsert_points()
-        +get_metrics()
-    }
-
-    %% Relationships
-    FastAPIApp --> APIRouter : includes
-    APIRouter --> ServerService : depends on / calls
-    ServerService *-- SlurmDeployer : uses
-    ServerService *-- ServiceManager : uses (singleton)
-    ServerService *-- RecipeLoader : uses
-    ServerService *-- EndpointResolver : uses
-
-    SlurmDeployer --> SSHManager : uses
-    EndpointResolver --> SlurmDeployer : queries job details
-    EndpointResolver --> ServiceManager : reads service metadata
-    EndpointResolver --> RecipeLoader : reads recipe port
-
-    BaseService <|-- InferenceService
-    BaseService <|-- VectorDbService
-    InferenceService <|-- VllmService
-    VectorDbService <|-- QdrantService
-
-    VllmService --> EndpointResolver : resolves endpoints
-    QdrantService --> EndpointResolver : resolves endpoints
-    VllmService --> SlurmDeployer : checks job status / logs
-    QdrantService --> SlurmDeployer : checks job status / logs
-
-    ServiceManager <.. ServerService : registers services
-
-    %% Notes as a class-like annotation for readers
-    class Notes {
-        +"Service IDs = SLURM job IDs"
-        +"SSH tunnel used to reach SLURM REST API and compute nodes"
-    }
-
-    Notes ..> SlurmDeployer
+%% =========================================
+%% Styling
+%% =========================================
+classDef api fill:#B3E5FC,stroke:#0288D1,stroke-width:1px,color:#01579B
+classDef core fill:#C8E6C9,stroke:#388E3C,stroke-width:1px,color:#1B5E20
+classDef infra fill:#F5F5F5,stroke:#9E9E9E,stroke-width:1px,color:#424242
 
 ```
 
-### Legend & Rendering
+The orchestration diagram above groups the primary infrastructure and control-path responsibilities:
 
-- Solid arrow (A --> B): A calls or depends on B
-- Composition (A *-- B): A composes/owns B instance
-- Inheritance (A <|-- B): B extends A
+- FastAPI exposes HTTP endpoints; the router maps requests to the server-layer.
+- ServerService is the central coordinator: it submits jobs using SlurmDeployer, keeps service records in ServiceManager, loads recipes via RecipeLoader, and computes endpoints via EndpointResolver.
+- SlurmDeployer is responsible for job lifecycle (submit/cancel/status) and relies on SSHManager for remote operations (tunnels, fetching logs, proxy HTTP calls to compute nodes).
 
-To render this diagram in the docs site ensure the MkDocs configuration (or your viewer) supports Mermaid diagrams (mkdocs-mermaid2-plugin or built-in Mermaid support in MkDocs Material). The diagram can be previewed in editors that support Mermaid or on GitHub when Mermaid rendering is enabled.
+When tracing a "create service" request, follow the path: FastAPIApp -> APIRouter -> ServerService -> SlurmDeployer (+ SSHManager). Endpoint resolution happens later via EndpointResolver which queries SLURM job details and recipe metadata.
 
+### Service Handlers & Types
+
+```mermaid
+graph TD
+    %% =========================================
+    %% Base / Abstract layer
+    %% =========================================
+    BaseService["BaseService"]
+
+    %% =========================================
+    %% Subgraphs / Layers
+    %% =========================================
+    subgraph InferenceLayer["Inference Layer"]
+        InferenceService["InferenceService"]
+        VllmService["VllmService"]
+    end
+
+    subgraph VectorDBLayer["VectorDB Layer"]
+        VectorDbService["VectorDbService"]
+        QdrantService["QdrantService"]
+    end
+
+    subgraph InfraLayer["Infrastructure Layer"]
+        SlurmDeployer["SlurmDeployer"]
+        EndpointResolver["EndpointResolver"]
+    end
+
+    %% =========================================
+    %% Inheritance / Composition
+    %% =========================================
+    BaseService --> InferenceService
+    InferenceService --> VllmService
+    BaseService --> VectorDbService
+    VectorDbService --> QdrantService
+
+    %% =========================================
+    %% Dependencies
+    %% =========================================
+    VllmService --> EndpointResolver
+    QdrantService --> EndpointResolver
+    VllmService --> SlurmDeployer
+    QdrantService --> SlurmDeployer
+
+    %% =========================================
+    %% Styling
+    %% =========================================
+    class BaseService base
+    class InferenceService inference
+    class VllmService inference
+    class VectorDbService vectordb
+    class QdrantService vectordb
+    class SlurmDeployer infra
+    class EndpointResolver infra
+
+    classDef base fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px,color:#795548
+    classDef inference fill:#DCEDC8,stroke:#8BC34A,stroke-width:1px,color:#33691E
+    classDef vectordb fill:#E1BEE7,stroke:#8E24AA,stroke-width:1px,color:#4A148C
+    classDef infra fill:#E0E0E0,stroke:#9E9E9E,stroke-width:1px,color:#424242
+
+```
+
+## Further Reading
+
+The service-handlers diagram explains how domain-specific functionality is organized:
+
+- `BaseService` provides the shared plumbing (deployer access, service registry, endpoint resolution) used by concrete handlers.
+- `InferenceService` and `VectorDbService` define the operations expected by their domains; `VllmService` and `QdrantService` implement those operations against running jobs.
+- These handlers consult `SlurmDeployer` for live job state and `EndpointResolver` to discover the compute-node HTTP endpoints used to reach the actual running services.
+
+Refer to this diagram when extending the system with a new service type (create a subclass of `BaseService` and implement the domain-specific API surface).
 
 ## Further Reading
 

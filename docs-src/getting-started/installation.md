@@ -38,6 +38,20 @@ Required environment variables:
 - `SSH_KEY_PATH` - Path to your SSH private key
 - `REMOTE_BASE_PATH` - Working directory on MeluXina
 
+Example:
+```bash
+SSH_HOST=login.lxp.lu              # MeluXina login node
+SSH_PORT=8822                       # MeluXina SSH port
+SSH_USER=u123456                    # Your MeluXina username
+SSH_KEY_PATH=~/.ssh/id_ed25519     # Path to your SSH key
+REMOTE_BASE_PATH=/project/home/p200981/u123456/path/to/temp/generated/files
+```
+
+The Dockerfile automatically:
+    1. Copies your SSH key into the container
+    2. Sets correct permissions (600)
+    3. Configures SSH client for MeluXina
+
 ### 3. Start the Microservice
 
 TODO: Later, this will be replaced by the actual app using the microservices.
@@ -56,3 +70,6 @@ docker compose up -d <microservice to launch>
 - [Monitoring API Documentation](../api/monitoring.md) - Explore the Monitoring API endpoints
 
 ---
+
+Note: the repository uses `docker compose` for local development and testing. For realistic benchmarking and production deployments these services should run on a Kubernetes (K8s) cluster instead. The docker-compose setup is intended for local testing only.
+

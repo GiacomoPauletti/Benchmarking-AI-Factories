@@ -199,7 +199,86 @@ curl http://localhost:8001/api/v1/recipes
 curl http://localhost:8001/api/v1/recipes/inference/vllm
 ```
 
+## Vector DB (Qdrant) Examples
+
+### List Collections
+
+Get the list of collections from a running Qdrant service (replace SERVICE_ID):
+
+```bash
+curl http://localhost:8001/api/v1/vector-db/3642875/collections
+```
+
+### Create Collection
+
+Create a collection named `my_documents` with 384-dimensional vectors using Cosine distance:
+
+```bash
+curl -X PUT "http://localhost:8001/api/v1/vector-db/3642875/collections/my_documents" \
+  -H "Content-Type: application/json" \
+  -d '{"vector_size": 384, "distance": "Cosine"}'
+```
+
+### Upsert Points
+
+Insert one or more points into a collection. Each point must contain `id` and `vector` and may include a `payload`:
+
+```bash
+curl -X PUT "http://localhost:8001/api/v1/vector-db/3642875/collections/my_documents/points" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "points": [
+      {"id": 1, "vector": [0.1, 0.2, 0.3, 0.4], "payload": {"text": "First document"}},
+      {"id": 2, "vector": [0.4, 0.5, 0.6, 0.7], "payload": {"text": "Second document"}}
+    ]
+  }'
+```
+
+### Search Points
+
+Perform a similarity search against a collection (returns most similar points):
+
+```bash
+curl -X POST "http://localhost:8001/api/v1/vector-db/3642875/collections/my_documents/points/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query_vector": [0.1, 0.2, 0.3, 0.4], "limit": 5}'
+```
+
+## Metrics Examples
+
+### Qdrant Metrics (Prometheus)
+
+Qdrant exposes Prometheus-compatible metrics on `/metrics`. Fetch raw metrics (text format):
+
+```bash
+curl http://localhost:8001/api/v1/vector-db/3642875/metrics
+```
+
+### vLLM Metrics (Prometheus)
+
+vLLM exposes Prometheus-compatible metrics on `/metrics`. Fetch raw metrics (text format):
+
+```bash
+curl http://localhost:8001/api/v1/vllm/3642874/metrics
+```
+
 ## Notes
+
+### Python examples
+
+If you prefer runnable Python demos that exercise the Server API (vector DB and vLLM flows), see the `examples/` folder at the repository root. Notable scripts:
+
+- `examples/qdrant_simple_example.py`
+- `examples/qdrant_simple_example_with_metrics.py`
+- `examples/vllm_simple_example.py`
+- `examples/vllm_simple_example_with_metrics.py`
+
+Run an example locally (adjust arguments or SERVICE_ID inside the script where required):
+
+```bash
+python3 examples/qdrant_simple_example_with_metrics.py
+```
+
 
 - **Default Model**: If not specified, services use `Qwen/Qwen2.5-0.5B-Instruct`
 - **Model Sources**: Models must be available on HuggingFace or cached locally
