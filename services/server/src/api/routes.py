@@ -923,3 +923,185 @@ async def get_vllm_models(service_id: str, server_service: ServerService = Depen
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/vllm/{service_id}/metrics")
+async def get_vllm_metrics(service_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Get Prometheus metrics from a running vLLM service.
+
+    Queries the vLLM service's /metrics endpoint to retrieve Prometheus-compatible metrics.
+    vLLM natively exposes metrics about request processing, token generation, cache usage, and performance.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the vLLM service
+
+    **Available Metrics (vLLM-specific):**
+    - `vllm:num_requests_running` - Number of requests currently being processed
+    - `vllm:num_requests_waiting` - Number of requests waiting in queue
+    - `vllm:kv_cache_usage_perc` - KV cache utilization percentage (0.0-1.0)
+    - `vllm:prompt_tokens_total` - Total number of prompt tokens processed
+    - `vllm:generation_tokens_total` - Total number of tokens generated
+    - `vllm:time_to_first_token_seconds` - Histogram of time to first token
+    - `vllm:time_per_output_token_seconds` - Histogram of time per output token
+    - `vllm:e2e_request_latency_seconds` - End-to-end request latency histogram
+
+    **Returns (Success):**
+    - Content-Type: `text/plain; version=0.0.4`
+    - Body: Prometheus text format metrics
+
+    **Example Success Response:**
+    ```
+    # HELP vllm:num_requests_running Number of requests currently running
+    # TYPE vllm:num_requests_running gauge
+    vllm:num_requests_running{engine="0",model_name="gpt2"} 0.0
+    # HELP vllm:prompt_tokens_total Total prompt tokens processed
+    # TYPE vllm:prompt_tokens_total counter
+    vllm:prompt_tokens_total{engine="0",model_name="gpt2"} 150.0
+    ...
+    ```
+
+    **Returns (Error):**
+    - Content-Type: `application/json`
+    - Body: JSON error object
+
+    **Example Error Response:**
+    ```json
+    {
+      "success": false,
+      "error": "Service is not ready yet (status: starting)",
+      "message": "The vLLM service is still starting up. Please wait.",
+      "service_id": "3642874",
+      "status": "starting"
+    }
+    ```
+
+    **Integration with Prometheus:**
+    Add this endpoint to your Prometheus scrape configuration:
+    ```yaml
+    scrape_configs:
+      - job_name: 'vllm-services'
+        static_configs:
+          - targets: ['server:8001']
+        metrics_path: '/api/v1/vllm/<service_id>/metrics'
+        scrape_interval: 15s
+    ```
+
+    **Example:**
+    ```bash
+    curl http://localhost:8001/api/v1/vllm/3642874/metrics
+    ```
+
+    **Note:**
+    - Metrics are returned in Prometheus text format (not JSON)
+    - This endpoint is lightweight and safe to call frequently (every 5-15 seconds)
+    - Metrics are cumulative counters and gauges - use Prometheus functions like `rate()` for analysis
+    """
+    try:
+        from fastapi.responses import PlainTextResponse
+        
+        result = server_service.get_vllm_metrics(service_id)
+        
+        # If successful, return metrics as plain text
+        if result.get("success"):
+            return PlainTextResponse(
+                content=result.get("metrics", ""),
+                media_type="text/plain; version=0.0.4"
+            )
+        else:
+            # Return error as JSON
+            return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vector-db/{service_id}/metrics")
+async def get_qdrant_metrics(service_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Get Prometheus metrics from a running Qdrant vector database service.
+
+    Queries the Qdrant service's /metrics endpoint to retrieve Prometheus-compatible metrics.
+    Qdrant natively exposes metrics about collections, points, search operations, and performance.
+
+    **Path Parameters:**
+    - `service_id`: SLURM job ID of the Qdrant service
+
+    **Available Metrics (Qdrant-specific):**
+    - `app_info` - Application information (version, features)
+    - `app_status_recovery_mode` - Whether recovery mode is active
+    - `collections_total` - Total number of collections
+    - `collections_vector_total` - Total number of vectors across all collections
+    - `collections_full_total` - Number of fully optimized collections
+    - `rest_responses_total` - Total REST API responses by status code
+    - `rest_responses_duration_seconds` - REST API response time histogram
+    - `grpc_responses_total` - Total gRPC responses by status code
+    - `grpc_responses_duration_seconds` - gRPC response time histogram
+
+    **Returns (Success):**
+    - Content-Type: `text/plain; version=0.0.4`
+    - Body: Prometheus text format metrics
+
+    **Example Success Response:**
+    ```
+    # HELP app_info information about qdrant server
+    # TYPE app_info gauge
+    app_info{name="qdrant",version="1.7.0"} 1
+    # HELP collections_total Number of collections
+    # TYPE collections_total gauge
+    collections_total 3
+    # HELP rest_responses_total Total number of responses
+    # TYPE rest_responses_total counter
+    rest_responses_total{status="200"} 45
+    ...
+    ```
+
+    **Returns (Error):**
+    - Content-Type: `application/json`
+    - Body: JSON error object
+
+    **Example Error Response:**
+    ```json
+    {
+      "success": false,
+      "error": "Service is not ready yet (status: starting)",
+      "message": "The Qdrant service is still starting up. Please wait.",
+      "service_id": "3642875",
+      "status": "starting"
+    }
+    ```
+
+    **Integration with Prometheus:**
+    Add this endpoint to your Prometheus scrape configuration:
+    ```yaml
+    scrape_configs:
+      - job_name: 'qdrant-services'
+        static_configs:
+          - targets: ['server:8001']
+        metrics_path: '/api/v1/vector-db/<service_id>/metrics'
+        scrape_interval: 15s
+    ```
+
+    **Example:**
+    ```bash
+    curl http://localhost:8001/api/v1/vector-db/3642875/metrics
+    ```
+
+    **Note:**
+    - Metrics are returned in Prometheus text format (not JSON)
+    - This endpoint is lightweight and safe to call frequently (every 5-15 seconds)
+    - Metrics provide insights into collection sizes, API usage, and performance
+    """
+    try:
+        from fastapi.responses import PlainTextResponse
+        
+        result = server_service.get_qdrant_metrics(service_id)
+        
+        # If successful, return metrics as plain text
+        if result.get("success"):
+            return PlainTextResponse(
+                content=result.get("metrics", ""),
+                media_type="text/plain; version=0.0.4"
+            )
+        else:
+            # Return error as JSON
+            return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
