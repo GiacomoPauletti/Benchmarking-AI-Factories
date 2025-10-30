@@ -2,7 +2,7 @@
 Request/response schemas for the API.
 """
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -12,13 +12,6 @@ class ServiceRequest(BaseModel):
     recipe_name: str
     config: Dict[str, Any] = {}
 
-    @field_validator('recipe_name')
-    @classmethod
-    def recipe_name_must_not_be_empty(cls, v):
-        if not v or not v.strip():
-            raise ValueError('recipe_name must not be empty')
-        return v
-
 
 class ServiceResponse(BaseModel):
     """Schema for service responses."""
@@ -26,6 +19,7 @@ class ServiceResponse(BaseModel):
     name: str
     recipe_name: str
     status: str
+    nodes: int
     config: Dict[str, Any]
     created_at: str
 

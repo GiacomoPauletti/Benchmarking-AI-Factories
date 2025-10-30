@@ -141,7 +141,6 @@ celerybeat.pid
 
 # Environments
 .env
-.env.local
 .envrc
 .venv
 env/
@@ -157,7 +156,7 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation - ignore old site directory only
+# mkdocs documentation
 /site
 
 # mypy
@@ -215,10 +214,4 @@ __marimo__/
 # Apptainer/Singularity container images
 *.sif
 
-useful_commands.txt.server-endpoint
-
-# Local AI model files
-huggingface_cache/
-
-# Local text files
 useful_commands.txt

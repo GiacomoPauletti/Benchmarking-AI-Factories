@@ -1,76 +1,43 @@
 #!/bin/bash
-# Run tests in isolated Docker test environment
-# This uses docker-compose.test.yml for a clean test environment
+# Build and run the test container
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+echo "🔨 Building AI Factory Test Container"
+echo "====================================="
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# Navigate to the test directory
+cd "$(dirname "${BASH_SOURCE[0]}")/tests"
 
-echo -e "${GREEN}Running Server Tests (Isolated Test Container)${NC}"
-echo "================================================"
-echo ""
-
-# Check if Docker is running
-if ! docker info > /dev/null 2>&1; then
-    echo -e "${RED}Error: Docker is not running${NC}"
-    echo "Please start Docker Desktop or Docker daemon"
+# Build the container
+echo "Building test container..."
+if apptainer build test-container.sif test-container.def; then
+    echo "✅ Container built successfully"
+else
+    echo "❌ Container build failed"
     exit 1
 fi
 
-# Navigate to project root
-cd "$PROJECT_ROOT"
-
-# Cleanup function to remove test container
-cleanup() {
-    echo ""
-    echo -e "${YELLOW}Cleaning up test container...${NC}"
-    docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
-}
-
-# Set trap to cleanup on exit
-trap cleanup EXIT INT TERM
-
-# Clean up any existing test containers
-echo -e "${YELLOW}Cleaning up old test containers...${NC}"
-docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
-
-# Build and run tests in isolated container
-echo ""
-echo -e "${GREEN}Building test container...${NC}"
-docker compose -f docker-compose.test.yml build
+# Navigate back to project root (two levels up from server folder)
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 echo ""
-echo -e "${GREEN}Running tests...${NC}"
-echo "=================="
+echo "🧪 Running Tests in Container"
+echo "============================="
 
-# Run tests and capture exit code
-if docker compose -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from server-test; then
-    TEST_STATUS=0
-else
-    TEST_STATUS=$?
-fi
-
-# Cleanup happens automatically via trap
-
-if [ $TEST_STATUS -eq 0 ]; then
+# Run the container with project directory bound to /app
+if apptainer run --bind "$(pwd):/app" services/server/tests/test-container.sif; then
     echo ""
-    echo -e "${GREEN}✓ All tests passed!${NC}"
+    echo "🎉 All tests passed!"
     echo ""
-    echo "Next steps:"
-    echo "  • Commit your changes: git commit -am 'Your message'"
-    echo "  • Push to your branch: git push"
-    echo "  • Create a pull request on GitHub"
-    exit 0
+    echo "You can now:"
+    echo "  git add ."
+    echo "  git commit -m 'Add comprehensive testing'"
+    echo "  git push origin $(git branch --show-current)"
 else
     echo ""
-    echo -e "${RED}✗ Tests failed!${NC}"
+    echo "❌ Tests failed!"
+    echo ""
     echo "Check the output above for details."
     exit 1
 fi
