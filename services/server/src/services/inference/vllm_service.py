@@ -511,3 +511,102 @@ class VllmService(InferenceService):
             "raw_response": result,
             "endpoint": endpoint
         }
+
+    def get_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
+        """Fetch Prometheus-compatible metrics from a running vLLM service.
+
+        vLLM natively exposes metrics on the /metrics endpoint in Prometheus text format.
+        This includes metrics like:
+        - vllm_request_count: Total number of requests
+        - vllm_request_duration_seconds: Request latency
+        - vllm_tokens_generated: Total tokens generated
+        - vllm_cache_usage_ratio: KV cache usage
+        - vllm_scheduling_delays: Scheduling delays
+
+        Returns:
+        - {"success": True, "metrics": "prometheus_text_format", "service_id": "...", "endpoint": "..."}
+        - {"success": False, "error": "...", "message": "...", ...}
+        """
+        try:
+            # Check if service exists and is ready
+            service_info = self.service_manager.get_service(service_id)
+            if not service_info:
+                return {
+                    "success": False,
+                    "error": f"Service {service_id} not found",
+                    "message": "The requested vLLM service could not be found.",
+                    "service_id": service_id,
+                    "metrics": ""
+                }
+            
+            is_ready, status = self._check_service_ready(service_id, service_info)
+            if not is_ready:
+                return {
+                    "success": False,
+                    "error": f"Service is not ready yet (status: {status})",
+                    "message": f"The vLLM service is still starting up (status: {status}). Please wait a moment and try again.",
+                    "service_id": service_id,
+                    "status": status,
+                    "metrics": ""
+                }
+            
+            endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
+            if not endpoint:
+                self.logger.debug("No endpoint found for service %s when querying metrics", service_id)
+                return {
+                    "success": False,
+                    "error": "Service endpoint not available",
+                    "message": "The vLLM service endpoint is not available yet.",
+                    "service_id": service_id,
+                    "status": status,
+                    "metrics": ""
+                }
+
+            # Parse endpoint URL and use SSH tunneling to reach compute node
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            remote_host = parsed.hostname
+            remote_port = parsed.port or 8001
+            path = "/metrics"
+            
+            self.logger.debug("Querying metrics via SSH: %s:%s%s", remote_host, remote_port, path)
+            
+            # Use SSH to make the HTTP request (tunnels through login node to compute node)
+            ssh_manager = self.deployer.ssh_manager
+            success, status_code, body = ssh_manager.http_request_via_ssh(
+                remote_host=remote_host,
+                remote_port=remote_port,
+                method="GET",
+                path=path,
+                timeout=timeout
+            )
+            
+            if status_code < 200 or status_code >= 300:
+                self.logger.warning("Metrics endpoint for %s returned %s: %s", service_id, status_code, body[:200])
+                return {
+                    "success": False,
+                    "error": f"HTTP {status_code} from metrics endpoint",
+                    "message": f"Failed to query metrics from vLLM service (HTTP {status_code}).",
+                    "service_id": service_id,
+                    "endpoint": endpoint,
+                    "metrics": ""
+                }
+
+            self.logger.debug("Metrics retrieved for %s (size: %d bytes)", service_id, len(body))
+
+            return {
+                "success": True,
+                "metrics": body,  # Return raw Prometheus text format
+                "service_id": service_id,
+                "endpoint": endpoint,
+                "metrics_format": "prometheus_text_format"
+            }
+        except Exception as e:
+            self.logger.exception("Failed to retrieve metrics for service %s", service_id)
+            return {
+                "success": False,
+                "error": f"Exception during metrics retrieval: {str(e)}",
+                "message": "An error occurred while querying the vLLM service for metrics.",
+                "service_id": service_id,
+                "metrics": ""
+            }
