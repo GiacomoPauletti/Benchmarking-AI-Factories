@@ -662,3 +662,103 @@ class QdrantService(VectorDbService):
                 "collection_name": collection_name,
                 "results": []
             }
+
+    def get_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
+        """Get Prometheus metrics from a Qdrant service.
+        
+        Qdrant exposes Prometheus-compatible metrics at the /metrics endpoint.
+        This method retrieves those metrics and returns them in Prometheus text format.
+        
+        Args:
+            service_id: The service ID
+            timeout: Request timeout in seconds
+            
+        Returns:
+            Dict with either:
+            - {"success": True, "metrics": "prometheus text format", "service_id": ..., "endpoint": ...}
+            - {"success": False, "error": "...", "message": "...", "metrics": ""}
+        """
+        try:
+            # Check if service exists and is ready
+            service_info = self.service_manager.get_service(service_id)
+            if not service_info:
+                return {
+                    "success": False,
+                    "error": f"Service {service_id} not found",
+                    "message": "The requested Qdrant service could not be found.",
+                    "service_id": service_id,
+                    "metrics": ""
+                }
+            
+            is_ready, status = self._check_service_ready(service_id, service_info)
+            if not is_ready:
+                return {
+                    "success": False,
+                    "error": f"Service is not ready yet (status: {status})",
+                    "message": f"The Qdrant service is still starting up (status: {status}). Please wait a moment and try again.",
+                    "service_id": service_id,
+                    "status": status,
+                    "metrics": ""
+                }
+            
+            endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_QDRANT_PORT)
+            if not endpoint:
+                self.logger.debug("No endpoint found for service %s when querying metrics", service_id)
+                return {
+                    "success": False,
+                    "error": "Service endpoint not available",
+                    "message": "The Qdrant service endpoint is not available yet.",
+                    "service_id": service_id,
+                    "status": status,
+                    "metrics": ""
+                }
+            
+            # Parse endpoint URL and use SSH tunneling to reach compute node
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            remote_host = parsed.hostname
+            remote_port = parsed.port or DEFAULT_QDRANT_PORT
+            path = "/metrics"
+            
+            self.logger.debug("Querying metrics via SSH: %s:%s%s", remote_host, remote_port, path)
+            
+            # Use SSH to make the HTTP request (tunnels through login node to compute node)
+            ssh_manager = self.deployer.ssh_manager
+            success, status_code, body = ssh_manager.http_request_via_ssh(
+                remote_host=remote_host,
+                remote_port=remote_port,
+                method="GET",
+                path=path,
+                timeout=timeout
+            )
+            
+            if not success or not (200 <= status_code < 300):
+                self.logger.warning("Metrics query for %s returned %s: %s", service_id, status_code, body[:200])
+                return {
+                    "success": False,
+                    "error": f"HTTP {status_code} from metrics endpoint",
+                    "message": f"Failed to query metrics from Qdrant service (HTTP {status_code}).",
+                    "service_id": service_id,
+                    "endpoint": endpoint,
+                    "status": status_code,
+                    "metrics": ""
+                }
+            
+            self.logger.debug("Metrics retrieved successfully for service %s (%d bytes)", service_id, len(body))
+            
+            return {
+                "success": True,
+                "metrics": body,
+                "service_id": service_id,
+                "endpoint": endpoint
+            }
+            
+        except Exception as e:
+            self.logger.exception("Failed to get metrics for service %s", service_id)
+            return {
+                "success": False,
+                "error": f"Exception during metrics retrieval: {str(e)}",
+                "message": "An error occurred while querying the Qdrant service for metrics.",
+                "service_id": service_id,
+                "metrics": ""
+            }

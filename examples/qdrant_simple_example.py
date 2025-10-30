@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple Vector Database Example: Basic Qdrant Operations
+Simple Qdrant Vector Database Example
 
 This script demonstrates the basic operations available with the Qdrant vector database service:
 1. Creating a Qdrant service

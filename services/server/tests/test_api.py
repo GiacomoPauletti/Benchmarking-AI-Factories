@@ -1045,6 +1045,84 @@ class TestVllmServiceUnit:
             timeout=5
         )
 
+    def test_vllm_get_metrics_success(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
+        """Unit test: VllmService.get_metrics returns raw metrics when service is ready."""
+        from services.inference import VllmService
+
+        mock_service_manager.get_service.return_value = {
+            "id": "svc-1",
+            "status": "running",
+            "recipe_name": "inference/vllm"
+        }
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8001"
+
+        ssh = Mock()
+        metrics_text = "# HELP vllm:prompt_tokens_total Total prompt tokens\nvllm:prompt_tokens_total 123\n"
+        ssh.http_request_via_ssh.return_value = (True, 200, metrics_text)
+        mock_deployer.ssh_manager = ssh
+
+        vservice = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+        vservice._check_service_ready = lambda sid, info: (True, "running")
+
+        result = vservice.get_metrics("svc-1")
+        assert result["success"] is True
+        assert metrics_text in result["metrics"]
+        assert result["service_id"] == "svc-1"
+
+    def test_vllm_get_metrics_service_not_found(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
+        """Unit test: VllmService.get_metrics handles missing service gracefully."""
+        from services.inference import VllmService
+
+        mock_service_manager.get_service.return_value = None
+        vservice = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+        result = vservice.get_metrics("missing")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    class TestQdrantServiceUnit:
+        """
+        Unit tests for QdrantService methods related to metrics.
+        """
+
+        def test_qdrant_get_metrics_success(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
+            from services.vector_db import QdrantService
+
+            mock_service_manager.get_service.return_value = {
+                "id": "qsvc-1",
+                "status": "running",
+                "recipe_name": "vector-db/qdrant"
+            }
+            mock_endpoint_resolver.resolve.return_value = "http://node2:6333"
+
+            ssh = Mock()
+            qmetrics = "# HELP collections_total Number of collections\ncollections_total 2\n"
+            ssh.http_request_via_ssh.return_value = (True, 200, qmetrics)
+            mock_deployer.ssh_manager = ssh
+
+            qservice = QdrantService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+            qservice._check_service_ready = lambda sid, info: (True, "running")
+
+            result = qservice.get_metrics("qsvc-1")
+            assert result["success"] is True
+            assert qmetrics in result["metrics"]
+            assert result["service_id"] == "qsvc-1"
+
+        def test_qdrant_get_metrics_not_ready(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
+            from services.vector_db import QdrantService
+
+            mock_service_manager.get_service.return_value = {
+                "id": "qsvc-2",
+                "status": "starting",
+                "recipe_name": "vector-db/qdrant"
+            }
+
+            qservice = QdrantService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
+            qservice._check_service_ready = lambda sid, info: (False, "starting")
+
+            result = qservice.get_metrics("qsvc-2")
+            assert result["success"] is False
+            assert "not ready" in result["error"].lower() or "starting" in result.get("message", "").lower()
+
 
 # Fixture to create test client once per module
 @pytest.fixture(scope="module")

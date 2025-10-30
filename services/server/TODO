@@ -1,6 +1,7 @@
 DOCS:
 - Create diagram showcasing CI (testing) pipeline. Add this to the docs. Explain that GitHub Actions Or Gitlab could be used, but that we do it manually for now.
 - Create architecture diagram for server service. Add to docs.
+- Update server API examples with qdrant vector-db and with metrics fetching.
 - Document vec-db and vllm example python workflow script: Link to them in the docs.
 
 MAIN:

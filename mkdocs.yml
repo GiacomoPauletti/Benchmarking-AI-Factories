@@ -74,7 +74,7 @@ nav:
       - System Overview: architecture/overview.md
       - Microservices: architecture/microservices.md
   - Services:
-      - Server: services/server/api-reference.md
+      - Server: services/server.md
       - Client: services/client.md
       - Monitoring: services/monitoring.md
       - Logs: services/logs.md

@@ -231,13 +231,22 @@ class ServerService:
         return self.vllm_service.get_models(service_id, timeout)
     
     def get_vllm_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
-        """Fetch Prometheus-compatible metrics from a running VLLM service.
+        """Get Prometheus metrics from a vLLM service.
         
         Returns a dict with either:
-        - {"success": True, "metrics": "prometheus_text_format", "service_id": "...", ...}
-        - {"success": False, "error": "...", "message": "...", "metrics": "", ...}
+        - {"success": True, "metrics": "prometheus text format", ...}
+        - {"success": False, "error": "...", "message": "...", "metrics": ""}
         """
         return self.vllm_service.get_metrics(service_id, timeout)
+    
+    def get_qdrant_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
+        """Get Prometheus metrics from a Qdrant service.
+        
+        Returns a dict with either:
+        - {"success": True, "metrics": "prometheus text format", ...}
+        - {"success": False, "error": "...", "message": "...", "metrics": ""}
+        """
+        return self.vector_db_service.get_metrics(service_id, timeout)
     
     def prompt_vllm_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a running VLLM service."""
