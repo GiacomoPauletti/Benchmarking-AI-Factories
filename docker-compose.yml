@@ -77,8 +77,6 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - grafana-storage:/var/lib/grafana
     restart: unless-stopped
     networks:
       - ai-factory
@@ -132,9 +130,6 @@ networks:
   ai-factory:
 
 volumes:
-  grafana-storage:
-    driver: local
-    name: grafana-storage
   prometheus-storage:
     driver: local
     name: prometheus-storage
