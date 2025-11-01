@@ -39,7 +39,7 @@ services:
         echo 'SSH keys ready';
       fi &&
       mkdir -p /app/services/server &&
-      echo 'http://server:8001' > /app/services/server/.server-endpoint &&
+      echo 'http://localhost:8001' > /app/services/server/.server-endpoint &&
       uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
       "
     networks:

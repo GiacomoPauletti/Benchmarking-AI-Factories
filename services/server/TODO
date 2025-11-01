@@ -1,11 +1,8 @@
 DOCS:
-- Create diagram showcasing CI (testing) pipeline. Add this to the docs. Explain that GitHub Actions Or Gitlab could be used, but that we do it manually for now.
-- Document how exactly the recipe yml files are used to launch services. Add this to the docs.
 
 MAIN:
-- Test multi-node vllm.
-- Modularize vllm and vec-db slurm deployer functions further. Create slurm module for each?
 - SSHManager class to global utils?
+- Do SSH agent thing Xavier 
 
 Optional:
 - Create fastembed functionality in qdrant. Use it for RAGs.

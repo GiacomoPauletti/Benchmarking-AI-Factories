@@ -1,19 +1,12 @@
-# Server feature development workflow:
-git checkout feature/server-dev
-git checkout -b feature/server/new-feature-name
-git add .
-git commit -m "Add new server feature"
-git push origin feature/server/new-feature-name
-gh pr create --title "Add new server feature" --body "Description" --base feature/server-dev
-
-
 #### SETUP ####
 
-#### RUN SERVER LOCALLY ####
-# Option 1: Use launcher script 
-~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/launch_local.sh
+#### RUN DOCUMENTATION LOCALLY ####
+# Serve MkDocs documentation with live reload (http://127.0.0.1:8000)
+cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
+mkdocs serve
 
-# Option 2: Direct docker compose (from project root)
+#### RUN SERVER LOCALLY ####
+# docker compose (from project root)
 cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
 docker compose up server
 
@@ -24,6 +17,8 @@ docker compose up server
 # Run all tests in Docker container (fast, local)
 cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
 ./services/server/run-tests.sh
+
+docker compose -f  docker-compose.test.yml up
 
 #### CLEAN UP ####
 # Clear logs folder (ignores files that can't be removed)
@@ -95,70 +90,6 @@ vectordb search 3664650 my_documents '[4.15,-0.25,7.35]' 5
 
 # Delete a collection
 vectordb delete 3664650 my_documents
-
-
-#### API CURL EXAMPLES ####
-# Create vLLM with custom model AND custom resources
-curl -X POST http://localhost:8001/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recipe_name": "inference/vllm",
-    "config": {
-      "environment": {
-        "VLLM_MODEL": "gpt2"
-      },
-      "resources": {
-        "nodes": 1,
-        "cpu": "8",
-        "memory": "64G",
-        "time_limit": 120,
-        "gpu": "1"
-      }
-    }
-  }'
-
-# Create vLLM service with CUSTOM model (using API, with ALL options explicitly set)
-curl -X POST http://localhost:8001/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recipe_name": "inference/vllm",
-    "config": {
-      "environment": {
-        "VLLM_MODEL": "gpt2",
-        "VLLM_HOST": "0.0.0.0",
-        "VLLM_PORT": "8001",
-        "VLLM_MAX_MODEL_LEN": "2048",
-        "VLLM_TENSOR_PARALLEL_SIZE": "1",
-        "VLLM_GPU_MEMORY_UTILIZATION": "0.9",
-        "CUDA_VISIBLE_DEVICES": "0"
-      },
-      "resources": {
-        "nodes": 1,
-        "cpu": "2",
-        "memory": "32G",
-        "time_limit": 15,
-        "gpu": "1"
-      }
-    }
-  }'
-
-# Create CPU-only vLLM (no GPU)
-curl -X POST http://localhost:8001/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recipe_name": "inference/vllm",
-    "config": {
-      "environment": {
-        "VLLM_MODEL": "gpt2"
-      },
-      "resources": {
-        "nodes": 1,
-        "cpu": "4",
-        "memory": "16G",
-        "gpu": null
-      }
-    }
-  }'
 
 
 # You can now specify any model when creating the service:
