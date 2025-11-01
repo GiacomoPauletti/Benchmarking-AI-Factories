@@ -27,7 +27,7 @@ cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchm
 
 #### CLEAN UP ####
 # Clear logs folder (ignores files that can't be removed)
-rm -f ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/logs/* 2>/dev/null || true
+sudo rm -f ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/logs/* 2>/dev/null || true
 
 # Alternative: Clear from anywhere
 cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories

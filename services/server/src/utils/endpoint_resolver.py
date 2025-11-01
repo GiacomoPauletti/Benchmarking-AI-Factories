@@ -52,8 +52,19 @@ class EndpointResolver:
                 self.logger.debug("No node information for job %s", job_id)
                 return None
             
-            # Extract the first node
-            node = job_details["nodes"][0]
+            # Extract the first node (master node for distributed jobs)
+            # The nodes field should already be parsed as a list by slurm.py
+            nodes = job_details["nodes"]
+            if isinstance(nodes, list) and nodes:
+                node = str(nodes[0]).strip()
+            else:
+                # Fallback: treat as string
+                node = str(nodes).strip()
+            
+            # Basic validation: node name should not be empty
+            if not node:
+                self.logger.warning("Empty node name for job %s", job_id)
+                return None
             
             # Determine the port
             port = self._get_port_for_job(job_id)
@@ -66,7 +77,9 @@ class EndpointResolver:
                 self.logger.warning("No port found for job %s", job_id)
                 return None
             
-            return f"http://{node}:{port}"
+            endpoint = f"http://{node}:{port}"
+            self.logger.debug("Resolved endpoint for job %s: %s (from nodes: %s)", job_id, endpoint, nodes)
+            return endpoint
             
         except Exception as e:
             self.logger.exception("Error resolving endpoint for job %s: %s", job_id, e)
