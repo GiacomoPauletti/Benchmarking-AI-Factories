@@ -30,18 +30,104 @@ class TestLiveServerIntegration:
         """
         Get the live server endpoint if available.
         
-        Skips tests if no live server is detected.
+        Fails tests if server is not healthy or not available.
         Reads from .server-endpoint file created by launch_local.sh.
+        Waits for server to be healthy with retries before returning.
         """
-        endpoint_file = Path("/app/services/server/.server-endpoint")
-        if not endpoint_file.exists():
-            pytest.skip("No live server endpoint available - skipping live integration tests")
+        import time
+        import os
+        
+        print("\n[Fixture] Starting server_endpoint fixture...")
+        print(f"[Fixture] Current working directory: {os.getcwd()}")
+        
+        # Try multiple possible paths for the endpoint file
+        possible_paths = [
+            Path("/app/services/server/.server-endpoint"),
+            Path("/app/.server-endpoint"),
+            Path(".server-endpoint"),
+            Path("./services/server/.server-endpoint"),
+        ]
+        
+        endpoint_file = None
+        for path in possible_paths:
+            print(f"[Fixture] Checking {path}...", end=" ")
+            if path.exists():
+                print("✓ Found")
+                endpoint_file = path
+                break
+            else:
+                print("✗ Not found")
+        
+        if endpoint_file is None:
+            error_msg = f"Server endpoint file not found. Tried: {[str(p) for p in possible_paths]}"
+            print(f"[Fixture] ERROR: {error_msg}")
+            raise RuntimeError(error_msg)
         
         endpoint = endpoint_file.read_text().strip()
-        if not endpoint:
-            pytest.skip("Empty server endpoint file - skipping live integration tests")
+        print(f"[Fixture] Endpoint from file: {endpoint}")
         
-        return endpoint
+        if not endpoint:
+            error_msg = f"Server endpoint file is empty at {endpoint_file}"
+            print(f"[Fixture] ERROR: {error_msg}")
+            raise RuntimeError(error_msg)
+        
+        # If endpoint says localhost and we're in a container, try to connect directly
+        # If that fails, try host.docker.internal (Docker Desktop) or the server service name
+        if "localhost" in endpoint:
+            print(f"[Fixture] Detected localhost in endpoint, will try multiple connection strategies...")
+            connection_strategies = [
+                endpoint,  # Try as-is first
+                endpoint.replace("localhost", "host.docker.internal"),  # Try Docker Desktop gateway
+                endpoint.replace("localhost", "server"),  # Try service name on same network
+                endpoint.replace("localhost", "127.0.0.1"),  # Try 127.0.0.1
+            ]
+        else:
+            connection_strategies = [endpoint]
+        
+        print(f"[Fixture] Connection strategies to try: {connection_strategies}")
+        print(f"[Fixture] Waiting for server to become healthy...")
+        
+        # Wait for server to be healthy with retries
+        max_retries = 20
+        retry_delay = 2
+        last_error = None
+        
+        for attempt in range(max_retries):
+            for strategy_endpoint in connection_strategies:
+                try:
+                    print(f"[Fixture] Attempt {attempt + 1}/{max_retries}, trying {strategy_endpoint}...", end=" ")
+                    response = requests.get(f"{strategy_endpoint}/health", timeout=5)
+                    if response.status_code == 200:
+                        print("✓ OK")
+                        print(f"[Fixture] Server is healthy at {strategy_endpoint}, returning this endpoint")
+                        return strategy_endpoint
+                    last_error = f"Health check returned status {response.status_code}"
+                except (requests.ConnectionError, requests.Timeout, requests.exceptions.RequestException) as e:
+                    last_error = f"{type(e).__name__}"
+            
+            print(f"✗ All strategies failed")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+        
+        # Server not healthy after retries - fail test with detailed error
+        total_wait_time = max_retries * retry_delay
+        error_message = (
+            f"\nServer health check failed:\n"
+            f"  Original endpoint: {endpoint}\n"
+            f"  Strategies tried: {connection_strategies}\n"
+            f"  Total wait time: {total_wait_time}s\n"
+            f"  Retries: {max_retries}\n"
+            f"  Last error: {last_error}\n"
+            f"\nPossible causes:\n"
+            f"  1. Server container not started\n"
+            f"  2. Server still initializing (check logs)\n"
+            f"  3. Server crashed or failed to start\n"
+            f"  4. Network connectivity issue between containers\n"
+            f"  5. Running outside Docker (localhost:8001 only works on host)\n"
+        )
+        print(f"[Fixture] RUNTIME ERROR: {error_message}")
+        raise RuntimeError(error_message)
     
     def test_live_server_health_workflow(self, server_endpoint):
         """
@@ -94,7 +180,7 @@ class TestLiveServerIntegration:
                 "config": {"nodes": 1}
             },
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout=120
         )
         
         # If we get an error, print it for debugging
@@ -128,7 +214,7 @@ class TestLiveServerIntegration:
                 "config": {"nodes": 1}
             },
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout=60
         )
         
         # If we get an error, print it for debugging
@@ -141,21 +227,21 @@ class TestLiveServerIntegration:
         service_id = service_data["id"]
         
         # Test getting the individual service
-        get_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}", timeout=10)
+        get_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}", timeout=30)
         assert get_response.status_code == 200
         retrieved_service = get_response.json()
         assert retrieved_service["id"] == service_id
         assert retrieved_service["recipe_name"] == "inference/vllm"
         
         # Test getting service status
-        status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=10)
+        status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=30)
         assert status_response.status_code == 200
         status_data = status_response.json()
         assert "status" in status_data
         assert status_data["status"] in ["pending", "starting", "running", "completed", "failed"]
         
         # Test getting service logs
-        logs_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/logs", timeout=10)
+        logs_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/logs", timeout=30)
         assert logs_response.status_code == 200
         logs_data = logs_response.json()
         assert "logs" in logs_data
@@ -164,7 +250,7 @@ class TestLiveServerIntegration:
         
         # Test stopping the service (if it's still running)
         if status_data["status"] in ["pending", "running"]:
-            stop_response = requests.delete(f"{server_endpoint}/api/v1/services/{service_id}", timeout=10)
+            stop_response = requests.delete(f"{server_endpoint}/api/v1/services/{service_id}", timeout=30)
             # Stop might succeed or fail depending on SLURM state
             assert stop_response.status_code in [200, 404]
             if stop_response.status_code == 200:
@@ -278,7 +364,7 @@ class TestLiveServerIntegration:
                 }
             },
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout=60
         )
         
         assert create_response.status_code in [200, 201]
@@ -296,14 +382,14 @@ class TestLiveServerIntegration:
         time.sleep(2)
         
         # Check service status
-        status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=10)
+        status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=30)
         assert status_response.status_code == 200
         status_data = status_response.json()
         assert "status" in status_data
         
         # Once running, check models endpoint
         if status_data["status"] == "running":
-            models_response = requests.get(f"{server_endpoint}/api/v1/vllm/{service_id}/models", timeout=10)
+            models_response = requests.get(f"{server_endpoint}/api/v1/vllm/{service_id}/models", timeout=30)
             if models_response.status_code == 200:
                 models_data = models_response.json()
                 if models_data.get("models"):
@@ -311,7 +397,7 @@ class TestLiveServerIntegration:
                     assert "gpt2" in models_data["models"] or len(models_data["models"]) > 0
         
         # Clean up - delete the service
-        delete_response = requests.delete(f"{server_endpoint}/api/v1/services/{service_id}", timeout=10)
+        delete_response = requests.delete(f"{server_endpoint}/api/v1/services/{service_id}", timeout=30)
         # Deletion might succeed or fail depending on timing
         assert delete_response.status_code in [200, 404]
     
@@ -392,7 +478,7 @@ class TestLiveServerIntegration:
                 }
             },
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout=120
         )
         
         if create_response.status_code not in [200, 201]:
@@ -445,20 +531,20 @@ class TestLiveServerIntegration:
         Test various error scenarios against a live server.
         """
         # Test getting non-existent service
-        get_response = requests.get(f"{server_endpoint}/api/v1/services/nonexistent-service", timeout=10)
+        get_response = requests.get(f"{server_endpoint}/api/v1/services/nonexistent-service", timeout=30)
         assert get_response.status_code == 404
         
         # Test stopping non-existent service
-        stop_response = requests.delete(f"{server_endpoint}/api/v1/services/nonexistent-service", timeout=10)
+        stop_response = requests.delete(f"{server_endpoint}/api/v1/services/nonexistent-service", timeout=30)
         assert stop_response.status_code == 404
         
         # Test getting logs for non-existent service
-        logs_response = requests.get(f"{server_endpoint}/api/v1/services/nonexistent-service/logs", timeout=10)
+        logs_response = requests.get(f"{server_endpoint}/api/v1/services/nonexistent-service/logs", timeout=30)
         # This might return logs or error depending on implementation
         assert logs_response.status_code in [200, 500]
         
         # Test getting status for non-existent service
-        status_response = requests.get(f"{server_endpoint}/api/v1/services/nonexistent-service/status", timeout=10)
+        status_response = requests.get(f"{server_endpoint}/api/v1/services/nonexistent-service/status", timeout=30)
         # This might return status or error depending on implementation
         assert status_response.status_code in [200, 500]
 
@@ -533,16 +619,92 @@ class TestVectorDbDocumentSearch:
     
     @pytest.fixture
     def server_endpoint(self):
-        """Get the live server endpoint if available."""
-        endpoint_file = Path("/app/services/server/.server-endpoint")
-        if not endpoint_file.exists():
-            pytest.skip("No live server endpoint available - skipping vector-db integration tests")
+        """Get the live server endpoint. Fails if not available."""
+        import time
+        
+        print("\n[VectorDB Fixture] Starting server_endpoint fixture...")
+        
+        # Try multiple possible paths for the endpoint file
+        possible_paths = [
+            Path("/app/services/server/.server-endpoint"),
+            Path("/app/.server-endpoint"),
+            Path(".server-endpoint"),
+            Path("./services/server/.server-endpoint"),
+        ]
+        
+        endpoint_file = None
+        for path in possible_paths:
+            print(f"[VectorDB Fixture] Checking {path}...", end=" ")
+            if path.exists():
+                print("✓ Found")
+                endpoint_file = path
+                break
+            else:
+                print("✗ Not found")
+        
+        if endpoint_file is None:
+            error_msg = f"Server endpoint file not found. Tried: {[str(p) for p in possible_paths]}"
+            print(f"[VectorDB Fixture] ERROR: {error_msg}")
+            raise RuntimeError(error_msg)
         
         endpoint = endpoint_file.read_text().strip()
-        if not endpoint:
-            pytest.skip("Empty server endpoint file - skipping vector-db integration tests")
+        print(f"[VectorDB Fixture] Endpoint from file: {endpoint}")
         
-        return endpoint
+        if not endpoint:
+            error_msg = f"Server endpoint file is empty at {endpoint_file}"
+            print(f"[VectorDB Fixture] ERROR: {error_msg}")
+            raise RuntimeError(error_msg)
+        
+        # If endpoint says localhost and we're in a container, try multiple strategies
+        if "localhost" in endpoint:
+            print(f"[VectorDB Fixture] Detected localhost in endpoint, will try multiple connection strategies...")
+            connection_strategies = [
+                endpoint,  # Try as-is first
+                endpoint.replace("localhost", "host.docker.internal"),  # Try Docker Desktop gateway
+                endpoint.replace("localhost", "server"),  # Try service name on same network
+                endpoint.replace("localhost", "127.0.0.1"),  # Try 127.0.0.1
+            ]
+        else:
+            connection_strategies = [endpoint]
+        
+        print(f"[VectorDB Fixture] Connection strategies to try: {connection_strategies}")
+        print(f"[VectorDB Fixture] Waiting for server to become healthy...")
+        
+        # Wait for server to be healthy with retries
+        max_retries = 20
+        retry_delay = 2
+        last_error = None
+        
+        for attempt in range(max_retries):
+            for strategy_endpoint in connection_strategies:
+                try:
+                    print(f"[VectorDB Fixture] Attempt {attempt + 1}/{max_retries}, trying {strategy_endpoint}...", end=" ")
+                    response = requests.get(f"{strategy_endpoint}/health", timeout=5)
+                    if response.status_code == 200:
+                        print("✓ OK")
+                        print(f"[VectorDB Fixture] Server is healthy at {strategy_endpoint}, returning this endpoint")
+                        return strategy_endpoint
+                    last_error = f"Health check returned status {response.status_code}"
+                except (requests.ConnectionError, requests.Timeout, requests.exceptions.RequestException) as e:
+                    last_error = f"{type(e).__name__}"
+            
+            print(f"✗ All strategies failed")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+        
+        # Server not healthy after retries - fail test with detailed error
+        total_wait_time = max_retries * retry_delay
+        error_message = (
+            f"\nVectorDB Test - Server health check failed:\n"
+            f"  Original endpoint: {endpoint}\n"
+            f"  Strategies tried: {connection_strategies}\n"
+            f"  Total wait time: {total_wait_time}s\n"
+            f"  Retries: {max_retries}\n"
+            f"  Last error: {last_error}\n"
+        )
+        print(f"[VectorDB Fixture] RUNTIME ERROR: {error_message}")
+        raise RuntimeError(error_message)
     
     @pytest.fixture
     def sample_documents(self):

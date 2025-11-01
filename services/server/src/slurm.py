@@ -13,6 +13,7 @@ from typing import Dict, Any, List
 from utils import parse_time_limit
 from datetime import datetime
 from ssh_manager import SSHManager
+from recipe_builders import BuilderRegistry, ScriptPaths
 
 
 class SlurmDeployer:
@@ -601,7 +602,7 @@ class SlurmDeployer:
         }
     
     def _create_script(self, recipe: Dict[str, Any], recipe_path: Path, merged_env: Dict[str, str] = None, merged_resources: Dict[str, Any] = None) -> str:
-        """Generate the SLURM job script by composing smaller parts."""
+        """Generate the SLURM job script using recipe builders."""
         # Use merged resources or fall back to recipe resources
         resources = merged_resources if merged_resources is not None else recipe.get("resources", {})
 
@@ -609,30 +610,48 @@ class SlurmDeployer:
         environment = merged_env if merged_env is not None else recipe.get("environment", {})
 
         # Resolve paths and names
-        # Use REMOTE path for paths that will be used on MeluXina
         category = recipe_path.parent.name
+        recipe_name = recipe.get('name', '')
         recipes_path = Path(self.remote_base_path) / "src" / "recipes"
-        container_def = recipe.get("container_def", f"{recipe['name']}.def")
-        image_name = recipe.get("image", f"{recipe['name']}.sif")
-        def_path, sif_path = self._resolve_container_paths(recipes_path, category, container_def, image_name)
-
-        # Build environment and sections
-        env_section = self._build_env_section(environment)
+        container_def = recipe.get("container_def", f"{recipe_name}.def")
+        image_name = recipe.get("image", f"{recipe_name}.sif")
+        def_path = str(recipes_path / category / container_def)
+        sif_path = str(recipes_path / category / image_name)
         log_dir = str(Path(self.remote_base_path) / "logs")
-
-        build_block = self._build_build_block(sif_path, def_path)
-        # Support recipe-specific distributed launch configuration
-        # If the recipe declares a `distributed` section (truthy), generate
-        # a distributed run block (srun + torchrun inside Apptainer). Otherwise
-        # fall back to the existing single-node run block.
-        distributed_cfg = None
-        if isinstance(recipe, dict) and recipe.get('distributed'):
-            distributed_cfg = recipe.get('distributed')
-
-        if distributed_cfg:
-            run_block = self._build_distributed_run_block(sif_path, log_dir, resources, distributed_cfg)
+        
+        # Create paths object for builders
+        paths = ScriptPaths(
+            def_path=def_path,
+            sif_path=sif_path,
+            log_dir=log_dir,
+            remote_base_path=self.remote_base_path
+        )
+        
+        # Get the appropriate builder for this recipe
+        # First try recipe-specific builder, then fall back to category builder
+        try:
+            builder = BuilderRegistry.create_builder(
+                category, 
+                recipe_name=recipe_name,
+                remote_base_path=self.remote_base_path
+            )
+            self.logger.debug(f"Using builder {builder.__class__.__name__} for recipe {category}/{recipe_name}")
+        except ValueError as e:
+            self.logger.warning(f"No builder registered for '{category}/{recipe_name}', using inference builder as fallback")
+            # Fallback to inference builder for unknown categories
+            builder = BuilderRegistry.create_builder('inference', remote_base_path=self.remote_base_path)
+        
+        # Build script sections using the builder
+        env_section = builder.build_environment_section(environment)
+        build_block = builder.build_container_build_block(paths)
+        
+        # Check if recipe supports distributed execution
+        distributed_cfg = recipe.get('distributed') if isinstance(recipe, dict) else None
+        
+        if distributed_cfg and builder.supports_distributed():
+            run_block = builder.build_distributed_run_block(paths, resources, recipe, distributed_cfg)
         else:
-            run_block = self._build_run_block(sif_path, log_dir, resources)
+            run_block = builder.build_run_block(paths, resources, recipe)
 
         script = f"""#!/bin/bash -l
 
@@ -651,6 +670,8 @@ echo "Working directory: $(pwd)"
 echo "Log directory: {log_dir}"
 echo "Container def: {def_path}"
 echo "Container sif: {sif_path}"
+echo "Recipe category: {category}"
+echo "Builder: {builder.__class__.__name__}"
 echo "==========================="
 
 {build_block}
@@ -664,174 +685,6 @@ exit $container_exit_code
 """
         return script
 
-    def _resolve_container_paths(self, recipes_path: Path, category: str, container_def: str, image_name: str):
-        """Return absolute paths for container def and sif file."""
-        def_path = str(recipes_path / category / container_def)
-        sif_path = str(recipes_path / category / image_name)
-        return def_path, sif_path
-
-    def _build_env_section(self, recipe_env: Dict[str, str]) -> str:
-        """Construct the environment export section for the script."""
-        env_vars = []
-        
-        # Export recipe-specific environment variables
-        for key, value in (recipe_env or {}).items():
-            # Don't quote values that contain shell variables (e.g., ${SLURM_JOB_ID})
-            # so they get expanded at runtime
-            if '${' in value or '$(' in value:
-                env_vars.append(f'export {key}="{value}"')
-            else:
-                env_vars.append(f"export {key}='{value}'")
-
-        # Add APPTAINERENV_ prefixed versions for Apptainer to pick up
-        # Apptainer automatically imports APPTAINERENV_* variables
-        for key, value in (recipe_env or {}).items():
-            # Don't quote values that contain shell variables
-            if '${' in value or '$(' in value:
-                env_vars.append(f'export APPTAINERENV_{key}="{value}"')
-            else:
-                env_vars.append(f"export APPTAINERENV_{key}='{value}'")
-
-        return "\n".join(env_vars) if env_vars else "# No environment variables"
-
-    def _build_build_block(self, sif_path: str, def_path: str) -> str:
-        """Return the bash block that ensures the SIF image exists (and builds it if not)."""
-        return f"""
-# Build container if needed
-if [ ! -f {sif_path} ]; then
-    echo 'Building Apptainer image: {sif_path}'
-    
-    # Set up user-writable directories to avoid permission issues
-    export APPTAINER_TMPDIR=/tmp/apptainer-$USER-$$
-    export APPTAINER_CACHEDIR=/tmp/apptainer-cache-$USER
-    export HOME=/tmp/fake-home-$USER
-    
-    mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME/.apptainer
-    
-    # Create empty docker config to bypass authentication
-    echo '{{}}' > $HOME/.apptainer/docker-config.json
-    
-    # Build container
-    apptainer build --disable-cache --no-https {sif_path} {def_path}
-    build_result=$?
-    
-    # Clean up
-    rm -rf $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME
-    
-    if [ $build_result -ne 0 ]; then
-        echo "ERROR: Failed to build container (exit code: $build_result)"
-        exit 1
-    fi
-    
-    echo "Container build successful!"
-fi
-"""
-
-    def _build_run_block(self, sif_path: str, log_dir: str, resources: Dict[str, Any]) -> str:
-        """Return the bash block that runs the container with proper binds and flags."""
-        # Project workspace binding (use REMOTE path on MeluXina)
-        project_ws = str(self.remote_base_path)
-        
-        # Persistent HuggingFace cache path (shared across jobs)
-        hf_cache = f"{project_ws}/huggingface_cache"
-        
-        nv_flag = "--nv" if resources.get('gpu') else ""
-        return f"""
-        echo "Starting container..."
-        echo "Running vLLM container (no network binding, unprivileged user)..."
-        echo "Binding project workspace: {project_ws} -> /workspace"
-        echo "Binding HF cache: {hf_cache} -> /root/.cache/huggingface"
-
-        # Set persistent HuggingFace cache location
-        # HF_HOME on host (for mkdir), APPTAINERENV_HF_HOME is container-side path
-        export HF_HOME="{hf_cache}"
-        mkdir -p $HF_HOME
-        export APPTAINERENV_HF_HOME="/root/.cache/huggingface"
-
-        # Determine apptainer flags (e.g. use --nv when GPUs are requested)
-        APPTAINER_FLAGS="{nv_flag}"
-        echo "Apptainer flags: $APPTAINER_FLAGS"
-
-        # Debug: Print environment variables that should be passed to container
-        echo "Environment variables for container:"
-        env | grep -E '^VLLM_|^HF_|^CUDA_' || echo "No VLLM/HF/CUDA vars found"
-
-        apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace,{hf_cache}:/root/.cache/huggingface {sif_path} 2>&1
-        container_exit_code=$?
-
-        echo "Container exited with code: $container_exit_code"
-        if [ $container_exit_code -ne 0 ]; then
-        echo "ERROR: Container failed to run properly"
-        fi
-        """
-    
-    def _build_distributed_run_block(self, sif_path: str, log_dir: str, resources: Dict[str, Any], distributed_cfg: Dict[str, Any]) -> str:
-        """Return a bash block to launch vLLM across multiple nodes using srun + Apptainer."""
-    
-        nv_flag = "--nv" if resources.get("gpu") else ""
-        nproc_per_node = int(distributed_cfg.get("nproc_per_node", 1))
-        master_port = distributed_cfg.get("master_port", 29500)
-        model = distributed_cfg.get("model", "Qwen/Qwen2.5-0.5B-Instruct")
-        max_len = distributed_cfg.get("max_model_len", 4096)
-        gpu_mem = distributed_cfg.get("gpu_memory_utilization", 0.9)
-        
-        # Project workspace binding (use REMOTE path on MeluXina)
-        project_ws = str(self.remote_base_path)
-        
-        # Persistent HuggingFace cache path (shared across jobs and nodes)
-        hf_cache = f"{project_ws}/huggingface_cache"
-
-        return f"""
-        echo "Starting distributed vLLM container..."
-        MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
-        export MASTER_ADDR
-        export MASTER_PORT={master_port}
-        export NPROC_PER_NODE={nproc_per_node}
-        export VLLM_MODEL={model}
-        export VLLM_MAX_MODEL_LEN={max_len}
-        export VLLM_GPU_MEMORY_UTILIZATION={gpu_mem}
-        export VLLM_TENSOR_PARALLEL_SIZE=$(( SLURM_NNODES * NPROC_PER_NODE ))
-
-        # Use persistent shared HuggingFace cache (survives across jobs, shared by all nodes)
-        # HF_HOME on host (for mkdir), APPTAINERENV_HF_HOME is container-side path
-        export HF_HOME="{hf_cache}"
-        mkdir -p $HF_HOME
-        export APPTAINERENV_HF_HOME="/root/.cache/huggingface"
-
-        echo "Launching distributed vLLM:"
-        echo "- Nodes: $SLURM_NNODES"
-        echo "- GPUs per node: $NPROC_PER_NODE"
-        echo "- Total tensor parallel size: $VLLM_TENSOR_PARALLEL_SIZE"
-        echo "- Master node: $MASTER_ADDR:$MASTER_PORT"
-        echo "- HF_HOME: $HF_HOME"
-
-        TOTAL_GPUS=$(( SLURM_NNODES * NPROC_PER_NODE ))
-
-        # Launch vLLM server in background and wait for it
-        srun --nodes=$SLURM_NNODES --ntasks=$TOTAL_GPUS --ntasks-per-node=$NPROC_PER_NODE \
-            apptainer exec {nv_flag} --bind {log_dir}:/app/logs,{project_ws}:/workspace,{hf_cache}:/root/.cache/huggingface {sif_path} bash -lc "\
-                python3 -m vllm.entrypoints.openai.api_server \
-                    --model $VLLM_MODEL \
-                    --host 0.0.0.0 \
-                    --port 8001 \
-                    --tensor-parallel-size $TOTAL_GPUS \
-                    --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
-            " &
-
-        VLLM_PID=$!
-        
-        echo "vLLM server started with PID: $VLLM_PID"
-        echo "Server will run until job is cancelled or time limit is reached"
-        
-        # Wait for the background process
-        wait $VLLM_PID
-        container_exit_code=$?
-
-        echo "Distributed vLLM job exited with code: $container_exit_code"
-        [ $container_exit_code -ne 0 ] && echo "ERROR: Distributed container run failed"
-        """
-
-
     def _format_environment(self, env_dict: Dict[str, str]) -> List[str]:
         """Format environment variables as array of KEY=VALUE strings"""
         env_list = [
@@ -840,7 +693,3 @@ fi
         for key, value in env_dict.items():
             env_list.append(f"{key}={value}")
         return env_list
-
-        
-    
-    
