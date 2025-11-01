@@ -112,6 +112,11 @@ class SlurmDeployer:
         remote_log_dir = f"{self.remote_base_path}/logs"
         self.ssh_manager.create_remote_directory(remote_log_dir)
         
+        # Ensure persistent HuggingFace cache directory exists
+        # This allows model weights to persist across jobs and be shared across nodes
+        remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
+        self.ssh_manager.create_remote_directory(remote_hf_cache)
+        
         # Load recipe
         recipe_path = self._find_recipe(recipe_name)
         with open(recipe_path, 'r') as f:
@@ -687,16 +692,6 @@ exit $container_exit_code
             else:
                 env_vars.append(f"export APPTAINERENV_{key}='{value}'")
 
-        if 'VLLM_WORKDIR' not in (recipe_env or {}):
-            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
-            env_vars.append("export APPTAINERENV_VLLM_WORKDIR='/workspace' || true")
-        if 'HF_HOME' not in (recipe_env or {}):
-            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
-            env_vars.append("export APPTAINERENV_HF_HOME='/workspace/huggingface_cache' || true")
-        if 'VLLM_LOGGING_LEVEL' not in (recipe_env or {}):
-            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
-            env_vars.append("export APPTAINERENV_VLLM_LOGGING_LEVEL='INFO' || true")
-
         return "\n".join(env_vars) if env_vars else "# No environment variables"
 
     def _build_build_block(self, sif_path: str, def_path: str) -> str:
@@ -736,11 +731,22 @@ fi
         """Return the bash block that runs the container with proper binds and flags."""
         # Project workspace binding (use REMOTE path on MeluXina)
         project_ws = str(self.remote_base_path)
+        
+        # Persistent HuggingFace cache path (shared across jobs)
+        hf_cache = f"{project_ws}/huggingface_cache"
+        
         nv_flag = "--nv" if resources.get('gpu') else ""
         return f"""
         echo "Starting container..."
         echo "Running vLLM container (no network binding, unprivileged user)..."
         echo "Binding project workspace: {project_ws} -> /workspace"
+        echo "Binding HF cache: {hf_cache} -> /root/.cache/huggingface"
+
+        # Set persistent HuggingFace cache location
+        # HF_HOME on host (for mkdir), APPTAINERENV_HF_HOME is container-side path
+        export HF_HOME="{hf_cache}"
+        mkdir -p $HF_HOME
+        export APPTAINERENV_HF_HOME="/root/.cache/huggingface"
 
         # Determine apptainer flags (e.g. use --nv when GPUs are requested)
         APPTAINER_FLAGS="{nv_flag}"
@@ -750,7 +756,7 @@ fi
         echo "Environment variables for container:"
         env | grep -E '^VLLM_|^HF_|^CUDA_' || echo "No VLLM/HF/CUDA vars found"
 
-        apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace {sif_path} 2>&1
+        apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace,{hf_cache}:/root/.cache/huggingface {sif_path} 2>&1
         container_exit_code=$?
 
         echo "Container exited with code: $container_exit_code"
@@ -771,6 +777,9 @@ fi
         
         # Project workspace binding (use REMOTE path on MeluXina)
         project_ws = str(self.remote_base_path)
+        
+        # Persistent HuggingFace cache path (shared across jobs and nodes)
+        hf_cache = f"{project_ws}/huggingface_cache"
 
         return f"""
         echo "Starting distributed vLLM container..."
@@ -783,10 +792,11 @@ fi
         export VLLM_GPU_MEMORY_UTILIZATION={gpu_mem}
         export VLLM_TENSOR_PARALLEL_SIZE=$(( SLURM_NNODES * NPROC_PER_NODE ))
 
-        # Use node-local Hugging Face cache (override any previous HF_HOME setting)
-        export HF_HOME="${{SLURM_TMPDIR:-/tmp}}/hf_cache"
-        export APPTAINERENV_HF_HOME="$HF_HOME"
-        mkdir -p $HF_HOME && chmod 1777 $HF_HOME
+        # Use persistent shared HuggingFace cache (survives across jobs, shared by all nodes)
+        # HF_HOME on host (for mkdir), APPTAINERENV_HF_HOME is container-side path
+        export HF_HOME="{hf_cache}"
+        mkdir -p $HF_HOME
+        export APPTAINERENV_HF_HOME="/root/.cache/huggingface"
 
         echo "Launching distributed vLLM:"
         echo "- Nodes: $SLURM_NNODES"
@@ -799,7 +809,7 @@ fi
 
         # Launch vLLM server in background and wait for it
         srun --nodes=$SLURM_NNODES --ntasks=$TOTAL_GPUS --ntasks-per-node=$NPROC_PER_NODE \
-            apptainer exec {nv_flag} --bind {log_dir}:/app/logs,{project_ws}:/workspace {sif_path} bash -lc "\
+            apptainer exec {nv_flag} --bind {log_dir}:/app/logs,{project_ws}:/workspace,{hf_cache}:/root/.cache/huggingface {sif_path} bash -lc "\
                 python3 -m vllm.entrypoints.openai.api_server \
                     --model $VLLM_MODEL \
                     --host 0.0.0.0 \

@@ -194,37 +194,62 @@ class SSHManager:
         Returns:
             True if file was successfully fetched, False otherwise
         """
-        try:
-            # Build SSH command with proper port and key
-            cmd = self.ssh_base_cmd + [
-                self.ssh_target,
-                f"cat {remote_path}"
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode == 0 and result.stdout:
-                # Ensure local directory exists
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-                # Write the fetched content
-                local_path.write_text(result.stdout)
-                self.logger.debug(f"Fetched remote file: {remote_path} -> {local_path}")
-                return True
+        import time
+
+        # Try a few times because remote FS or SSH may be slow to produce the file
+        max_attempts = 3
+        attempt = 0
+        per_attempt_timeout = 30
+
+        while attempt < max_attempts:
+            attempt += 1
+            # First check that the file exists and is non-empty
+            exists = False
+            non_empty = False
+            try:
+                exists, _, _ = self.execute_remote_command(f"test -f {remote_path}", timeout=10)
+                if exists:
+                    non_empty, _, _ = self.execute_remote_command(f"test -s {remote_path}", timeout=10)
+            except Exception:
+                exists = False
+                non_empty = False
+
+            if not exists:
+                self.logger.debug(f"Remote file does not exist yet (attempt {attempt}/{max_attempts}): {remote_path}")
+            elif not non_empty:
+                self.logger.debug(f"Remote file exists but is empty (attempt {attempt}/{max_attempts}): {remote_path}")
             else:
-                self.logger.debug(f"Remote file not found or empty: {remote_path}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout fetching remote file: {remote_path}")
-            return False
-        except Exception as e:
-            self.logger.warning(f"Error fetching remote file {remote_path}: {e}")
-            return False
+                # Safe to fetch
+                try:
+                    cmd = self.ssh_base_cmd + [self.ssh_target, f"cat {remote_path}"]
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=per_attempt_timeout
+                    )
+
+                    if result.returncode == 0 and result.stdout:
+                        local_path.parent.mkdir(parents=True, exist_ok=True)
+                        local_path.write_text(result.stdout)
+                        self.logger.debug(f"Fetched remote file: {remote_path} -> {local_path}")
+                        return True
+                    else:
+                        self.logger.debug(f"Failed to cat remote file (attempt {attempt}): {remote_path} -- rc={result.returncode}")
+
+                except subprocess.TimeoutExpired:
+                    self.logger.warning(f"Timeout fetching remote file (attempt {attempt}): {remote_path}")
+                except Exception as e:
+                    self.logger.warning(f"Error fetching remote file {remote_path} (attempt {attempt}): {e}")
+
+            # Backoff before retrying
+            if attempt < max_attempts:
+                sleep_seconds = 2 ** attempt  # 2,4,8
+                self.logger.debug(f"Waiting {sleep_seconds}s before retrying fetch of {remote_path}")
+                time.sleep(sleep_seconds)
+
+        self.logger.warning(f"Exhausted attempts fetching remote file: {remote_path}")
+        return False
     
     def sync_directory_to_remote(self, local_dir: Path, remote_dir: str, 
                                  exclude_patterns: list = None) -> bool:
@@ -353,10 +378,32 @@ class SSHManager:
         Returns:
             True if successful, False otherwise
         """
-        success, _, stderr = self.execute_remote_command(f"mkdir -p {remote_path}", timeout=10)
-        if not success:
-            self.logger.warning(f"Failed to create remote directory {remote_path}: {stderr}")
-        return success
+        # Run mkdir with retries because remote FS operations can be slow
+        import time
+
+        max_attempts = 3
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            success, _, stderr = self.execute_remote_command(f"mkdir -p {remote_path}", timeout=30)
+            if success:
+                # Double-check directory exists
+                exists = self.check_remote_dir_exists(remote_path)
+                if exists:
+                    self.logger.debug(f"Remote directory ready: {remote_path} (attempt {attempt})")
+                    return True
+                else:
+                    self.logger.debug(f"mkdir returned but dir not visible yet: {remote_path} (attempt {attempt})")
+            else:
+                self.logger.warning(f"Failed to create remote directory {remote_path} (attempt {attempt}): {stderr}")
+
+            if attempt < max_attempts:
+                sleep_seconds = 2 ** attempt
+                self.logger.debug(f"Waiting {sleep_seconds}s before retrying mkdir for {remote_path}")
+                time.sleep(sleep_seconds)
+
+        self.logger.warning(f"Exhausted attempts creating remote directory: {remote_path}")
+        return False
     
     def http_request_via_ssh(self, remote_host: str, remote_port: int, method: str, path: str, 
                              headers: dict = None, json_data: dict = None, timeout: int = 30) -> Tuple[bool, int, str]:

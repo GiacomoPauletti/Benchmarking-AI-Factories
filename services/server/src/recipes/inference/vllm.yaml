@@ -7,10 +7,11 @@ container_def: "vllm.def"
 ports:
   - 8001
 environment:
-  # CUDA_VISIBLE_DEVICES: "0"
   VLLM_HOST: "0.0.0.0"
   VLLM_PORT: "8001"
   VLLM_MODEL: "Qwen/Qwen2.5-0.5B-Instruct"  # Default model, can be overridden in config
+  VLLM_WORKDIR: "/workspace"
+  VLLM_LOGGING_LEVEL: "INFO"
 resources: # Default resources, can be overridden in config
   nodes: "1"
   cpu: "2" #"8"
