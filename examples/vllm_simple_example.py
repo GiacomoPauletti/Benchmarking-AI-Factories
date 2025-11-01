@@ -103,7 +103,7 @@ def main():
             json={
                 "recipe_name": "inference/vllm",
                 "config": {
-                    "nodes": 1,
+                    "nodes": 2,
                     "model": model
                 }
             },

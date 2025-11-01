@@ -6,30 +6,17 @@ From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
     Version nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
 
 %post
-    apt-get update && apt-get install -y \
-        git wget curl vim \
+    apt-get update && apt-get install -y git wget curl vim \
         && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-    # create workspace
-    mkdir -p /workspace
-    # create huggingface cache directory inside workspace and set permissive permissions
-    mkdir -p /workspace/huggingface_cache
+    mkdir -p /workspace /workspace/huggingface_cache /workspace/metrics
     chmod -R 777 /workspace
-    chmod -R 777 /workspace/huggingface_cache
-    # create prometheus metrics directory inside workspace and set permissive permissions
-    export PROMETHEUS_MULTIPROC_DIR=/workspace/metrics
-    mkdir -p /workspace/metrics
-    chmod 777 /workspace/metrics
-
 
 %environment
-    # Setup environment variables
     export PATH=/usr/local/bin:$PATH
     export PYTHONUNBUFFERED=1
     export VLLM_WORKDIR=/workspace
-    # Explicit Hugging Face cache locations
-    export HF_HOME=/workspace/huggingface_cache
-    # Explicit pytorch and vllm cache locations
+    export HF_HOME=$HOME/.cache/huggingface
     export XDG_CACHE_HOME=/workspace/.cache
     export TORCH_COMPILE_CACHE=/workspace/.cache/vllm/torch_compile_cache
 
@@ -38,17 +25,16 @@ From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
     echo "Model: ${VLLM_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
     echo "Endpoint: ${VLLM_HOST:-0.0.0.0}:${VLLM_PORT:-8001}"
     
-    # Build vLLM command
     VLLM_CMD="python3 -m vllm.entrypoints.openai.api_server"
     VLLM_CMD="${VLLM_CMD} --host ${VLLM_HOST:-0.0.0.0}"
     VLLM_CMD="${VLLM_CMD} --port ${VLLM_PORT:-8001}"
     VLLM_CMD="${VLLM_CMD} --model ${VLLM_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
-    
-    # Optional parameters
+
     [ -n "${VLLM_MAX_MODEL_LEN}" ] && VLLM_CMD="${VLLM_CMD} --max-model-len ${VLLM_MAX_MODEL_LEN}"
     [ -n "${VLLM_TENSOR_PARALLEL_SIZE}" ] && VLLM_CMD="${VLLM_CMD} --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE}"
     [ -n "${VLLM_GPU_MEMORY_UTILIZATION}" ] && VLLM_CMD="${VLLM_CMD} --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION}"
-    
+    [ -n "${MASTER_ADDR}" ] && [ -n "${MASTER_PORT}" ] && \
+        VLLM_CMD="${VLLM_CMD} --distributed-init-method tcp://${MASTER_ADDR}:${MASTER_PORT}"
+
     echo "Executing: ${VLLM_CMD}"
     exec ${VLLM_CMD}
-

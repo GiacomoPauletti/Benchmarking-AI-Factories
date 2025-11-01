@@ -112,6 +112,11 @@ class SlurmDeployer:
         remote_log_dir = f"{self.remote_base_path}/logs"
         self.ssh_manager.create_remote_directory(remote_log_dir)
         
+        # Ensure persistent HuggingFace cache directory exists
+        # This allows model weights to persist across jobs and be shared across nodes
+        remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
+        self.ssh_manager.create_remote_directory(remote_hf_cache)
+        
         # Load recipe
         recipe_path = self._find_recipe(recipe_name)
         with open(recipe_path, 'r') as f:
@@ -485,30 +490,37 @@ class SlurmDeployer:
             raise RuntimeError(f"Failed to get job details: {str(e)}")
     
     def _parse_node_list(self, node_list: str) -> List[str]:
-        """Parse SLURM node list format (e.g., 'mel2001,mel2002' or 'mel[2001-2003]')."""
+        """Parse SLURM node list format (e.g., 'mel2001,mel2002' or 'mel[2001-2003]' or 'mel[2001,2002]')."""
         if not node_list:
             return []
         
         nodes = []
         
-        # Handle comma-separated nodes
-        for part in node_list.split(','):
-            part = part.strip()
+        # Check if the entire string uses bracket notation (e.g., "mel[2001,2002]" or "mel[2001-2003]")
+        # Must handle this BEFORE splitting on commas
+        if '[' in node_list and ']' in node_list:
+            # Find the bracket section
+            bracket_start = node_list.index('[')
+            bracket_end = node_list.index(']')
+            prefix = node_list[:bracket_start]
+            range_part = node_list[bracket_start+1:bracket_end]
             
-            # Handle range format like mel[2001-2003]
-            if '[' in part and ']' in part:
-                prefix = part.split('[')[0]
-                range_part = part.split('[')[1].split(']')[0]
-                
-                if '-' in range_part:
-                    start, end = map(int, range_part.split('-'))
-                    for i in range(start, end + 1):
-                        nodes.append(f"{prefix}{i:04d}")
-                else:
-                    nodes.append(f"{prefix}{range_part}")
+            # Check if it's a range (e.g., "2001-2003") or comma-separated list (e.g., "2001,2002")
+            if '-' in range_part and ',' not in range_part:
+                # Range format: mel[2001-2003]
+                start, end = map(int, range_part.split('-'))
+                for i in range(start, end + 1):
+                    nodes.append(f"{prefix}{i}")
             else:
-                # Simple node name
-                nodes.append(part)
+                # Comma-separated list inside brackets: mel[2001,2002,2003]
+                for num in range_part.split(','):
+                    nodes.append(f"{prefix}{num.strip()}")
+        else:
+            # Handle simple comma-separated nodes without brackets
+            for part in node_list.split(','):
+                part = part.strip()
+                if part:
+                    nodes.append(part)
         
         return nodes
     
@@ -535,6 +547,12 @@ class SlurmDeployer:
         resources = recipe.get("resources", {}).copy()
         if "resources" in config:
             resources.update(config["resources"])
+        
+        # Also handle top-level resource specifications (for backward compatibility)
+        # Top-level keys like 'nodes', 'cpu', 'memory', 'gpu', 'time_limit' can override resources
+        for key in ['nodes', 'cpu', 'memory', 'gpu', 'time_limit']:
+            if key in config:
+                resources[key] = config[key]
         
         # Determine time_limit (in minutes) from merged resources using utility
         time_limit_minutes = parse_time_limit(resources.get("time_limit"))
@@ -603,7 +621,18 @@ class SlurmDeployer:
         log_dir = str(Path(self.remote_base_path) / "logs")
 
         build_block = self._build_build_block(sif_path, def_path)
-        run_block = self._build_run_block(sif_path, log_dir, resources)
+        # Support recipe-specific distributed launch configuration
+        # If the recipe declares a `distributed` section (truthy), generate
+        # a distributed run block (srun + torchrun inside Apptainer). Otherwise
+        # fall back to the existing single-node run block.
+        distributed_cfg = None
+        if isinstance(recipe, dict) and recipe.get('distributed'):
+            distributed_cfg = recipe.get('distributed')
+
+        if distributed_cfg:
+            run_block = self._build_distributed_run_block(sif_path, log_dir, resources, distributed_cfg)
+        else:
+            run_block = self._build_run_block(sif_path, log_dir, resources)
 
         script = f"""#!/bin/bash -l
 
@@ -663,16 +692,6 @@ exit $container_exit_code
             else:
                 env_vars.append(f"export APPTAINERENV_{key}='{value}'")
 
-        if 'VLLM_WORKDIR' not in (recipe_env or {}):
-            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
-            env_vars.append("export APPTAINERENV_VLLM_WORKDIR='/workspace' || true")
-        if 'HF_HOME' not in (recipe_env or {}):
-            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
-            env_vars.append("export APPTAINERENV_HF_HOME='/workspace/huggingface_cache' || true")
-        if 'VLLM_LOGGING_LEVEL' not in (recipe_env or {}):
-            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
-            env_vars.append("export APPTAINERENV_VLLM_LOGGING_LEVEL='INFO' || true")
-
         return "\n".join(env_vars) if env_vars else "# No environment variables"
 
     def _build_build_block(self, sif_path: str, def_path: str) -> str:
@@ -712,29 +731,107 @@ fi
         """Return the bash block that runs the container with proper binds and flags."""
         # Project workspace binding (use REMOTE path on MeluXina)
         project_ws = str(self.remote_base_path)
+        
+        # Persistent HuggingFace cache path (shared across jobs)
+        hf_cache = f"{project_ws}/huggingface_cache"
+        
         nv_flag = "--nv" if resources.get('gpu') else ""
         return f"""
-echo "Starting container..."
-echo "Running vLLM container (no network binding, unprivileged user)..."
-echo "Binding project workspace: {project_ws} -> /workspace"
+        echo "Starting container..."
+        echo "Running vLLM container (no network binding, unprivileged user)..."
+        echo "Binding project workspace: {project_ws} -> /workspace"
+        echo "Binding HF cache: {hf_cache} -> /root/.cache/huggingface"
 
-# Determine apptainer flags (e.g. use --nv when GPUs are requested)
-APPTAINER_FLAGS="{nv_flag}"
-echo "Apptainer flags: $APPTAINER_FLAGS"
+        # Set persistent HuggingFace cache location
+        # HF_HOME on host (for mkdir), APPTAINERENV_HF_HOME is container-side path
+        export HF_HOME="{hf_cache}"
+        mkdir -p $HF_HOME
+        export APPTAINERENV_HF_HOME="/root/.cache/huggingface"
 
-# Debug: Print environment variables that should be passed to container
-echo "Environment variables for container:"
-env | grep -E '^VLLM_|^HF_|^CUDA_' || echo "No VLLM/HF/CUDA vars found"
+        # Determine apptainer flags (e.g. use --nv when GPUs are requested)
+        APPTAINER_FLAGS="{nv_flag}"
+        echo "Apptainer flags: $APPTAINER_FLAGS"
 
-apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace {sif_path} 2>&1
-container_exit_code=$?
+        # Debug: Print environment variables that should be passed to container
+        echo "Environment variables for container:"
+        env | grep -E '^VLLM_|^HF_|^CUDA_' || echo "No VLLM/HF/CUDA vars found"
 
-echo "Container exited with code: $container_exit_code"
-if [ $container_exit_code -ne 0 ]; then
-    echo "ERROR: Container failed to run properly"
-fi
-"""
+        apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace,{hf_cache}:/root/.cache/huggingface {sif_path} 2>&1
+        container_exit_code=$?
+
+        echo "Container exited with code: $container_exit_code"
+        if [ $container_exit_code -ne 0 ]; then
+        echo "ERROR: Container failed to run properly"
+        fi
+        """
     
+    def _build_distributed_run_block(self, sif_path: str, log_dir: str, resources: Dict[str, Any], distributed_cfg: Dict[str, Any]) -> str:
+        """Return a bash block to launch vLLM across multiple nodes using srun + Apptainer."""
+    
+        nv_flag = "--nv" if resources.get("gpu") else ""
+        nproc_per_node = int(distributed_cfg.get("nproc_per_node", 1))
+        master_port = distributed_cfg.get("master_port", 29500)
+        model = distributed_cfg.get("model", "Qwen/Qwen2.5-0.5B-Instruct")
+        max_len = distributed_cfg.get("max_model_len", 4096)
+        gpu_mem = distributed_cfg.get("gpu_memory_utilization", 0.9)
+        
+        # Project workspace binding (use REMOTE path on MeluXina)
+        project_ws = str(self.remote_base_path)
+        
+        # Persistent HuggingFace cache path (shared across jobs and nodes)
+        hf_cache = f"{project_ws}/huggingface_cache"
+
+        return f"""
+        echo "Starting distributed vLLM container..."
+        MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
+        export MASTER_ADDR
+        export MASTER_PORT={master_port}
+        export NPROC_PER_NODE={nproc_per_node}
+        export VLLM_MODEL={model}
+        export VLLM_MAX_MODEL_LEN={max_len}
+        export VLLM_GPU_MEMORY_UTILIZATION={gpu_mem}
+        export VLLM_TENSOR_PARALLEL_SIZE=$(( SLURM_NNODES * NPROC_PER_NODE ))
+
+        # Use persistent shared HuggingFace cache (survives across jobs, shared by all nodes)
+        # HF_HOME on host (for mkdir), APPTAINERENV_HF_HOME is container-side path
+        export HF_HOME="{hf_cache}"
+        mkdir -p $HF_HOME
+        export APPTAINERENV_HF_HOME="/root/.cache/huggingface"
+
+        echo "Launching distributed vLLM:"
+        echo "- Nodes: $SLURM_NNODES"
+        echo "- GPUs per node: $NPROC_PER_NODE"
+        echo "- Total tensor parallel size: $VLLM_TENSOR_PARALLEL_SIZE"
+        echo "- Master node: $MASTER_ADDR:$MASTER_PORT"
+        echo "- HF_HOME: $HF_HOME"
+
+        TOTAL_GPUS=$(( SLURM_NNODES * NPROC_PER_NODE ))
+
+        # Launch vLLM server in background and wait for it
+        srun --nodes=$SLURM_NNODES --ntasks=$TOTAL_GPUS --ntasks-per-node=$NPROC_PER_NODE \
+            apptainer exec {nv_flag} --bind {log_dir}:/app/logs,{project_ws}:/workspace,{hf_cache}:/root/.cache/huggingface {sif_path} bash -lc "\
+                python3 -m vllm.entrypoints.openai.api_server \
+                    --model $VLLM_MODEL \
+                    --host 0.0.0.0 \
+                    --port 8001 \
+                    --tensor-parallel-size $TOTAL_GPUS \
+                    --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
+            " &
+
+        VLLM_PID=$!
+        
+        echo "vLLM server started with PID: $VLLM_PID"
+        echo "Server will run until job is cancelled or time limit is reached"
+        
+        # Wait for the background process
+        wait $VLLM_PID
+        container_exit_code=$?
+
+        echo "Distributed vLLM job exited with code: $container_exit_code"
+        [ $container_exit_code -ne 0 ] && echo "ERROR: Distributed container run failed"
+        """
+
+
     def _format_environment(self, env_dict: Dict[str, str]) -> List[str]:
         """Format environment variables as array of KEY=VALUE strings"""
         env_list = [
@@ -743,5 +840,7 @@ fi
         for key, value in env_dict.items():
             env_list.append(f"{key}={value}")
         return env_list
+
+        
     
     
