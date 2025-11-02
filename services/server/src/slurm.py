@@ -9,11 +9,12 @@ import json
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from utils import parse_time_limit
 from datetime import datetime
 from ssh_manager import SSHManager
 from recipe_builders import BuilderRegistry, ScriptPaths
+from job_cache_manager import JobCacheManager
 
 
 class SlurmDeployer:
@@ -26,6 +27,9 @@ class SlurmDeployer:
     def __init__(self, account: str = "p200981"):
         self.logger = logging.getLogger(__name__)
         self.account = account
+        
+        # Initialize job cache manager
+        self.cache_manager = JobCacheManager(cache_ttl=25, update_interval=6)
         
         # Initialize SSH manager for all remote operations
         self.ssh_manager = SSHManager()
@@ -101,6 +105,21 @@ class SlurmDeployer:
                 self._state_map = {}
         except Exception:
             self._state_map = {}
+        
+        # Set up cache manager callbacks and start background updates
+        self.cache_manager.set_fetch_callbacks(
+            fetch_status=self._fetch_status_uncached,
+            fetch_logs=self._fetch_job_logs_uncached,
+            fetch_details=self._fetch_job_details_uncached
+        )
+        self.cache_manager.start_background_updates()
+    
+    def __del__(self):
+        """Clean up background threads on deletion."""
+        try:
+            self.cache_manager.stop_background_updates()
+        except Exception:
+            pass
     
     def submit_job(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Submit a job to SLURM cluster using recipe configuration via REST API.
@@ -153,6 +172,9 @@ class SlurmDeployer:
         if job_id == 0:
             raise RuntimeError(f"SLURM job submission failed: received job_id=0. Response: {result}")
         
+        # Track this job for background updates
+        self.cache_manager.track_job(str(job_id))
+        
         return {
             "id": str(job_id),  # Use SLURM job ID directly as service ID
             "name": f"{recipe['name']}-{job_id}",
@@ -170,18 +192,35 @@ class SlurmDeployer:
                 headers=self.headers
             )
             response.raise_for_status()
+            
+            # Stop tracking this job
+            self.cache_manager.untrack_job(str(job_id))
+            
             return True
         except:
             return False
     
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get statistics about the caching system for debugging."""
+        return self.cache_manager.get_stats()
+    
     def get_job_status(self, job_id: str) -> str:
         """Get the status of a SLURM job by job ID via REST API.
+        
+        Uses cached status if available and fresh, otherwise fetches and caches.
         
         Args:
             job_id: The SLURM job ID
             
         Returns:
             Slurm Status string: 'pending', 'running', 'completed', 'failed', etc.
+        """
+        return self.cache_manager.get_status(str(job_id))
+    
+    def _fetch_status_uncached(self, job_id: str) -> str:
+        """Fetch status from SLURM API without using cache.
+        
+        This is used as a callback by the cache manager.
         """
         try:
             response = requests.get(
@@ -201,14 +240,14 @@ class SlurmDeployer:
                         status = job_state.lower()
                     else:
                         status = str(job_state).lower()
-                    basic_status = self._normalize_slurm_state(status)
-                    
-                    return basic_status
-
+                    return self._normalize_slurm_state(status)
+            
+            # Job not found - mark as completed
             return "completed"
-
+            
         except Exception as e:
-            raise RuntimeError(f"Failed to get job status from SLURM API: {str(e)}")
+            self.logger.warning(f"Failed to fetch status for job {job_id}: {e}")
+            return "unknown"
     
     def get_detailed_status_from_logs(self, job_id: str, ready_indicators: List[str] = None, 
                                        starting_indicators: List[str] = None) -> str:
@@ -225,6 +264,11 @@ class SlurmDeployer:
         Returns:
             One of: 'building', 'starting', 'running', 'completed'
         """
+        job_id = str(job_id)
+        
+        # Ensure this job is being tracked for background updates
+        self.cache_manager.track_job(job_id)
+        
         # Default indicators for backward compatibility (vLLM-specific)
         if ready_indicators is None:
             ready_indicators = ['Application startup complete', 'Uvicorn running on']
@@ -239,6 +283,8 @@ class SlurmDeployer:
         
         # Check if container exited
         if 'Container exited' in logs:
+            # Job completed - stop tracking it
+            self.cache_manager.untrack_job(job_id)
             return 'completed'
         
         # Check for building phase
@@ -364,6 +410,13 @@ class SlurmDeployer:
         return self.ssh_manager.fetch_remote_file(remote_path, local_path)
 
     def get_job_logs(self, job_id: str) -> str:
+        """Get logs from SLURM job.
+        
+        Uses cached logs if available and fresh, otherwise fetches from remote.
+        """
+        return self.cache_manager.get_logs(str(job_id))
+    
+    def _fetch_job_logs_uncached(self, job_id: str) -> str:
         """Get logs from SLURM job, fetching from remote if needed."""
         try:
             # Use local path for cached logs
@@ -420,6 +473,13 @@ class SlurmDeployer:
             return f"Error retrieving logs for job {job_id}: {str(e)}"
     
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
+        """Get detailed information about a SLURM job including allocated nodes.
+        
+        Uses cached details if available and fresh, otherwise fetches from SLURM API.
+        """
+        return self.cache_manager.get_details(str(job_id))
+    
+    def _fetch_job_details_uncached(self, job_id: str) -> Dict[str, Any]:
         """Get detailed information about a SLURM job including allocated nodes via REST API."""
         try:
             response = requests.get(

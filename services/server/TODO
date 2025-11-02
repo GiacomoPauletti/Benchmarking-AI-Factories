@@ -3,6 +3,7 @@ DOCS:
 MAIN:
 - SSHManager class to global utils?
 - Do SSH agent thing Xavier 
+- Get available models from HF API or without it.
 
 Optional:
 - Create fastembed functionality in qdrant. Use it for RAGs.

@@ -103,11 +103,11 @@ def main():
             json={
                 "recipe_name": "inference/vllm",
                 "config": {
-                    "nodes": 2,
+                    "nodes": 2,  
                     "model": model
                 }
             },
-            timeout=30
+            timeout=60
         )
         
         if response.status_code != 200:
@@ -133,7 +133,7 @@ def main():
                 "max_tokens": 100,
                 "temperature": 0.7
             },
-            timeout=60
+            timeout=120
         )
         
         if response.status_code != 200:
