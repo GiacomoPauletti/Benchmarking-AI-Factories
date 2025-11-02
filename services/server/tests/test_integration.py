@@ -855,7 +855,7 @@ class TestVectorDbDocumentSearch:
                 "distance": "Cosine"  # Use cosine similarity
             },
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert create_collection_response.status_code == 200, \
@@ -866,7 +866,7 @@ class TestVectorDbDocumentSearch:
         print("\n=== Step 4: Verifying Collection ===")
         collections_response = requests.get(
             f"{server_endpoint}/api/v1/vector-db/{service_id}/collections",
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert collections_response.status_code == 200
@@ -894,7 +894,7 @@ class TestVectorDbDocumentSearch:
             f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{collection_name}/points",
             json={"points": points},
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert upsert_response.status_code == 200, \
@@ -907,7 +907,7 @@ class TestVectorDbDocumentSearch:
         print("\n=== Step 6: Verifying Collection Info ===")
         info_response = requests.get(
             f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{collection_name}",
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert info_response.status_code == 200
@@ -927,7 +927,7 @@ class TestVectorDbDocumentSearch:
                     "limit": 3
                 },
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=120  # Increased for SLURM operations
             )
             
             assert search_response.status_code == 200, \
@@ -963,7 +963,7 @@ class TestVectorDbDocumentSearch:
                     "limit": limit
                 },
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=120  # Increased for SLURM operations
             )
             
             assert search_response.status_code == 200
@@ -984,7 +984,7 @@ class TestVectorDbDocumentSearch:
                 "distance": "Euclid"
             },
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert create_euclidean_response.status_code == 200
@@ -995,7 +995,7 @@ class TestVectorDbDocumentSearch:
             f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{euclidean_collection}/points",
             json={"points": points},
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert upsert_euclidean_response.status_code == 200
@@ -1009,7 +1009,7 @@ class TestVectorDbDocumentSearch:
                 "limit": 2
             },
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert search_euclidean_response.status_code == 200
@@ -1022,7 +1022,7 @@ class TestVectorDbDocumentSearch:
         for coll in [collection_name, euclidean_collection]:
             delete_response = requests.delete(
                 f"{server_endpoint}/api/v1/vector-db/{service_id}/collections/{coll}",
-                timeout=10
+                timeout=120  # Increased for SLURM operations
             )
             
             assert delete_response.status_code == 200, \
@@ -1032,7 +1032,7 @@ class TestVectorDbDocumentSearch:
         # Verify collections were deleted
         final_collections_response = requests.get(
             f"{server_endpoint}/api/v1/vector-db/{service_id}/collections",
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert final_collections_response.status_code == 200
@@ -1045,7 +1045,7 @@ class TestVectorDbDocumentSearch:
         print("\n=== Step 11: Stopping Service ===")
         stop_response = requests.delete(
             f"{server_endpoint}/api/v1/services/{service_id}",
-            timeout=10
+            timeout=120  # Increased for SLURM operations
         )
         
         assert stop_response.status_code in [200, 404]
