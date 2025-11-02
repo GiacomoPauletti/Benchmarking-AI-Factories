@@ -1,9 +1,9 @@
 Bootstrap: docker
-From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
+From: vllm/vllm-openai:latest
 
 %labels
     Description "Apptainer container for vLLM OpenAI-compatible API"
-    Version nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
+    Version latest
 
 %post
     apt-get update && apt-get install -y git wget curl vim \
@@ -19,6 +19,9 @@ From: vllm/vllm-openai:nightly-da4455609d9e29abebc15f6c598dfd772c2b6513
     export HF_HOME=$HOME/.cache/huggingface
     export XDG_CACHE_HOME=/workspace/.cache
     export TORCH_COMPILE_CACHE=/workspace/.cache/vllm/torch_compile_cache
+    # Prevent Ray from trying to cleanup (it's not needed with external_launcher)
+    export RAY_DEDUP_LOGS=0
+    export RAY_IGNORE_UNHANDLED_ERRORS=1
 
 %runscript
     echo "Starting vLLM OpenAI-compatible API..."
