@@ -22,14 +22,16 @@ class SSHManager:
     - Auto-fetching SLURM JWT tokens
     """
     
-    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None, ssh_key_path: str = None):
+    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None):
         """Initialize SSH manager with connection details.
+        
+        Authentication is handled via SSH agent forwarding (SSH_AUTH_SOCK).
+        No raw SSH keys are exposed to the container.
         
         Args:
             ssh_host: SSH hostname (e.g., 'login.lxp.lu')
             ssh_user: Username for SSH connection
             ssh_port: SSH port (default: 22, MeluXina uses 8822)
-            ssh_key_path: Path to SSH private key (optional)
         """
         self.logger = logging.getLogger(__name__)
         
@@ -37,25 +39,31 @@ class SSHManager:
         self.ssh_host = ssh_host or os.getenv('SSH_HOST')
         self.ssh_user = ssh_user or os.getenv('SSH_USER')
         self.ssh_port = ssh_port or int(os.getenv('SSH_PORT', '22'))
-        self.ssh_key_path = ssh_key_path or os.getenv('SSH_KEY_PATH')
         
         if not self.ssh_user:
             raise ValueError("SSH_USER must be set. Check your .env.local file.")
         if not self.ssh_host:
             raise ValueError("SSH_HOST must be set. Check your .env.local file.")
         
+        # Verify SSH agent is available
+        ssh_auth_sock = os.getenv('SSH_AUTH_SOCK')
+        if not ssh_auth_sock:
+            self.logger.warning("SSH_AUTH_SOCK not set. SSH agent forwarding may not work.")
+        
         # Build SSH target and base command
         self.ssh_target = f"{self.ssh_user}@{self.ssh_host}"
         
-        # Build base SSH command with port and optional key
+        # Build base SSH command with port (authentication via SSH agent)
         self.ssh_base_cmd = ["ssh"]
         if self.ssh_port != 22:
             self.ssh_base_cmd.extend(["-p", str(self.ssh_port)])
-        if self.ssh_key_path:
-            expanded_key = os.path.expanduser(self.ssh_key_path)
-            self.ssh_base_cmd.extend(["-i", expanded_key])
         
-        self.logger.info(f"SSH Manager initialized for {self.ssh_target}:{self.ssh_port}")
+        # Disable host key checking for container environments
+        # In production, consider mounting known_hosts or using accept-new
+        self.ssh_base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
+        self.ssh_base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
+        
+        self.logger.info(f"SSH Manager initialized for {self.ssh_target}:{self.ssh_port} (using SSH agent)")
     
     def get_slurm_token(self) -> str:
         """Fetch a fresh SLURM JWT token from MeluXina.
@@ -139,11 +147,15 @@ class SSHManager:
             
             self.logger.debug(f"Creating SSH tunnel: {' '.join(ssh_command)}")
             
+            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+            env = os.environ.copy()
+            
             result = subprocess.run(
                 ssh_command,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=env
             )
             
             if result.returncode != 0:
@@ -222,11 +234,16 @@ class SSHManager:
                 # Safe to fetch
                 try:
                     cmd = self.ssh_base_cmd + [self.ssh_target, f"cat {remote_path}"]
+                    
+                    # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+                    env = os.environ.copy()
+                    
                     result = subprocess.run(
                         cmd,
                         capture_output=True,
                         text=True,
-                        timeout=per_attempt_timeout
+                        timeout=per_attempt_timeout,
+                        env=env
                     )
 
                     if result.returncode == 0 and result.stdout:
@@ -270,14 +287,16 @@ class SSHManager:
         try:
             # Ensure remote directory exists using proper SSH command
             mkdir_cmd = self.ssh_base_cmd + [self.ssh_target, f"mkdir -p {remote_dir}"]
-            subprocess.run(mkdir_cmd, check=True, capture_output=True, timeout=10)
             
-            # Build SSH command for rsync
+            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+            env = os.environ.copy()
+            
+            subprocess.run(mkdir_cmd, check=True, capture_output=True, timeout=10, env=env)
+            
+            # Build SSH command for rsync (no -i flag needed with SSH agent)
             rsync_ssh_cmd = "ssh"
             if self.ssh_port != 22:
                 rsync_ssh_cmd += f" -p {self.ssh_port}"
-            if self.ssh_key_path:
-                rsync_ssh_cmd += f" -i {os.path.expanduser(self.ssh_key_path)}"
             
             # Build rsync command
             rsync_cmd = ["rsync", "-az", "--delete", "-e", rsync_ssh_cmd]
@@ -297,7 +316,8 @@ class SSHManager:
                 rsync_cmd, 
                 capture_output=True, 
                 text=True, 
-                timeout=60
+                timeout=60,
+                env=env
             )
             
             if result.returncode == 0:
@@ -327,11 +347,15 @@ class SSHManager:
         try:
             cmd = self.ssh_base_cmd + [self.ssh_target, command]
             
+            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+            env = os.environ.copy()
+            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=env
             )
             
             success = result.returncode == 0

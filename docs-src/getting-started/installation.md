@@ -33,9 +33,8 @@ cp .env.example .env
 
 Required environment variables:
 - `SSH_HOST` - MeluXina hostname
-- `SSH_PORT` - SSH port (typically 22)
+- `SSH_PORT` - SSH port (typically 8822)
 - `SSH_USER` - Your MeluXina username
-- `SSH_KEY_PATH` - Path to your SSH private key
 - `REMOTE_BASE_PATH` - Working directory on MeluXina
 
 Example:
@@ -43,16 +42,43 @@ Example:
 SSH_HOST=login.lxp.lu              # MeluXina login node
 SSH_PORT=8822                       # MeluXina SSH port
 SSH_USER=u123456                    # Your MeluXina username
-SSH_KEY_PATH=~/.ssh/id_ed25519     # Path to your SSH key
 REMOTE_BASE_PATH=/project/home/p200981/u123456/path/to/temp/generated/files
 ```
 
-The Dockerfile automatically:
-    1. Copies your SSH key into the container
-    2. Sets correct permissions (600)
-    3. Configures SSH client for MeluXina
+### 3. Configure SSH Agent
 
-### 3. Start the Microservice
+The framework uses **SSH agent forwarding** for secure authentication without exposing private keys to containers.
+
+!!! info "SSH Agent Security"
+    SSH agent forwarding is more secure than mounting raw SSH keys because:
+    
+    - Private keys never enter the container filesystem
+    - Authentication happens via the agent on your host machine
+    - Supports multiple keys and respects your `~/.ssh/config`
+    - Follows the principle of least privilege
+
+**Ensure your SSH agent is running:**
+
+```bash
+# Check if SSH agent is running
+echo $SSH_AUTH_SOCK
+
+# If empty, start the agent (usually automatic on desktop environments)
+eval "$(ssh-agent -s)"
+
+# Add your MeluXina SSH key to the agent
+ssh-add ~/.ssh/id_ed25519  # Or your key file
+
+# Verify key is loaded
+ssh-add -l
+```
+
+!!! tip "Desktop Environments"
+    Most Linux desktop environments (GNOME, KDE, etc.) automatically start an SSH agent. You typically only need to run `ssh-add` once after login.
+
+The Docker containers will use the `SSH_AUTH_SOCK` environment variable to communicate with your host's SSH agent.
+
+### 4. Start the Microservice
 
 TODO: Later, this will be replaced by the actual app using the microservices.
 

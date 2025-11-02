@@ -11,10 +11,10 @@ services:
       - ./services/server/src:/app/src
       - ./services/server/logs:/app/logs
       - ./services/server/huggingface_cache:/app/huggingface_cache
-      # Mount SSH keys for MeluXina access
-      - ~/.ssh:/tmp/host-ssh:ro
       # Mount .server-endpoint file location
       - ./services/server/.server-endpoint:/app/services/server/.server-endpoint
+      # Mount SSH agent socket for secure authentication (no raw keys exposed)
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
       # Real SSH Configuration for MeluXina
       - SSH_HOST=${SSH_HOST}
@@ -22,6 +22,7 @@ services:
       - SSH_USER=${SSH_USER}
       - SSH_KEY_PATH=${SSH_KEY_PATH}
       - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
@@ -29,15 +30,6 @@ services:
       - .env
     command: >
       bash -c "
-      if [ -d /tmp/host-ssh ]; then
-        echo 'Setting up SSH keys...';
-        cp /tmp/host-ssh/id_* /root/.ssh/ 2>/dev/null || true;
-        cp /tmp/host-ssh/known_hosts /root/.ssh/ 2>/dev/null || true;
-        chmod 700 /root/.ssh;
-        chmod 600 /root/.ssh/id_* 2>/dev/null || true;
-        chmod 644 /root/.ssh/*.pub 2>/dev/null || true;
-        echo 'SSH keys ready';
-      fi &&
       mkdir -p /app/services/server &&
       echo 'http://localhost:8001' > /app/services/server/.server-endpoint &&
       uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
