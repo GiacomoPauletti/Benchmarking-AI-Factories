@@ -539,6 +539,187 @@ class TestAPIEndpoints:
         assert call_args.kwargs["recipe_name"] == "inference/vllm"
         assert call_args.kwargs["config"]["environment"]["VLLM_MODEL"] == "gpt2"
         assert call_args.kwargs["config"]["resources"]["cpu"] == "8"
+    
+    def test_get_available_vllm_models_endpoint(self, client):
+        """
+        Test getting vLLM architecture info and example models.
+        """
+        response = client.get("/api/v1/vllm/available-models")
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Check structure
+        assert "model_source" in data
+        assert "supported_architectures" in data
+        assert "examples" in data
+        assert "how_to_find_models" in data
+        assert "resource_guidelines" in data
+        
+        # Check content
+        assert "HuggingFace Hub" in data["model_source"]
+        assert "text-generation" in data["supported_architectures"]
+        assert len(data["supported_architectures"]["text-generation"]) > 0
+        assert "LlamaForCausalLM" in data["supported_architectures"]["text-generation"]
+        assert "gpt2" in data["examples"].values() or any("gpt2" in str(v) for v in data["examples"].values())
+    
+    @patch('api.routes.search_hf_models')
+    def test_search_vllm_models_endpoint(self, mock_search, client):
+        """
+        Test searching HuggingFace models compatible with vLLM.
+        """
+        mock_search.return_value = [
+            {
+                "id": "Qwen/Qwen2.5-7B-Instruct",
+                "downloads": 500000,
+                "likes": 1500,
+                "architecture": "Qwen2ForCausalLM",
+                "vllm_compatible": True,
+                "created_at": "2024-09-15T12:00:00",
+                "tags": ["text-generation", "qwen2", "instruct"]
+            },
+            {
+                "id": "Qwen/Qwen2.5-3B-Instruct",
+                "downloads": 300000,
+                "likes": 900,
+                "architecture": "Qwen2ForCausalLM",
+                "vllm_compatible": True,
+                "created_at": "2024-09-15T12:00:00",
+                "tags": ["text-generation", "qwen2", "instruct"]
+            }
+        ]
+        
+        response = client.get("/api/v1/vllm/search-models?query=qwen&limit=20")
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert "models" in data
+        assert "total" in data
+        assert data["total"] == 2
+        assert len(data["models"]) == 2
+        assert data["models"][0]["id"] == "Qwen/Qwen2.5-7B-Instruct"
+        assert data["models"][0]["vllm_compatible"] is True
+        assert data["models"][0]["architecture"] == "Qwen2ForCausalLM"
+        
+        # Verify the search was called with correct parameters
+        mock_search.assert_called_once_with(
+            query="qwen",
+            architecture=None,
+            limit=20,
+            sort_by="downloads"
+        )
+    
+    @patch('api.routes.search_hf_models')
+    def test_search_vllm_models_with_architecture_filter(self, mock_search, client):
+        """
+        Test searching models with architecture filter.
+        """
+        mock_search.return_value = [
+            {
+                "id": "meta-llama/Llama-2-7b-hf",
+                "downloads": 2000000,
+                "likes": 5000,
+                "architecture": "LlamaForCausalLM",
+                "vllm_compatible": True,
+                "created_at": "2023-07-18T12:00:00",
+                "tags": ["llama", "text-generation"]
+            }
+        ]
+        
+        response = client.get("/api/v1/vllm/search-models?architecture=LlamaForCausalLM&limit=10")
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data["total"] == 1
+        assert data["models"][0]["architecture"] == "LlamaForCausalLM"
+        
+        mock_search.assert_called_once_with(
+            query=None,
+            architecture="LlamaForCausalLM",
+            limit=10,
+            sort_by="downloads"
+        )
+    
+    @patch('api.routes.search_hf_models')
+    def test_search_vllm_models_hf_not_installed(self, mock_search, client):
+        """
+        Test search endpoint when huggingface_hub is not installed.
+        """
+        mock_search.side_effect = RuntimeError("huggingface_hub package not installed. Install it with: pip install huggingface-hub")
+        
+        response = client.get("/api/v1/vllm/search-models?query=test")
+        assert response.status_code == 503
+        assert "huggingface_hub" in response.json()["detail"]
+    
+    @patch('api.routes.get_hf_model_info')
+    def test_get_vllm_model_info_endpoint(self, mock_get_info, client):
+        """
+        Test getting detailed info about a specific model.
+        """
+        mock_get_info.return_value = {
+            "id": "Qwen/Qwen2.5-3B-Instruct",
+            "architecture": "Qwen2ForCausalLM",
+            "vllm_compatible": True,
+            "task_type": "text-generation",
+            "downloads": 300000,
+            "likes": 900,
+            "tags": ["text-generation", "qwen2", "instruct"],
+            "size_bytes": 6442450944,
+            "size_gb": 6.0,
+            "pipeline_tag": "text-generation",
+            "library_name": "transformers"
+        }
+        
+        response = client.get("/api/v1/vllm/model-info/Qwen/Qwen2.5-3B-Instruct")
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data["id"] == "Qwen/Qwen2.5-3B-Instruct"
+        assert data["architecture"] == "Qwen2ForCausalLM"
+        assert data["vllm_compatible"] is True
+        assert data["task_type"] == "text-generation"
+        assert data["size_gb"] == 6.0
+        
+        mock_get_info.assert_called_once_with("Qwen/Qwen2.5-3B-Instruct")
+    
+    @patch('api.routes.get_hf_model_info')
+    def test_get_vllm_model_info_not_found(self, mock_get_info, client):
+        """
+        Test getting info for non-existent model.
+        """
+        mock_get_info.side_effect = Exception("Model not found")
+        
+        response = client.get("/api/v1/vllm/model-info/nonexistent/model")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+    
+    @patch('api.routes.get_hf_model_info')
+    def test_get_vllm_model_info_with_slashes(self, mock_get_info, client):
+        """
+        Test model info endpoint handles model IDs with slashes correctly.
+        """
+        mock_get_info.return_value = {
+            "id": "meta-llama/Llama-2-7b-chat-hf",
+            "architecture": "LlamaForCausalLM",
+            "vllm_compatible": True,
+            "task_type": "text-generation",
+            "downloads": 2000000,
+            "likes": 5000,
+            "tags": ["llama", "chat", "conversational"],
+            "size_bytes": 13476929536,
+            "size_gb": 12.56,
+            "pipeline_tag": "text-generation",
+            "library_name": "transformers"
+        }
+        
+        response = client.get("/api/v1/vllm/model-info/meta-llama/Llama-2-7b-chat-hf")
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data["id"] == "meta-llama/Llama-2-7b-chat-hf"
+        assert data["vllm_compatible"] is True
+        
+        # Verify the full path with slashes was passed correctly
+        mock_get_info.assert_called_once_with("meta-llama/Llama-2-7b-chat-hf")
 
 
 class TestVLLMServiceLogic:

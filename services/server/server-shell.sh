@@ -290,6 +290,39 @@ interactive_mode() {
                         "list")
                             api_call "GET" "/api/v1/vllm/services"
                             ;;
+                        "available-models")
+                            # Query server for vLLM architecture info / examples
+                            api_call "GET" "/api/v1/vllm/available-models"
+                            ;;
+                        "search-models")
+                            # Usage: vllm search-models [query] [architecture] [limit]
+                            # Build URL with optional query parameters (skip empty strings)
+                            url="/api/v1/vllm/search-models"
+                            params=""
+                            if [ -n "$2" ] && [ "$2" != '""' ] && [ "$2" != "''" ]; then
+                                params="${params}query=$2"
+                            fi
+                            if [ -n "$3" ] && [ "$3" != '""' ] && [ "$3" != "''" ]; then
+                                [ -n "$params" ] && params="${params}&"
+                                params="${params}architecture=$3"
+                            fi
+                            if [ -n "$4" ] && [ "$4" != '""' ] && [ "$4" != "''" ]; then
+                                [ -n "$params" ] && params="${params}&"
+                                params="${params}limit=$4"
+                            fi
+                            if [ -n "$params" ]; then
+                                url="${url}?${params}"
+                            fi
+                            api_call "GET" "$url"
+                            ;;
+                        "model-info")
+                            if [ -z "$2" ]; then
+                                echo "Usage: vllm model-info <model_id>"
+                            else
+                                # model id may contain slashes, pass as path
+                                api_call "GET" "/api/v1/vllm/model-info/$2"
+                            fi
+                            ;;
                         "models")
                             if [ -z "$2" ]; then
                                 echo "Usage: vllm models <service_id>"
@@ -562,6 +595,37 @@ case "${1}" in
         case "${2}" in
             "list")
                 api_call "GET" "/api/v1/vllm/services"
+                ;;
+            "available-models")
+                api_call "GET" "/api/v1/vllm/available-models"
+                ;;
+            "search-models")
+                # Direct usage: server-shell.sh vllm search-models "qwen" "LlamaForCausalLM" 10
+                # Skip empty string parameters
+                url="/api/v1/vllm/search-models"
+                params=""
+                if [ -n "${3}" ] && [ "${3}" != '""' ] && [ "${3}" != "''" ]; then
+                    params="${params}query=${3}"
+                fi
+                if [ -n "${4}" ] && [ "${4}" != '""' ] && [ "${4}" != "''" ]; then
+                    [ -n "$params" ] && params="${params}&"
+                    params="${params}architecture=${4}"
+                fi
+                if [ -n "${5}" ] && [ "${5}" != '""' ] && [ "${5}" != "''" ]; then
+                    [ -n "$params" ] && params="${params}&"
+                    params="${params}limit=${5}"
+                fi
+                if [ -n "$params" ]; then
+                    url="${url}?${params}"
+                fi
+                api_call "GET" "$url"
+                ;;
+            "model-info")
+                if [ -z "${3}" ]; then
+                    echo "Usage: $0 vllm model-info <model_id>"
+                    exit 1
+                fi
+                api_call "GET" "/api/v1/vllm/model-info/${3}"
                 ;;
             "models")
                 if [ -z "${3}" ]; then

@@ -60,6 +60,27 @@ vllm list
 # Check which models are loaded in a service
 vllm models 3691724
 
+# Query which models vLLM can use / supported architectures
+# Get architecture info and example model IDs
+vllm available-models
+
+# Search HuggingFace for models compatible with vLLM (server will indicate compatibility)
+
+# Search for qwen models (sorted by downloads, max 20):
+vllm search-models qwen
+
+# Search for qwen models with explicit limit:
+vllm search-models qwen "" 20
+
+# Search for Llama architecture models only:
+vllm search-models "" LlamaForCausalLM 20
+
+# Search qwen models with Qwen2ForCausalLM architecture:
+vllm search-models qwen Qwen2ForCausalLM 10
+
+# Get detailed info about a specific model (compatible check, size, tags):
+vllm model-info meta-llama/Llama-2-7b-chat-hf
+
 # Send prompts 
 prompt 3691748 'Tell me a joke about programming'
 

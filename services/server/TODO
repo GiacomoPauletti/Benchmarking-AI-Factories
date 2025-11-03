@@ -1,17 +1,13 @@
 DOCS:
 
 MAIN:
-- SSHManager class to global utils?
-- Do SSH agent thing Xavier 
-- Get available models from HF API or without it.
 
 Optional:
-- Create fastembed functionality in qdrant. Use it for RAGs.
+- Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.
 - Create proper CI pipeline with actions: 
     - build: docker image with python code, etc.. is built. 
     - test: docker image is passed into test environment. Runs and must pass specific tests.
 - Create HF auth mechanism.
-
 
 
 Things to Benchmark:

@@ -38,6 +38,23 @@ curl -X POST http://localhost:8001/api/v1/services \
   }'
 ```
 
+### Query Available Models
+
+Before creating a service, you can search HuggingFace Hub for compatible models:
+
+```bash
+# Get supported architectures and examples
+curl http://localhost:8001/api/v1/vllm/available-models
+
+# Search for models (e.g., Qwen models)
+curl "http://localhost:8001/api/v1/vllm/search-models?query=qwen&limit=10"
+
+# Get detailed info about a specific model
+curl http://localhost:8001/api/v1/vllm/model-info/Qwen/Qwen2.5-7B-Instruct
+```
+
+These endpoints return model compatibility information, download statistics, and architecture details to help you choose the right model for your use case.
+
 ### Create vLLM Service with Custom Model and Resources
 
 Override both model and resource allocation:
