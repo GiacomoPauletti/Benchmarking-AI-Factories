@@ -2,11 +2,16 @@
 API route definitions for SLURM-based service orchestration.
 """
 
-from fastapi import APIRouter, HTTPException, Body, Depends
+from fastapi import APIRouter, HTTPException, Body, Depends, Query
 from typing import List, Dict, Any, Optional
 
 from server_service import ServerService
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
+from services.inference.vllm_models_config import (
+    get_architecture_info,
+    search_hf_models,
+    get_model_info as get_hf_model_info,
+)
 
 router = APIRouter()
 
@@ -447,6 +452,241 @@ async def list_vllm_services(server_service: ServerService = Depends(get_server_
         return {"vllm_services": vllm_services}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vllm/available-models")
+async def list_available_vllm_models():
+    """Get information about models that can be used with vLLM.
+
+    This endpoint provides information about vLLM's supported model architectures
+    and how to find compatible models from HuggingFace Hub. Unlike a hardcoded model list,
+    this returns architectural compatibility information since vLLM can load ANY model
+    from HuggingFace Hub that uses a supported architecture.
+
+    **Key Information:**
+    - **Model Source**: All models are downloaded from HuggingFace Hub (https://huggingface.co/models)
+    - **Compatibility**: Based on model architecture, not specific model names
+    - **How to Use**: Provide any HuggingFace model ID in the `VLLM_MODEL` environment variable
+    - **Format**: `organization/model-name` (e.g., `meta-llama/Llama-2-7b-chat-hf`)
+
+    **Returns:**
+    ```json
+    {
+      "model_source": "HuggingFace Hub",
+      "supported_architectures": {
+        "text-generation": ["LlamaForCausalLM", "MistralForCausalLM", ...],
+        "vision-language": ["LlavaForConditionalGeneration", ...],
+        "embedding": ["BertModel", ...]
+      },
+      "examples": {
+        "GPT-2 (small, for testing)": "gpt2",
+        "Llama 2 7B Chat": "meta-llama/Llama-2-7b-chat-hf",
+        "Qwen 2.5 0.5B Instruct": "Qwen/Qwen2.5-0.5B-Instruct",
+        ...
+      },
+      "how_to_find_models": [
+        "Browse HuggingFace: https://huggingface.co/models?pipeline_tag=text-generation",
+        "Check model card for architecture",
+        ...
+      ],
+      "resource_guidelines": {
+        "small_models": {
+          "size_range": "< 1B parameters",
+          "min_gpu_memory_gb": 4,
+          ...
+        },
+        ...
+      }
+    }
+    ```
+
+    **How to Find Compatible Models:**
+    1. Browse HuggingFace: https://huggingface.co/models?pipeline_tag=text-generation
+    2. Check the model's architecture in its `config.json` file
+    3. Verify the architecture is in vLLM's supported list (returned by this endpoint)
+    4. Use the model ID when creating a vLLM service
+
+    **Example Usage:**
+
+    First, query this endpoint to see supported architectures and examples:
+    ```bash
+    curl http://localhost:8001/vllm/available-models
+    ```
+
+    Then create a service with any compatible model:
+    ```json
+    {
+      "recipe_name": "inference/vllm",
+      "config": {
+        "environment": {
+          "VLLM_MODEL": "Qwen/Qwen2.5-7B-Instruct"
+        }
+      }
+    }
+    ```
+
+    **Resource Planning:**
+    Use the `resource_guidelines` section to estimate GPU memory requirements based on model size.
+    Larger models may require multiple GPUs using tensor parallelism.
+
+    **Authentication:**
+    Some models (e.g., Llama 2, Llama 3) require HuggingFace authentication.
+    You'll need to set up HuggingFace credentials before deploying these models.
+    """
+    try:
+        info = get_architecture_info()
+        return info
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vllm/search-models")
+async def search_vllm_models(
+    query: Optional[str] = Query(None, description="Search query (e.g., 'llama', 'mistral', 'qwen')"),
+    architecture: Optional[str] = Query(None, description="Filter by architecture (e.g., 'LlamaForCausalLM')"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of results (1-100)"),
+    sort_by: str = Query("downloads", description="Sort by: downloads, likes, trending, created_at")
+):
+    """Search HuggingFace Hub for models compatible with vLLM.
+
+    This endpoint queries the HuggingFace Hub API to find models that match your search criteria
+    and checks their compatibility with vLLM's supported architectures.
+
+    **Query Parameters:**
+    - `query`: Search string (e.g., "llama", "mistral", "qwen", "instruct")
+    - `architecture`: Filter by specific architecture class name
+    - `limit`: Maximum results to return (1-100, default: 20)
+    - `sort_by`: Sort order - "downloads", "likes", "trending", or "created_at"
+
+    **Returns:**
+    ```json
+    {
+      "models": [
+        {
+          "id": "meta-llama/Llama-2-7b-chat-hf",
+          "downloads": 1500000,
+          "likes": 5000,
+          "architecture": "LlamaForCausalLM",
+          "vllm_compatible": true,
+          "created_at": "2023-07-18T...",
+          "tags": ["llama", "text-generation", "conversational"]
+        },
+        ...
+      ],
+      "total": 20
+    }
+    ```
+
+    **Example Searches:**
+
+    Find popular Llama models:
+    ```
+    GET /vllm/search-models?query=llama&sort_by=downloads&limit=10
+    ```
+
+    Find Qwen instruction models:
+    ```
+    GET /vllm/search-models?query=qwen+instruct&limit=15
+    ```
+
+    Find all models with specific architecture:
+    ```
+    GET /vllm/search-models?architecture=MistralForCausalLM
+    ```
+
+    **Use Case:**
+    Use this to discover new models before creating a vLLM service. The `vllm_compatible`
+    field indicates whether the model uses an architecture supported by vLLM.
+    """
+    try:
+        models = search_hf_models(
+            query=query,
+            architecture=architecture,
+            limit=limit,
+            sort_by=sort_by
+        )
+        return {
+            "models": models,
+            "total": len(models)
+        }
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vllm/model-info/{model_id:path}")
+async def get_model_info(model_id: str):
+    """Get detailed information about a specific model from HuggingFace Hub.
+
+    This endpoint fetches comprehensive information about a model including its architecture,
+    size, compatibility with vLLM, and download statistics.
+
+    **Path Parameters:**
+    - `model_id`: HuggingFace model ID (e.g., "meta-llama/Llama-2-7b-hf", "Qwen/Qwen2.5-3B-Instruct")
+
+    **Returns:**
+    ```json
+    {
+      "id": "Qwen/Qwen2.5-3B-Instruct",
+      "architecture": "Qwen2ForCausalLM",
+      "vllm_compatible": true,
+      "task_type": "text-generation",
+      "downloads": 250000,
+      "likes": 1200,
+      "tags": ["qwen2", "instruct", "chat"],
+      "size_bytes": 6442450944,
+      "size_gb": 6.0,
+      "pipeline_tag": "text-generation",
+      "library_name": "transformers"
+    }
+    ```
+
+    **Fields:**
+    - `vllm_compatible`: Whether this model can be loaded by vLLM
+    - `task_type`: Type of task (text-generation, vision-language, embedding)
+    - `size_gb`: Approximate model size in gigabytes
+    - `architecture`: The model's architecture class
+
+    **Example Usage:**
+
+    Check if a model is compatible before deployment:
+    ```bash
+    curl http://localhost:8001/vllm/model-info/Qwen/Qwen2.5-7B-Instruct
+    ```
+
+    Then use the model ID to create a service:
+    ```json
+    {
+      "recipe_name": "inference/vllm",
+      "config": {
+        "environment": {
+          "VLLM_MODEL": "Qwen/Qwen2.5-7B-Instruct"
+        }
+      }
+    }
+    ```
+
+    **Note:** Some models require HuggingFace authentication. Check the model page on
+    HuggingFace Hub if you encounter access errors.
+    """
+    try:
+        model_info = get_hf_model_info(model_id)
+        return model_info
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+    except Exception as e:
+        # Could be 404 if model doesn't exist, or other HF API errors
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{model_id}' not found or error accessing HuggingFace Hub: {str(e)}"
+        )
 
 
 @router.get("/vector-db/services")
