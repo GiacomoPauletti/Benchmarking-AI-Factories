@@ -1,41 +1,52 @@
-version: '3.8'
-
 services:
-  server-service:
+  server:
     build:
       context: ./services/server
       dockerfile: Dockerfile
+    container_name: benchmarking-ai-server
     ports:
       - "8001:8001"
-    environment:
-      - SLURM_ACCOUNT=p200981
-      - SLURM_PARTITION=cpu
-      - PYTHONPATH=/app/src
     volumes:
+      # Mount source code for hot-reload during development
       - ./services/server/src:/app/src
+      - ./services/server/tests:/app/tests
+      - ./services/server/pytest.ini:/app/pytest.ini
       - ./services/server/logs:/app/logs
-    restart: unless-stopped
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
-    networks:
+      - ./services/server/huggingface_cache:/app/huggingface_cache
+      # Mount server endpoint file so client can find it
+      - ./services/server/.server-endpoint:/app/.server-endpoint
+      # Mount SSH agent socket for secure authentication (no raw keys exposed)
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+      
+      # Application Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    # Load additional service-specific variables
+    env_file:
+      - .env
+    networks: 
       - ai-factory
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
 
-  # Other services commented out for now - uncomment when ready
-  # client-service:
+  # TODO: Add other services when ready
+  # client:
   #   build:
   #     context: ./services/client
   #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8002:8002"
-  #   environment:
-  #     - SERVER_URL=http://server-service:8001
-  #   volumes:
-  #     - ./services/client/src:/app/src
-  #     - ./logs:/app/logs
-  #   restart: unless-stopped
-  #   depends_on:
-  #     - server-service
+  #   container_name: benchmarking-ai-client
+  #   ...
 
-  # monitoring-service:
+  # monitoring:
   #   build:
   #     context: ./services/monitoring
   #     dockerfile: Dockerfile
@@ -52,19 +63,75 @@ services:
   #     - server-service
   #     - client-service
 
-  # logs-service:
-  #   build:
-  #     context: ./services/logs
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8004:8004"
-  #   environment:
-  #     - LOG_LEVEL=INFO
-  #   volumes:
-  #     - ./logs:/app/logs
-  #     - ./services/logs/src:/app/src
-  #   restart: unless-stopped
+  # Logs
+
+  # Front-end
+  grafana:
+    build:
+      context: ./services/grafana
+      dockerfile: Dockerfile
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    restart: unless-stopped
+    networks:
+      - ai-factory
+    depends_on:
+      - prometheus
+      - loki
+  
+  prometheus:
+    build:
+      context: ./services/prometheus
+      dockerfile: Dockerfile
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-storage:/prometheus
+    networks:
+      - ai-factory
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:2.8.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-storage:/loki
+    networks:
+      - ai-factory
+    restart: unless-stopped
+
+  # Documentation service
+  docs:
+    build:
+      context: ./docs-src
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-docs
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount docs source for hot-reload during development
+      - ./docs-src:/docs-src
+      - ./mkdocs.yml:/mkdocs.yml
+      # Mount output directory
+      - ./docs:/docs
+    working_dir: /
+    command: mkdocs serve --dev-addr=0.0.0.0:8000
+    restart: unless-stopped
 
 networks:
   ai-factory:
-    name: ai-factory-network
+
+volumes:
+  prometheus-storage:
+    driver: local
+    name: prometheus-storage
+  loki-storage:
+    driver: local
+    name: loki-storage
