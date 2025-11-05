@@ -1,0 +1,15 @@
+{
+  "session_id": "benchmark-1762291198",
+  "status": "STOPPED",
+  "workdir": "/app/state/benchmark-1762291198",
+  "prometheus_url": "http://prometheus:9090",
+  "config_path": "/app/config/prometheus.yml",
+  "scrape_interval": "15s",
+  "labels": {
+    "environment": "local",
+    "example": "end-to-end"
+  },
+  "created_at": "2025-11-04T21:19:58.529104Z",
+  "started_at": "2025-11-04T21:19:58.529124Z",
+  "stopped_at": "2025-11-05T18:28:24.133648Z"
+}

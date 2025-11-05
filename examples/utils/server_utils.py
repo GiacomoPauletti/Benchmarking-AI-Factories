@@ -35,7 +35,12 @@ def wait_for_server(server_url: str, max_wait: int = 30) -> bool:
     return False
 
 
-def wait_for_service_ready(server_url: str, service_id: str, max_wait: int = 300) -> bool:
+def wait_for_service_ready(
+    server_url: str, 
+    service_id: str, 
+    max_wait: int = 300,
+    poll_interval: int = 5
+) -> bool:
     """
     Wait for service to be ready by polling the status endpoint.
     
@@ -43,16 +48,23 @@ def wait_for_service_ready(server_url: str, service_id: str, max_wait: int = 300
         server_url: Base URL of the server (e.g., "http://localhost:8001")
         service_id: Service ID (SLURM job ID)
         max_wait: Maximum time to wait in seconds
+        poll_interval: How often to check status in seconds (default: 5)
         
     Returns:
         True if service is ready, False otherwise
     """
     print(f"Waiting for service {service_id} to be ready...")
+    print(f"  Max wait: {max_wait}s | Poll interval: {poll_interval}s")
     api_base = f"{server_url}/api/v1"
     start = time.time()
     last_status = None
-    
+    attempts = 0
+
+    time.sleep(2)  # Initial delay before first check
     while time.time() - start < max_wait:
+        attempts += 1
+        elapsed = time.time() - start
+        
         try:
             # Poll the status endpoint
             response = requests.get(
@@ -64,25 +76,27 @@ def wait_for_service_ready(server_url: str, service_id: str, max_wait: int = 300
                 status_data = response.json()
                 current_status = status_data.get("status")
                 
-                # Print status changes
+                # Print status updates
                 if current_status != last_status:
-                    elapsed = int(time.time() - start)
-                    print(f"  Status: {current_status} (waited {elapsed}s)")
+                    print(f"  [{attempts}] Status: {current_status} | Elapsed: {elapsed:.1f}s")
                     last_status = current_status
                 
                 # Service is ready when status is "running"
                 if current_status == "running":
-                    print(f"[+] Service is ready!")
+                    print(f"[+] Service is ready! (took {elapsed:.1f}s, {attempts} checks)")
                     return True
                 
                 # Service failed
-                if current_status in ["failed", "cancelled"]:
+                if current_status in ["failed", "cancelled", "timeout"]:
                     print(f"[-] Service failed with status: {current_status}")
                     return False
-        except requests.exceptions.RequestException:
-            pass
+        except requests.exceptions.RequestException as e:
+            print(f"  [WARNING] Failed to check status: {e}")
         
-        time.sleep(3)
+        # Wait before next check
+        remaining = max_wait - elapsed
+        if remaining > 0:
+            time.sleep(min(poll_interval, remaining))
     
     print(f"[-] Service did not become ready within {max_wait}s")
     return False

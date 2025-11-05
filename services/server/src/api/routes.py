@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 
 from server_service import ServerService
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
+from api.metrics_proxy import router as metrics_router
 from services.inference.vllm_models_config import (
     get_architecture_info,
     search_hf_models,
@@ -14,6 +15,9 @@ from services.inference.vllm_models_config import (
 )
 
 router = APIRouter()
+
+# Include metrics proxy routes
+router.include_router(metrics_router)
 
 # Singleton instance of ServerService (created once, reused for all requests)
 _server_service_instance = None
@@ -176,6 +180,89 @@ async def get_service(service_id: str, server_service: ServerService = Depends(g
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     return service
+
+
+@router.get("/services/{service_id}/metrics")
+async def get_service_metrics(service_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Get Prometheus-compatible metrics from any service (generic endpoint).
+    
+    This is a unified metrics endpoint that automatically routes to the appropriate
+    service-specific metrics endpoint based on the service's recipe type.
+    
+    Supported service types:
+    - vLLM inference services (recipe: "inference/vllm*")
+    - Qdrant vector database (recipe: "vector-db/qdrant")
+    - Other vector databases (recipe: "vector-db/*")
+    
+    **Path Parameters:**
+    - `service_id`: The SLURM job ID of the service
+    
+    **Returns (Success):**
+    - Content-Type: `text/plain; version=0.0.4`
+    - Body: Prometheus text format metrics
+    
+    **Returns (Error):**
+    - Content-Type: `application/json`
+    - Body: JSON error object with details
+    
+    **Examples:**
+    ```bash
+    # Get metrics from a service
+    curl http://localhost:8001/api/v1/services/3642874/metrics
+    ```
+    
+    **Integration with Prometheus:**
+    This endpoint provides a consistent interface for monitoring, regardless of service type.
+    Simply use `/api/v1/services/{service_id}/metrics` for all services.
+    
+    ```yaml
+    scrape_configs:
+      - job_name: 'managed-services'
+        static_configs:
+          - targets: ['server:8001']
+        metrics_path: '/api/v1/services/<service_id>/metrics'
+        scrape_interval: 15s
+    ```
+    
+    **Note:** This endpoint determines the service type from the recipe_name and routes
+    to the appropriate service-specific metrics endpoint (vLLM, Qdrant, etc.).
+    """
+    from fastapi.responses import PlainTextResponse
+    
+    try:
+        # Get service details to determine recipe type
+        service = server_service.get_service(service_id)
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+        
+        recipe_name = service.get("recipe_name", "")
+        
+        # Route to appropriate service-specific metrics endpoint
+        if recipe_name.startswith("inference/vllm"):
+            result = server_service.get_vllm_metrics(service_id)
+        elif recipe_name.startswith("vector-db/qdrant"):
+            result = server_service.get_qdrant_metrics(service_id)
+        else:
+            # Unknown service type
+            raise HTTPException(
+                status_code=400,
+                detail=f"Metrics not available for service type: {recipe_name}"
+            )
+        
+        # If successful, return metrics as plain text
+        if result.get("success"):
+            return PlainTextResponse(
+                content=result.get("metrics", ""),
+                media_type="text/plain; version=0.0.4"
+            )
+        else:
+            # Return error as JSON
+            return result
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/services/{service_id}")

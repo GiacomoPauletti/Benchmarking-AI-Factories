@@ -1,0 +1,12 @@
+{
+  "run_id": "run-1762367761",
+  "session_id": "benchmark-1762367336",
+  "generated_at_utc": "2025-11-05T18:36:01.915184Z",
+  "window": {
+    "from": "2025-11-05T18:31:01.899878Z",
+    "to": "2025-11-05T18:36:01.899878Z"
+  },
+  "files": {
+    "summary_csv": "metrics_output/metrics_summary.csv"
+  }
+}

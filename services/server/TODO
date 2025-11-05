@@ -1,18 +1,29 @@
 DOCS:
 
 MAIN:
+- Make log and status syncing/caching faster such that ssh tunnels with high latency (e.g. SLURM) do not time out.
+- Make Server API handle more than one request at a time (currently blocking). 
+- Check if correct error codes are being returned when prompting (200 vs 503)
 
 Optional:
 - Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.
 - Create proper CI pipeline with actions: 
     - build: docker image with python code, etc.. is built. 
     - test: docker image is passed into test environment. Runs and must pass specific tests.
-- Create HF auth mechanism.
 
 
 Things to Benchmark:
 vllm:
 - tokens/sec
+- uptime seconds
+- process memory usage 
+- number of models currently loaded
+- names of models currently loaded
 
 vector-db: 
 - example datasets from huggingface
+- queries per second 
+- latency per vector search
+- time to build or update index
+- number of loaded collections 
+- recall ()

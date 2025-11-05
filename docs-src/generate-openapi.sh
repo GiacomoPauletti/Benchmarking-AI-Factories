@@ -58,13 +58,54 @@ if [ "$SERVER_WAS_RUNNING" = false ]; then
     docker compose down server
 fi
 
+# Monitoring service - launch with docker compose and fetch from API
+echo "  - Monitoring service..."
+
+# Check if monitoring is already running
+if docker compose ps monitoring 2>/dev/null | grep -q "Up"; then
+    echo "    Monitoring already running"
+    MONITORING_WAS_RUNNING=true
+else
+    echo "    Starting monitoring with docker compose..."
+    docker compose up -d monitoring
+    MONITORING_WAS_RUNNING=false
+    
+    # Wait for monitoring to be ready
+    echo "    Waiting for monitoring to be ready..."
+    MAX_ATTEMPTS=30
+    ATTEMPT=0
+    while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+        if curl -s http://localhost:8002/health > /dev/null 2>&1; then
+            echo "    Monitoring is ready"
+            break
+        fi
+        ATTEMPT=$((ATTEMPT + 1))
+        sleep 1
+    done
+    
+    if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+        echo "    Warning: Monitoring did not become ready in time"
+        exit 1
+    fi
+fi
+
+# Fetch OpenAPI schema
+echo "    Fetching OpenAPI schema..."
+if curl -s http://localhost:8002/openapi.json > "$API_DIR/monitor-openapi.json"; then
+    echo "    Successfully generated monitor-openapi.json"
+else
+    echo "    Warning: Could not fetch OpenAPI schema"
+fi
+
+# Stop monitoring if we started it
+if [ "$MONITORING_WAS_RUNNING" = false ]; then
+    echo "    Stopping monitoring..."
+    docker compose down monitoring
+fi
+
 # Client service (TODO)
 echo "  - Client service... (TODO)"
 echo '{"info": {"title": "Client Service", "version": "1.0.0"}, "paths": {}}' > "$API_DIR/client-openapi.json"
-
-# Monitoring service (TODO)
-echo "  - Monitoring service... (TODO)"
-echo '{"info": {"title": "Monitoring Service", "version": "1.0.0"}, "paths": {}}' > "$API_DIR/monitor-openapi.json"
 
 # Logs service (TODO)
 echo "  - Logs service... (TODO)"

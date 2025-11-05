@@ -1,0 +1,20 @@
+{
+  "session_id": "benchmark-1762345087",
+  "status": "STOPPED",
+  "workdir": "/app/state/benchmark-1762345087",
+  "prometheus_url": "http://prometheus:9090",
+  "config_path": "/app/config/prometheus.yml",
+  "scrape_interval": "15s",
+  "labels": {
+    "environment": "local",
+    "example": "end-to-end"
+  },
+  "created_at": "2025-11-05T12:18:07.455147Z",
+  "started_at": "2025-11-05T12:18:07.455163Z",
+  "last_collect_at": "2025-11-05T12:20:24.377221Z",
+  "artifacts": {
+    "tables": "metrics_output/metrics_summary.csv",
+    "manifest": "metrics_output/MANIFEST.json"
+  },
+  "stopped_at": "2025-11-05T18:28:24.037714Z"
+}

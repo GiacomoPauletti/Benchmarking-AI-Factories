@@ -3,8 +3,31 @@
 > Unified, reproducible monitoring for end-to-end AI Factory benchmarks on MeluXina.
 
 * **Purpose:** orchestrate Prometheus, register benchmark targets (clients, services, exporters), collect time-window metrics, and produce standardized artifacts for analysis and reports.
-* **Scope (MVP):** Slurm-only orchestration (no Kubernetes), CLI control, Prometheus hot-reload, CSV/JSON artifacts, containerized test suite.
+* **Scope (MVP):** Slurm-only orchestration (no Kubernetes), FastAPI REST API + CLI control, Prometheus hot-reload, CSV/JSON artifacts, containerized test suite.
 * **Non-goals (for now):** automatic exporter deployment, long-term TSDB management, dashboards. Those are planned follow-ups.
+
+## 🔄 Architecture Update (Nov 2024)
+
+The monitoring service has been refactored to follow the same architecture pattern as the server service:
+
+- **FastAPI REST API** for programmatic control (port 8002)
+- **Core business logic** separated from API layer
+- **Pydantic schemas** for request/response validation
+- **OpenAPI documentation** at `/docs` and `/redoc`
+- **Docker containerization** for deployment
+- **Local Prometheus** - Runs persistently in Docker instead of SLURM (simpler development, no batch scheduler dependency)
+
+### Key Architecture Changes
+
+**Before:** Prometheus was deployed as a SLURM job on compute nodes
+**Now:** Prometheus runs as a Docker service alongside monitoring microservice
+
+- Monitoring service manages Prometheus via HTTP API only (no start/stop, just configure & reload)
+- Server microservice proxies `/metrics` from SLURM services (vLLM, Qdrant) so Prometheus can scrape them
+- Grafana connects directly to Prometheus for visualization
+- Hot-reload enabled via `--web.enable-lifecycle` flag
+
+See [`src/README.md`](src/README.md) for detailed documentation.
 
 ---
 
@@ -21,14 +44,26 @@ Benchmarking an **AI Factory** involves multiple components (inference servers, 
 
 ## How we achieve it (high level)
 
-1. **Registry** keeps the canonical list of what to monitor (clients, services, exporters) per session.
-2. **ConfigRenderer** generates a `prometheus.yml` from the registry and hot-reloads Prometheus.
-3. **PrometheusManager** starts/stops Prometheus jobs on Slurm (and checks readiness).
-4. **CollectorAgg** queries the Prometheus HTTP API for a given window, computes aggregates (p50/p95/p99, averages), and writes artifacts.
-5. **StateStore** persists session state (where Prometheus runs, job IDs, artifact paths).
-6. **SlurmRunner** abstracts `sbatch/squeue/scancel`.
+**New Architecture (Docker-based):**
+
+1. **Prometheus** runs as a persistent Docker service (not SLURM job)
+2. **PrometheusManager** manages Prometheus via HTTP API:
+   - Health checks (`/-/healthy`, `/-/ready`)
+   - Configuration hot-reload (`/-/reload`)
+   - PromQL queries (`/api/v1/query`, `/api/v1/query_range`)
+3. **Server Metrics Proxy** exposes `/metrics` endpoints that proxy metrics from SLURM services (vLLM, Qdrant)
+4. **Registry** keeps the canonical list of what to monitor (clients, services, exporters) per session
+5. **ConfigRenderer** generates `prometheus.yml` from the registry and triggers hot-reload
+6. **CollectorAgg** queries the Prometheus HTTP API for a given window, computes aggregates (p50/p95/p99, averages), and writes artifacts
+7. **StateStore** persists session state (artifact paths, registered targets)
 
 The **MonitoringService** facade wires these pieces together.
+
+**Key Benefits:**
+- Simpler development workflow (no SLURM dependency for Prometheus)
+- Always-on monitoring (Prometheus runs continuously)
+- Server microservice acts as proxy bridge between SLURM jobs and Prometheus
+- Grafana can query Prometheus directly for real-time visualization
 
 ---
 
@@ -47,34 +82,53 @@ flowchart LR
     CG --> SP
   end
 
-  subgraph MonitorContainer
+  subgraph MonitorContainer[Monitoring Service]
     MS[MonitoringService]
     CR[ConfigRenderer]
-    PM[PrometheusManager]
+  LPM[PrometheusManager]
     REG[Registry]
     COL[CollectorAgg]
     SS[StateStore]
-    SR[SlurmRunner]
     MS --> REG
     MS --> CR
-    MS --> PM
+    MS --> LPM
     MS --> COL
     MS --> SS
-    PM --> SR
   end
 
-  subgraph ServicesUnderTest
-    SVC["Inference / DB / Storage services / Metrics endpoints"]
+  subgraph ServerContainer[Server Service]
+    SAPI[Server API]
+    METP[Metrics Proxy]
+    SAPI --> METP
+  end
+
+  subgraph PrometheusContainer[Prometheus Docker]
+    PROM[Prometheus]
+  end
+
+  subgraph GrafanaContainer[Grafana Docker]
+    GRAF[Grafana]
+  end
+
+  subgraph SlurmServices[SLURM Jobs]
+    VLLM[vLLM /metrics]
+    QDRANT[Qdrant /metrics]
   end
 
   MP --- MS
   SP --- MS
-  CR -->|"prometheus.yml + /-/reload"| PM
-  PM -->|"scrapes"| SVC
-  COL -->|"HTTP /api/v1/query_range"| PM
+  CR -->|"prometheus.yml + /-/reload"| LPM
+  LPM -->|"HTTP API"| PROM
+  PROM -->|"scrapes"| METP
+  METP -->|"proxies"| VLLM
+  METP -->|"proxies"| QDRANT
+  PROM -->|"scrapes"| MS
+  PROM -->|"scrapes"| SAPI
+  COL -->|"/api/v1/query_range"| PROM
+  GRAF -->|"queries"| PROM
 ```
 
-> In the MVP we control the service via a **CLI**. HTTP APIs (`Client2Monitor`, `ClientService2Monitor`) are planned so the **Client** module can register targets programmatically during deployments.
+> **New Flow:** Prometheus runs in Docker and scrapes the Server's metrics proxy endpoints. The Server proxies `/metrics` from SLURM services (vLLM, Qdrant). Monitoring service configures Prometheus via hot-reload.
 
 ---
 
@@ -82,14 +136,28 @@ flowchart LR
 
 * **MonitoringService** — Orchestration/facade:
 
-  * `create_session`, `start`, `status`, `collect`, `stop`, `delete`
-  * `register_client`, `register_service` (updates registry → render → reload)
-* **ConfigRenderer** — Renders `prometheus.yml` from registry targets and hot-reloads Prometheus (`/-/reload`).
-* **PrometheusManager** — Starts Prometheus via Slurm, checks readiness (`/-/ready`), stops it.
-* **CollectorAgg** — Calls Prometheus HTTP API to pull a time window, computes KPIs (throughput, p50/p95/p99 latency, avg CPU/GPU), saves **CSV** + **MANIFEST.json**.
-* **Registry** — Canonical store of: clients, exporters (node/DCGM), service endpoints.
-* **StateStore** — Session state on disk (job IDs, paths, artifacts).
-* **SlurmRunner** — Thin wrapper around `sbatch`, `squeue`, `scancel`.
+  * `create_session`, `status`, `collect`, `delete`
+  * `register_target` (updates registry → render → reload)
+  * No longer starts/stops Prometheus (runs persistently in Docker)
+  
+* **PrometheusManager** — HTTP-based Prometheus control:
+
+  * `is_healthy()`, `is_ready()` — Health checks
+  * `reload_config()` — Triggers hot-reload via `/-/reload`
+  * `query_instant()`, `query_range()` — Execute PromQL queries
+  * `get_targets()` — List all scrape targets
+  
+* **ConfigRenderer** — Renders `prometheus.yml` from registry targets and hot-reloads Prometheus (`/-/reload`)
+
+* **CollectorAgg** — Calls Prometheus HTTP API to pull a time window, computes KPIs (throughput, p50/p95/p99 latency, avg CPU/GPU), saves **CSV** + **MANIFEST.json**
+
+* **Registry** — Canonical store of: clients, exporters (node/DCGM), service endpoints
+
+* **StateStore** — Session state on disk (artifact paths, registered targets)
+
+**Removed Components:**
+* **PrometheusManager** — Replaces the older SLURM-based Prometheus manager (no SLURM control)
+* ~~**SlurmRunner**~~ — No longer needed (Prometheus runs in Docker)
 
 ---
 
@@ -97,60 +165,123 @@ flowchart LR
 
 **Runtime**
 
-* Python 3.11 (core code uses standard library only).
-* Prometheus (binary available on cluster node).
-* Slurm (MeluXina) for scheduling Prometheus.
-* (Optional) node_exporter, dcgm_exporter already deployed & reachable.
+* Python 3.11
+* FastAPI 0.104.1 - REST API framework
+* Pydantic 2.5.0 + pydantic-settings 2.1.0 - Request validation and configuration
+* httpx 0.25.2 - Async HTTP client for Prometheus communication
+* Prometheus v2.48.0 - Metrics storage (runs in Docker)
+* Docker Compose - Container orchestration
+* Grafana - Metrics visualization (optional)
 
-**Testing**
+**Development**
 
-* Apptainer container to run tests consistently.
-* Pytest + mocks (unit) and a tiny in-process fake Prometheus (integration).
+* Docker - Local containerization
+* Pytest - Testing framework
+* Apptainer - HPC container runtime (for production deployment)
 
 **Artifacts**
 
-* CSV (`metrics_summary.csv`) + `MANIFEST.json` per collection window.
+* CSV (`metrics_summary.csv`) + `MANIFEST.json` per collection window
 
 ---
 
-## CLI quick start (MVP)
+## Quick Start (Docker)
+
+### Start the monitoring stack
+
+```bash
+# Start Prometheus, Monitoring API, Server API, Grafana
+docker-compose up -d
+
+# Check services are running
+docker-compose ps
+
+# View logs
+docker-compose logs -f monitoring
+docker-compose logs -f prometheus
+```
+
+### API Usage
+
+The Monitoring service exposes a FastAPI REST API on port 8002:
+
+```bash
+# Create a monitoring session
+curl -X POST http://localhost:8002/api/v1/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "bench01"}'
+
+# Register a target for monitoring (e.g., vLLM service)
+curl -X POST http://localhost:8002/api/v1/sessions/bench01/targets \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_id": "3607637",
+    "target_type": "vllm",
+    "scrape_config": {
+      "job_name": "vllm-3607637",
+      "metrics_path": "/metrics/vllm/3607637",
+      "targets": ["server-api:8001"]
+    }
+  }'
+
+# Check Prometheus targets
+curl http://localhost:8002/api/v1/prometheus/targets
+
+# Query metrics
+curl -X POST http://localhost:8002/api/v1/prometheus/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "up"}'
+
+# Collect metrics for a time window
+curl -X POST http://localhost:8002/api/v1/sessions/bench01/collect \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_time": "2025-01-01T10:00:00Z",
+    "end_time": "2025-01-01T10:10:00Z",
+    "output_dir": "/app/results"
+  }'
+
+# Get session status
+curl http://localhost:8002/api/v1/sessions/bench01
+
+# Delete session
+curl -X DELETE http://localhost:8002/api/v1/sessions/bench01
+```
+
+### API Documentation
+
+* OpenAPI docs: http://localhost:8002/docs
+* ReDoc: http://localhost:8002/redoc
+* Prometheus UI: http://localhost:9090
+* Grafana: http://localhost:3000 (admin/admin)
+
+---
+
+## CLI quick start (Legacy - for reference)
+
+> **Note:** The CLI is being deprecated in favor of the REST API. Use the API endpoints above for new development.
 
 From the repo root:
 
 ```bash
 # 1) create session
-python -m services.monitoring.cli session-create --run-id bench01 --prom-host localhost --port 9090
+python -m services.monitoring.cli session-create --session-id bench01
 
-# 2) register a client (exporters optional)
-python -m services.monitoring.cli client-connect \
-  --session bench01 --client-id c1 --node nodeA \
-  --node-exporter nodeA:9100 --dcgm-exporter nodeA:9400
-
-# 3) register a service endpoint (/metrics)
+# 2) register a service endpoint (/metrics)
 python -m services.monitoring.cli service-register \
-  --session bench01 --client-id c1 --name triton --endpoint http://nodeA:8000/metrics
+  --session bench01 --job-id 3607637 --name vllm --endpoint http://server-api:8001/metrics/vllm/3607637
 
-# 4) start Prometheus on Slurm (choose a partition reachable from you)
-python -m services.monitoring.cli start --session bench01 --partition login
-
-# 5) check status
+# 3) check status (Prometheus should already be running in Docker)
 python -m services.monitoring.cli status --session bench01
 
-# 6) collect a 10-minute window
+# 4) collect a 10-minute window
 python -m services.monitoring.cli collect --session bench01 \
-  --from-iso "2025-10-01T10:00:00Z" --to-iso "2025-10-01T10:10:00Z" \
-  --out results/metrics --run-id run01
+  --from-iso "2025-01-01T10:00:00Z" --to-iso "2025-01-01T10:10:00Z" \
+  --out results/metrics
 
-# 7) stop and clean
-python -m services.monitoring.cli stop --session bench01
+# 5) delete session
 python -m services.monitoring.cli delete --session bench01
 ```
-
-**Outputs**
-
-* State & config: `services/monitoring/state/<session_id>/`
-* Logs: `logs/prometheus-<jobid>.out` (Slurm)
-* Metrics: `results/metrics/metrics_summary.csv` + `MANIFEST.json`
 
 ---
 
@@ -171,15 +302,31 @@ You can adjust queries later or add recipe-specific metrics.
 
 ```
 services/monitoring/
-├─ cli.py                       # CLI entry points
-├─ main.py                      # MonitoringService facade
-├─ core/state_store.py
-├─ config/renderer.py
-├─ managers/slurm.py
-├─ managers/prometheus.py
-├─ metrics/collector_agg.py
-├─ registry/registry.py
-└─ tests/                       # containerized tests (see below)
+├─ src/
+│  ├─ main.py                      # FastAPI application entry point
+│  ├─ routes.py                    # API route definitions
+│  ├─ monitoring_service.py        # Core business logic (refactored for Docker)
+│  ├─ api/
+│  │  ├─ sessions.py              # Session management endpoints
+│  │  ├─ targets.py               # Target registration endpoints
+│  │  └─ prometheus.py            # Prometheus query endpoints
+│  ├─ core/
+│  │  ├─ settings.py              # Configuration management (pydantic-settings)
+│  │  └─ state_store.py           # Session state persistence
+│  ├─ managers/
+│  │  └─ prometheus_manager.py   # HTTP-based Prometheus management
+│  ├─ config/
+│  │  └─ renderer.py              # prometheus.yml generation
+│  ├─ metrics/
+│  │  └─ collector_agg.py         # Metrics collection & aggregation
+│  ├─ registry/
+│  │  └─ registry.py              # Target registry
+│  └─ schemas/                     # Pydantic request/response models
+├─ config/
+│  └─ prometheus.yml              # Prometheus scrape configuration
+├─ Dockerfile                      # Service containerization
+├─ requirements.txt
+└─ tests/                          # Unit & integration tests
 ```
 
 ---
@@ -213,20 +360,46 @@ Logs:
 
 ## Configuration & assumptions
 
-* **Prometheus binary** is available on the node where the Slurm job runs.
-* Prometheus is started with `--web.enable-lifecycle` so hot-reload works.
-* **Endpoints** passed to the registry must be **reachable from Prometheus** as plain HTTP/`/metrics`.
-* Exporters (node/DCGM) can be omitted; service endpoints alone are enough for MVP.
+* **Prometheus** runs as a Docker service (defined in `docker-compose.yml`)
+* Prometheus is started with `--web.enable-lifecycle` so hot-reload works
+* **Server microservice** proxies `/metrics` from SLURM services:
+  - `/metrics/vllm/{job_id}` - Proxies vLLM metrics from SLURM job
+  - `/metrics/qdrant/{job_id}` - Proxies Qdrant metrics from SLURM job
+* Prometheus scrapes these proxy endpoints (reachable within Docker network)
+* **Monitoring service** configures Prometheus via `prometheus.yml` updates + hot-reload
+* Grafana queries Prometheus directly for visualization
+
+### Environment Variables
+
+Configuration is managed via `services/monitoring/src/core/settings.py`:
+
+```bash
+# Deployment mode
+DEPLOYMENT_MODE=development  # or 'production'
+
+# Prometheus connection
+PROMETHEUS_URL=http://prometheus:9090
+PROMETHEUS_CONFIG_PATH=/etc/prometheus/prometheus.yml
+
+# Server API (for metrics proxying)
+SERVER_API_URL=http://server-api:8001
+
+# Scrape defaults
+DEFAULT_SCRAPE_INTERVAL=15s
+DEFAULT_SCRAPE_TIMEOUT=10s
+```
 
 ---
 
 ## Planned evolutions
 
-* **HTTP APIs** (`Client2Monitor`, `ClientService2Monitor`) via FastAPI to match the Client module’s diagram.
-* **ExporterManager** to deploy/stop exporter jobs per allocation.
-* **EndpointResolver** for address translation (127.0.0.1 → node-visible hostname/port).
-* **PrometheusClient** as a standalone utility (reused across collectors).
-* **Grafana dashboards** and richer artifact schemas (Parquet, per-service slices).
+* **Enhanced API endpoints** for advanced target management and query capabilities
+* **ExporterManager** to deploy/manage exporters for SLURM jobs
+* **Kubernetes support** alongside SLURM deployments
+* **PrometheusClient** as a standalone utility (reused across collectors)
+* **Grafana dashboards** and richer artifact schemas (Parquet, per-service slices)
+* **Long-term storage** integration (e.g., Thanos, Cortex)
+* **Alert management** via Alertmanager integration
 
 ---
 
@@ -239,11 +412,29 @@ Logs:
 
 ## Troubleshooting
 
-* **Prometheus not ready:** check `logs/prometheus-*.out` and ensure the binary exists on the allocated node.
-* **No metrics:** confirm target `/metrics` is reachable from the Prometheus job node, and that your service actually exposes metrics.
-* **Reload failed:** Prometheus must be started with `--web.enable-lifecycle`; otherwise `/-/reload` returns 404.
-* **Bind issues in tests:** when running Apptainer manually, bind the repo to `/app`:
+* **Prometheus not accessible:** 
+  - Check if Prometheus container is running: `docker-compose ps prometheus`
+  - View Prometheus logs: `docker-compose logs prometheus`
+  - Verify health: `curl http://localhost:9090/-/healthy`
+  
+* **No metrics from SLURM services:**
+  - Confirm SLURM job is running and exposing metrics
+  - Check Server metrics proxy: `curl http://localhost:8001/metrics/vllm/{job_id}`
+  - Verify Prometheus targets: `curl http://localhost:9090/targets` or check UI
+  
+* **Reload failed:**
+  - Prometheus must be started with `--web.enable-lifecycle`
+  - Check prometheus.yml syntax: `docker-compose exec prometheus promtool check config /etc/prometheus/prometheus.yml`
+  - View reload endpoint: `curl -X POST http://localhost:9090/-/reload`
+  
+* **Monitoring API errors:**
+  - Check service logs: `docker-compose logs monitoring`
+  - Verify Prometheus is healthy before making API calls
+  - Ensure required environment variables are set
 
-  * `apptainer run --bind "$(pwd)":/app services/monitoring/tests/test-container.sif`
+* **Docker networking issues:**
+  - Verify all services are on the same Docker network
+  - Check service names resolve correctly within containers
+  - Use service names (e.g., `prometheus`, `server-api`) not `localhost` for inter-service communication
 
 ---

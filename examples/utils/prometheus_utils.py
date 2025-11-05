@@ -24,12 +24,24 @@ def fetch_metrics(server_url: str, service_id: str, service_type: str = "vllm", 
     print(f"\n[*] Fetching metrics from service {service_id}...")
     api_base = f"{server_url}/api/v1"
     
-    # Determine endpoint based on service type
+    # Use general service metrics endpoint
+    endpoint = f"{api_base}/services/{service_id}/metrics"
+    
+    # Service-specific endpoints (commented out for testing):
+    # if service_type.lower() == "vllm":
+    #     endpoint = f"{api_base}/vllm/{service_id}/metrics"
+    #     parser = parse_vllm_metrics
+    # elif service_type.lower() in ["qdrant", "vector-db"]:
+    #     endpoint = f"{api_base}/vector-db/{service_id}/metrics"
+    #     parser = parse_qdrant_metrics
+    # else:
+    #     print(f"[-] Unknown service type: {service_type}")
+    #     return None
+    
+    # Determine parser based on service type
     if service_type.lower() == "vllm":
-        endpoint = f"{api_base}/vllm/{service_id}/metrics"
         parser = parse_vllm_metrics
     elif service_type.lower() in ["qdrant", "vector-db"]:
-        endpoint = f"{api_base}/vector-db/{service_id}/metrics"
         parser = parse_qdrant_metrics
     else:
         print(f"[-] Unknown service type: {service_type}")
