@@ -80,8 +80,18 @@ services:
     networks:
       - ai-factory
     depends_on:
+      - grafana-renderer
       - prometheus
       - loki
+  
+  grafana-renderer:
+    image: grafana/grafana-image-renderer:3.10.0
+    container_name: grafana-renderer
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - ai-factory
   
   prometheus:
     build:

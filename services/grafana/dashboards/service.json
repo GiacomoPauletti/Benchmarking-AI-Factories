@@ -19,7 +19,20 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": 4,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "doc",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Generate report",
+      "tooltip": "Generate PDF report for this page",
+      "type": "link",
+      "url": "/api/plugins/mahendrapaipuri-dashboardreporter-app/resources/report?dashUid=adr8rsf"
+    }
+  ],
   "panels": [
     {
       "datasource": {
