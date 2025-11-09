@@ -22,7 +22,6 @@ def main():
     # Configuration
     server_url = os.getenv("SERVER_URL", "http://localhost:8001")
     api_base = f"{server_url}/api/v1"
-    model = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     
     service_id = None
     
@@ -34,15 +33,11 @@ def main():
             return
         
         # Step 2: Create vLLM service
-        print(f"\n[*] Creating vLLM service with model: {model}...")
+        print(f"\n[*] Creating vLLM service...")
         response = requests.post(
             f"{api_base}/services",
             json={
-                "recipe_name": "inference/vllm",
-                "config": {
-                    "nodes": 1,  # Use 1 node for faster queue times
-                    "model": model
-                }
+                "recipe_name": "inference/vllm-single-node"
             },
             timeout=60
         )

@@ -484,7 +484,10 @@ class SSHManager:
             success, stdout, stderr = self.execute_remote_command(curl_cmd, timeout=timeout + 5)
             
             if not success:
-                self.logger.warning(f"HTTP request via SSH failed: {stderr}")
+                self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}")
+                self.logger.warning(f"  Command: {curl_cmd}")
+                self.logger.warning(f"  Stderr: {stderr}")
+                self.logger.warning(f"  Stdout: {stdout}")
                 return False, 0, stderr
             
             # Parse response - curl writes status code after HTTP_STATUS:
@@ -493,10 +496,14 @@ class SSHManager:
                 body = parts[0].strip()
                 try:
                     status_code = int(parts[1].strip())
+                    self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes)")
                 except ValueError:
+                    self.logger.warning(f"Failed to parse status code from: {parts[1]}")
                     status_code = 0
                     body = stdout
             else:
+                self.logger.warning(f"No HTTP_STATUS in response from {remote_host}:{remote_port}{path}")
+                self.logger.debug(f"Raw stdout: {stdout[:200]}")
                 body = stdout
                 status_code = 200 if success else 0
             

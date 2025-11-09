@@ -673,6 +673,9 @@ class SlurmDeployer:
         """Create SLURM job payload according to official API schema."""
         # Merge resources: recipe defaults + config overrides
         resources = recipe.get("resources", {}).copy()
+        self.logger.debug(f"Recipe resources before merge: {resources}")
+        self.logger.debug(f"Config for merge: {config}")
+        
         if "resources" in config:
             resources.update(config["resources"])
         
@@ -681,6 +684,8 @@ class SlurmDeployer:
         for key in ['nodes', 'cpu', 'memory', 'gpu', 'time_limit']:
             if key in config:
                 resources[key] = config[key]
+        
+        self.logger.debug(f"Final merged resources: {resources}")
         
         # Determine time_limit (in minutes) from merged resources using utility
         time_limit_minutes = parse_time_limit(resources.get("time_limit"))

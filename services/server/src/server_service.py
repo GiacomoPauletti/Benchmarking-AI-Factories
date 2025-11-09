@@ -60,10 +60,8 @@ class ServerService:
     def start_service(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Start a service based on recipe using SLURM + Apptainer."""
         try:
-            # Use config as-is, with default nodes=1 if not specified
+            # Use config as-is - let deployer merge with recipe defaults
             full_config = config or {}
-            if "nodes" not in full_config:
-                full_config["nodes"] = 1
             
             # Submit to SLURM
             job_info = self.deployer.submit_job(recipe_name, full_config)

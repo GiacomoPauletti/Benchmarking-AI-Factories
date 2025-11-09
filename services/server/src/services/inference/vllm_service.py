@@ -5,6 +5,8 @@ import requests
 from .inference_service import InferenceService
 
 DEFAULT_VLLM_PORT = 8001
+BASE_TIMEOUT = 30  # Base timeout for single-node setups
+TIMEOUT_PER_EXTRA_NODE = 30  # Additional timeout per extra node beyond first
 
 
 class VllmService(InferenceService):
@@ -242,12 +244,12 @@ class VllmService(InferenceService):
                 return True, "running"
             else:
                 # Connected but got error response - likely still initializing
-                self.logger.debug(f"Service {service_id} connected but returned HTTP {status_code}")
+                self.logger.debug(f"Service {service_id} on {remote_host}:{remote_port} returned HTTP {status_code}")
                 return False, "starting"
                 
         except Exception as e:
             # Connection failed - service not ready yet
-            self.logger.debug(f"Service {service_id} connection test failed: {e}")
+            self.logger.debug(f"Service {service_id} connection test to {remote_host}:{remote_port} failed: {e}")
             return False, "starting"
 
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
@@ -323,14 +325,14 @@ class VllmService(InferenceService):
         
         try:
             # Try chat endpoint first (works for instruction-tuned models)
-            response = self._try_chat_endpoint(endpoint, model, prompt, **kwargs)
+            response = self._try_chat_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
             
             # Check if we got a chat template error
             if self._is_chat_template_error(response):
                 self.logger.info("Chat template error detected, retrying with completions endpoint")
                 
                 # Retry with completions endpoint (works for base models)
-                response = self._try_completions_endpoint(endpoint, model, prompt, **kwargs)
+                response = self._try_completions_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
                 result = self._parse_completions_response(response, endpoint, service_id)
             else:
                 # No chat template error - parse as chat response
@@ -381,7 +383,33 @@ class VllmService(InferenceService):
                 "error": f"Error processing request: {str(e)}"
             }
 
-    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
+    def _calculate_timeout(self, service_id: str) -> int:
+        """Calculate appropriate timeout based on number of nodes in service.
+        
+        Multi-node tensor parallelism requires more time for NCCL communication
+        and coordination. Formula: BASE_TIMEOUT + (num_nodes - 1) * TIMEOUT_PER_EXTRA_NODE
+        
+        Args:
+            service_id: The service ID to check node count for
+            
+        Returns:
+            Timeout in seconds
+        """
+        try:
+            service_info = self.service_manager.get_service(service_id)
+            if service_info:
+                node_count = service_info.get("node_count", 1)
+                if node_count > 1:
+                    timeout = BASE_TIMEOUT + (node_count - 1) * TIMEOUT_PER_EXTRA_NODE
+                    self.logger.debug(f"Using extended timeout {timeout}s for {node_count}-node service {service_id}")
+                    return timeout
+        except Exception as e:
+            self.logger.warning(f"Failed to get node count for service {service_id}: {e}")
+        
+        # Default to base timeout
+        return BASE_TIMEOUT
+
+    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
         """Try to send prompt using chat completions endpoint."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -398,7 +426,10 @@ class VllmService(InferenceService):
             "stream": False
         }
         
-        self.logger.debug("Trying chat endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
+        # Calculate timeout based on node count
+        timeout = self._calculate_timeout(service_id) if service_id else BASE_TIMEOUT
+        
+        self.logger.debug("Trying chat endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
         # Use SSH to make the HTTP request
         ssh_manager = self.deployer.ssh_manager
@@ -408,7 +439,7 @@ class VllmService(InferenceService):
             method="POST",
             path=path,
             json_data=request_data,
-            timeout=30
+            timeout=timeout
         )
         
         # Create a mock response object that matches requests.Response interface
@@ -424,7 +455,7 @@ class VllmService(InferenceService):
         
         return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
 
-    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
+    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
         """Try to send prompt using completions endpoint (for base models)."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -441,7 +472,10 @@ class VllmService(InferenceService):
             "stream": False
         }
         
-        self.logger.debug("Trying completions endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
+        # Calculate timeout based on node count
+        timeout = self._calculate_timeout(service_id) if service_id else BASE_TIMEOUT
+        
+        self.logger.debug("Trying completions endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
         # Use SSH to make the HTTP request
         ssh_manager = self.deployer.ssh_manager
@@ -451,7 +485,7 @@ class VllmService(InferenceService):
             method="POST",
             path=path,
             json_data=request_data,
-            timeout=30
+            timeout=timeout
         )
         
         # Create a mock response object that matches requests.Response interface

@@ -81,6 +81,7 @@ def wait_for_service_ready(server_url: str, service_id: str, max_wait: int = 300
                     return False
         except requests.exceptions.RequestException:
             pass
+        time.sleep(1)
     
     print(f"[-] Service did not become ready within {max_wait}s")
     return False

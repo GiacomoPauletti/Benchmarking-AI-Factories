@@ -28,6 +28,8 @@ BuilderRegistry.register('storage', StorageRecipeBuilder)
 # Register recipe-specific builders (take precedence over category builders)
 # Inference services
 BuilderRegistry.register_recipe('inference/vllm', VllmInferenceBuilder)
+BuilderRegistry.register_recipe('inference/vllm-single-node', VllmInferenceBuilder)
+BuilderRegistry.register_recipe('inference/vllm-multi-node', VllmInferenceBuilder)
 
 # Vector database services
 BuilderRegistry.register_recipe('vector-db/qdrant', QdrantVectorDbBuilder)
