@@ -1,6 +1,8 @@
 DOCS:
 
 MAIN:
+- Create tests for new group/replicas feature based on vllm-data-parallel example. 
+- Add suport for replicas within same node
 
 Optional:
 - Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.
