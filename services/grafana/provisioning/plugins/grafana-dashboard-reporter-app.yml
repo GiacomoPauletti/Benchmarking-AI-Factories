@@ -1,0 +1,15 @@
+apiVersion: 1
+
+apps:
+  - type: mahendrapaipuri-dashboardreporter-app
+    disabled: false
+
+    jsonData:
+      appUrl: ''
+      layout: simple # simple | grid
+      dashboardMode: full
+      logo: '' # base64 encoded image content, no mime type header
+      headerTemplateFile: ''
+      footerTemplateFile: ''
+      maxBrowserWorkers: 2
+      maxRenderWorkers: 2

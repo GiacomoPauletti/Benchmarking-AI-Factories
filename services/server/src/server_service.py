@@ -58,38 +58,154 @@ class ServerService:
         return self._vector_db_service
 
     def start_service(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Start a service based on recipe using SLURM + Apptainer."""
+        """Start a service based on recipe using SLURM + Apptainer.
+        
+        If the recipe or config specifies replicas > 1, creates a service group
+        with multiple independent SLURM jobs.
+        """
         try:
-            # Use config as-is, with default nodes=1 if not specified
+            import yaml
+            
+            # Load recipe to check for replicas
+            recipe_path = self.deployer._find_recipe(recipe_name)
+            with open(recipe_path, 'r') as f:
+                recipe = yaml.safe_load(f)
+            
+            # Use config as-is - let deployer merge with recipe defaults
             full_config = config or {}
-            if "nodes" not in full_config:
-                full_config["nodes"] = 1
             
-            # Submit to SLURM
-            job_info = self.deployer.submit_job(recipe_name, full_config)
-            self.logger.info("Submitted job %s for recipe %s", job_info.get("job_id", job_info.get("id")), recipe_name)
+            # Determine number of replicas (config overrides recipe)
+            replicas = full_config.get('replicas', recipe.get('replicas', 1))
             
-            # Store complete service information
-            service_data = {
-                "id": job_info["id"],  # SLURM job ID is used directly as service ID
-                "name": job_info["name"],
-                "recipe_name": recipe_name,
-                "status": job_info["status"],
-                "config": full_config,
-                "created_at": job_info["created_at"]
-            }
-            self.service_manager.register_service(service_data)
-            # self.logger.info("Registered service %s", service_data["id"])
+            # If replicas == 1, use standard single-service flow
+            if replicas == 1:
+                return self._start_single_service(recipe_name, full_config)
             
-            return service_data
+            # If replicas > 1, create a service group
+            return self._start_service_group(recipe_name, full_config, replicas)
             
         except Exception as e:
             self.logger.exception("Failed to start service %s: %s", recipe_name, e)
             raise RuntimeError(f"Failed to start service: {str(e)}")
+    
+    def _start_single_service(self, recipe_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Start a single service (no replicas)."""
+        # Submit to SLURM
+        job_info = self.deployer.submit_job(recipe_name, config)
+        self.logger.info("Submitted job %s for recipe %s", job_info.get("job_id", job_info.get("id")), recipe_name)
+        
+        # Store complete service information
+        service_data = {
+            "id": job_info["id"],  # SLURM job ID is used directly as service ID
+            "name": job_info["name"],
+            "recipe_name": recipe_name,
+            "status": job_info["status"],
+            "config": config,
+            "created_at": job_info["created_at"]
+        }
+        self.service_manager.register_service(service_data)
+        
+        return service_data
+    
+    def _start_service_group(self, recipe_name: str, config: Dict[str, Any], replicas: int) -> Dict[str, Any]:
+        """Start a service group with multiple replicas."""
+        self.logger.info(f"Creating service group with {replicas} replicas for recipe {recipe_name}")
+        
+        # Create service group
+        group_id = self.service_manager.group_manager.create_group(
+            recipe_name=recipe_name,
+            num_replicas=replicas,
+            config=config
+        )
+        
+        # Port for all replicas (same port is fine since they're on different nodes)
+        replica_port = config.get('port', 8001)
+        
+        # Submit SLURM jobs for each replica
+        replica_jobs = []
+        for i in range(replicas):
+            # Create replica-specific config
+            replica_config = config.copy()
+            replica_config['replica_index'] = i
+            replica_config['replica_port'] = replica_port
+            
+            # Remove replicas field from replica config to avoid recursion
+            replica_config.pop('replicas', None)
+            
+            # Submit job
+            try:
+                job_info = self.deployer.submit_job(recipe_name, replica_config)
+                replica_id = job_info["id"]
+                
+                self.logger.info(f"Submitted replica {i} (job {replica_id}) for group {group_id}")
+                
+                # Register replica as a regular service
+                replica_data = {
+                    "id": replica_id,
+                    "name": f"{job_info['name']}-replica-{i}",
+                    "recipe_name": recipe_name,
+                    "status": job_info["status"],
+                    "config": replica_config,
+                    "created_at": job_info["created_at"],
+                    "group_id": group_id,  # Link back to group
+                    "replica_index": i
+                }
+                self.service_manager.register_service(replica_data)
+                
+                # Add replica to group
+                self.service_manager.group_manager.add_replica(
+                    group_id=group_id,
+                    replica_id=replica_id,
+                    replica_index=i,
+                    status=job_info["status"]
+                )
+                
+                replica_jobs.append(replica_data)
+                
+            except Exception as e:
+                self.logger.exception(f"Failed to submit replica {i}: {e}")
+                # Continue with other replicas
+        
+        # Get group info to return
+        group_info = self.service_manager.group_manager.get_group(group_id)
+        
+        # Return group information
+        return {
+            "id": group_id,
+            "name": f"{recipe_name}-group",
+            "recipe_name": recipe_name,
+            "status": group_info["status"],
+            "type": "group",
+            "replicas": group_info["replicas"],
+            "num_replicas": replicas,
+            "config": config,
+            "created_at": group_info["created_at"]
+        }
         
     def stop_service(self, service_id: str) -> bool:
-        """Stop running service by cancelling SLURM job."""
-        return self.deployer.cancel_job(service_id)
+        """Stop running service by cancelling SLURM job.
+        
+        If service_id is a group, stops all replicas in the group.
+        """
+        # Check if this is a service group
+        if self.service_manager.is_group(service_id):
+            self.logger.info(f"Stopping service group {service_id}")
+            replica_ids = self.service_manager.get_all_replica_ids(service_id)
+            
+            # Cancel all replica jobs
+            success = True
+            for replica_id in replica_ids:
+                if not self.deployer.cancel_job(replica_id):
+                    self.logger.warning(f"Failed to cancel replica {replica_id}")
+                    success = False
+            
+            # Delete the group
+            self.service_manager.group_manager.delete_group(service_id)
+            
+            return success
+        else:
+            # Regular single service
+            return self.deployer.cancel_job(service_id)
         
     def list_available_recipes(self) -> List[Dict[str, Any]]:
         """List all available service recipes."""
@@ -136,7 +252,27 @@ class ServerService:
         return services_with_status
     
     def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
-        """Get details of a specific service."""
+        """Get details of a specific service or service group."""
+        # Check if this is a service group
+        if self.service_manager.is_group(service_id):
+            group_info = self.service_manager.get_group_info(service_id)
+            if group_info:
+                # Update replica statuses
+                for replica in group_info["replicas"]:
+                    replica_id = replica["id"]
+                    status_dict = self.get_service_status(replica_id)
+                    replica["status"] = status_dict.get("status", "unknown")
+                    self.service_manager.update_replica_status(replica_id, replica["status"])
+                
+                # Ensure group_info has 'name' field for API compatibility
+                if "name" not in group_info:
+                    group_info["name"] = f"{group_info['recipe_name']}-group"
+                
+                # Group status is automatically updated by ServiceGroupManager
+                return group_info
+            return None
+        
+        # Regular single service
         stored_service = self.service_manager.get_service(service_id)
         if stored_service:
             status_dict = self.get_service_status(service_id)

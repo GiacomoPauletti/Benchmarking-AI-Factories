@@ -1,0 +1,22 @@
+name: vllm-single-node
+category: inference
+description: "vLLM single-node inference server optimized for 4-GPU tensor parallelism"
+version: "0.2.0"
+image: "vllm.sif"
+container_def: "vllm.def"
+ports:
+  - 8001
+environment:
+  VLLM_HOST: "0.0.0.0"
+  VLLM_PORT: "8001"
+  VLLM_MODEL: "Qwen/Qwen2.5-0.5B-Instruct"
+  VLLM_WORKDIR: "/workspace"
+  VLLM_LOGGING_LEVEL: "INFO"
+  # For single-node, use Ray backend (default) instead of external_launcher
+  VLLM_TENSOR_PARALLEL: "4"  # Use all 4 GPUs on the node
+resources:
+  nodes: "1"
+  cpu: "8"
+  memory: "64G"
+  time_limit: 15
+  gpu: "4"

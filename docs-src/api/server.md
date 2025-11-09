@@ -21,6 +21,25 @@ curl -X POST http://localhost:8001/api/v1/services \
   }'
 ```
 
+### Create Data-Parallel vLLM Service Group
+
+Create multiple vLLM replicas for high-throughput workloads. Requests are automatically load-balanced across healthy replicas:
+
+```bash
+curl -X POST http://localhost:8001/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipe_name": "inference/vllm-data-parallel",
+    "config": {
+      "replicas": 3
+    }
+  }'
+```
+
+The `replicas` field in the recipe YAML (or config override) creates a service group where each replica runs on a separate node. Prompts are distributed using round-robin load balancing with automatic failover.
+
+**Note**: Currently only single-node multi-GPU replicas are supported (e.g., 1 node × 4 GPUs per replica). Multi-node multi-GPU is not yet implemented.
+
 ### Create vLLM Service with Custom Model
 
 Specify a different model from HuggingFace:
@@ -29,7 +48,7 @@ Specify a different model from HuggingFace:
 curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "recipe_name": "inference/vllm",
+    "recipe_name": "inference/vllm-single-node",
     "config": {
       "environment": {
         "VLLM_MODEL": "gpt2"
@@ -57,23 +76,22 @@ These endpoints return model compatibility information, download statistics, and
 
 ### Create vLLM Service with Custom Model and Resources
 
-Override both model and resource allocation:
+Override both model and resource allocation (only single node supported for now):
 
 ```bash
 curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "recipe_name": "inference/vllm",
+    "recipe_name": "inference/vllm-single-node",
     "config": {
       "environment": {
         "VLLM_MODEL": "gpt2"
       },
       "resources": {
-        "nodes": 1,
         "cpu": "8",
         "memory": "64G",
         "time_limit": 120,
-        "gpu": "1"
+        "gpu": "4"
       }
     }
   }'
@@ -87,23 +105,22 @@ Full configuration with all available environment variables and resource setting
 curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "recipe_name": "inference/vllm",
+    "recipe_name": "inference/vllm-single-node",
     "config": {
       "environment": {
         "VLLM_MODEL": "gpt2",
         "VLLM_HOST": "0.0.0.0",
         "VLLM_PORT": "8001",
         "VLLM_MAX_MODEL_LEN": "2048",
-        "VLLM_TENSOR_PARALLEL_SIZE": "1",
+        "VLLM_TENSOR_PARALLEL_SIZE": "4",
         "VLLM_GPU_MEMORY_UTILIZATION": "0.9",
         "CUDA_VISIBLE_DEVICES": "0"
       },
       "resources": {
-        "nodes": 1,
         "cpu": "2",
         "memory": "32G",
         "time_limit": 15,
-        "gpu": "1"
+        "gpu": "4"
       }
     }
   }'
@@ -117,7 +134,7 @@ For testing or when GPU is not available:
 curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "recipe_name": "inference/vllm",
+    "recipe_name": "inference/vllm-single-node",
     "config": {
       "environment": {
         "VLLM_MODEL": "gpt2"
@@ -180,7 +197,7 @@ curl http://localhost:8001/api/v1/vllm/3652098/models
 
 ### Send Prompt to vLLM Service
 
-Send a text prompt and get a response:
+Send a text prompt to a single service or service group (group automatically routes to a healthy replica):
 
 ```bash
 curl -X POST http://localhost:8001/api/v1/vllm/3652098/prompt \
@@ -190,6 +207,8 @@ curl -X POST http://localhost:8001/api/v1/vllm/3652098/prompt \
     "max_tokens": 100
   }'
 ```
+
+When using a service group, the response includes `routed_to` and `group_id` fields showing which replica handled the request.
 
 ### Send Prompt with Advanced Options
 
@@ -289,11 +308,12 @@ If you prefer runnable Python demos that exercise the Server API (vector DB and 
 - `examples/qdrant_simple_example_with_metrics.py`
 - `examples/vllm_simple_example.py`
 - `examples/vllm_simple_example_with_metrics.py`
+- `examples/vllm_data_parallel_example.py` - demonstrates replica groups with load balancing
 
 Run an example locally (adjust arguments or SERVICE_ID inside the script where required):
 
 ```bash
-python3 examples/qdrant_simple_example_with_metrics.py
+python3 examples/vllm_data_parallel_example.py
 ```
 
 

@@ -214,11 +214,12 @@ Each recipe YAML file contains:
 | `environment` | Environment variables passed to the container |
 | `resources` | Default SLURM resource requests (can be overridden per job) |
 | `distributed` | Configuration for multi-node/multi-GPU execution |
+| `replicas` | Number of independent service instances for data parallelism (optional) |
 
 ### Example: vLLM Recipe
 
 ```yaml
-name: vllm
+name: vllm-example
 category: inference
 description: "vLLM high-performance inference server for large language models"
 version: "0.2.0"
@@ -234,28 +235,44 @@ environment:
   VLLM_MODEL: "Qwen/Qwen2.5-0.5B-Instruct"
   VLLM_WORKDIR: "/workspace"
   VLLM_LOGGING_LEVEL: "INFO"
+  VLLM_TENSOR_PARALLEL_SIZE: "4" 
 
 resources:
   nodes: "1"
   cpu: "2"
   memory: "32G"
   time_limit: 15
-  gpu: "1"
+  gpu: "4"
 
-distributed:
-  nproc_per_node: 1        # Processes per node (e.g., GPUs)
-  master_port: 29500       # Rendezvous port for distributed setup
-  rdzv_backend: c10d       # PyTorch distributed backend
 ```
+
+### Data Parallelism with Replicas
+
+The `replicas` field in recipe YAML creates a service group with multiple independent instances for high-throughput workloads:
+
+```yaml
+name: vllm-data-parallel
+category: inference
+# ... other fields ...
+resources:
+  nodes: "1"    # Each replica gets 1 node
+  gpu: "4"      # Each replica uses 4 GPUs
+replicas: 2     # Create 2 replicas (can be overridden in API request)
+```
+
+Each replica runs as a separate SLURM job on a different node. Requests are automatically load-balanced using round-robin with failover. If a replica fails, subsequent requests route to healthy replicas.
+
+**Limitation**: Currently only single-node multi-GPU replicas are supported. Multi-node multi-GPU (combining `distributed` and `replicas`) is not yet implemented.
 
 ### How Recipes Are Used
 
 1. **Service Creation**: User calls `/api/v1/services` with `recipe_name: "inference/vllm"`
 2. **Recipe Loading**: `RecipeLoader` reads `recipes/inference/vllm.yaml`
-3. **Configuration Merge**: User-provided config (e.g., `nodes: 2`) overrides recipe defaults
-4. **Builder Selection**: `BuilderRegistry` selects `VllmInferenceBuilder` (recipe-specific) or falls back to `InferenceRecipeBuilder` (category default)
-5. **Script Generation**: Builder generates SLURM script using recipe metadata and merged config
-6. **Job Submission**: Script is submitted via `sbatch` to SLURM
+3. **Configuration Merge**: User-provided config (e.g., `nodes: 2`, `replicas: 3`) overrides recipe defaults
+4. **Replica Detection**: If `replicas` field is present, create service group instead of single service
+5. **Builder Selection**: `BuilderRegistry` selects recipe-specific builder or category default
+6. **Script Generation**: Builder generates SLURM script(s) using recipe metadata and merged config
+7. **Job Submission**: For replicas, submit N independent SLURM jobs; for single service, submit one job
 
 ### Recipe-Specific Builders
 

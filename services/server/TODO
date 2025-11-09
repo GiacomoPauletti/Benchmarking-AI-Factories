@@ -1,9 +1,8 @@
 DOCS:
 
 MAIN:
-- Make log and status syncing/caching faster such that ssh tunnels with high latency (e.g. SLURM) do not time out.
-- Make Server API handle more than one request at a time (currently blocking). 
-- Check if correct error codes are being returned when prompting (200 vs 503)
+- Create tests for new group/replicas feature based on vllm-data-parallel example. 
+- Add suport for replicas within same node
 
 Optional:
 - Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.

@@ -3,12 +3,20 @@
 from typing import Dict, List, Optional, Any
 import requests
 from .inference_service import InferenceService
+from load_balancer import LoadBalancer
 
 DEFAULT_VLLM_PORT = 8001
+BASE_TIMEOUT = 30  # Base timeout for single-node setups
+TIMEOUT_PER_EXTRA_NODE = 30  # Additional timeout per extra node beyond first
 
 
 class VllmService(InferenceService):
     """Handles all vLLM-specific inference operations."""
+    
+    def __init__(self, deployer, service_manager, endpoint_resolver, logger):
+        """Initialize VllmService with load balancer support."""
+        super().__init__(deployer, service_manager, endpoint_resolver, logger)
+        self.load_balancer = LoadBalancer()
 
     def find_services(self) -> List[Dict[str, Any]]:
         """Find running VLLM services and their endpoints."""
@@ -185,12 +193,16 @@ class VllmService(InferenceService):
     def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str]:
         """Check if a vLLM service is ready to accept requests.
         
+        Uses a hybrid approach:
+        1. Check SLURM status first (fast, eliminates pending/building jobs)
+        2. For RUNNING jobs, test HTTP connection to /v1/models endpoint
+        
         Args:
             service_id: The service ID to check
             service_info: The service information dict
             
         Returns:
-            Tuple of (is_ready: bool, status: str) where status is the current LIVE status from SLURM
+            Tuple of (is_ready: bool, status: str) where status is the current LIVE status
         """
         # Get the current LIVE status from SLURM
         try:
@@ -199,42 +211,153 @@ class VllmService(InferenceService):
             self.logger.warning(f"Failed to get status for service {service_id}: {e}")
             basic_status = service_info.get("status", "unknown").lower()
         
-        # If not running yet, return basic status
+        # If not running yet, return basic status (no need to test connection)
         if basic_status != "running":
             is_ready = basic_status not in ["pending", "building", "starting"]
             return is_ready, basic_status
         
-        # For running jobs, check logs with vLLM-specific indicators
+        # For RUNNING jobs, test actual HTTP connection to confirm vLLM is ready
+        # This replaces log parsing with a definitive connection test
+        endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
+        if not endpoint:
+            # Job is running but endpoint not available yet
+            self.logger.debug(f"Service {service_id} is RUNNING but endpoint not resolved yet")
+            return False, "starting"
+        
+        # Try lightweight HTTP GET to /v1/models with short timeout
         try:
-            detailed_status = self.deployer.get_detailed_status_from_logs(
-                service_id,
-                ready_indicators=[
-                    'Application startup complete',
-                    'Uvicorn running on',
-                    'vLLM API server running'
-                ],
-                starting_indicators=[
-                    'Starting vLLM',
-                    'Starting container',
-                    'Running vLLM container',
-                    'Loading model'
-                ]
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            remote_host = parsed.hostname
+            remote_port = parsed.port or 8001
+            path = "/v1/models"
+            
+            self.logger.debug(f"Testing readiness via connection to {remote_host}:{remote_port}{path}")
+            
+            # Use SSH to make the HTTP request with short timeout
+            ssh_manager = self.deployer.ssh_manager
+            success, status_code, body = ssh_manager.http_request_via_ssh(
+                remote_host=remote_host,
+                remote_port=remote_port,
+                method="GET",
+                path=path,
+                timeout=8  # Short timeout for health checks (vs 30s for prompts)
             )
             
-            is_ready = detailed_status not in ["pending", "building", "starting"]
-            return is_ready, detailed_status
-            
+            # Connection succeeded and got valid HTTP response
+            if status_code >= 200 and status_code < 300:
+                self.logger.debug(f"Service {service_id} is ready (HTTP {status_code})")
+                return True, "running"
+            else:
+                # Connected but got error response - likely still initializing
+                self.logger.debug(f"Service {service_id} on {remote_host}:{remote_port} returned HTTP {status_code}")
+                return False, "starting"
+                
         except Exception as e:
-            self.logger.warning(f"Failed to get detailed status for service {service_id}: {e}")
-            # Fallback to basic status
-            is_ready = basic_status not in ["pending", "building", "starting"]
-            return is_ready, basic_status
+            # Connection failed - service not ready yet
+            self.logger.debug(f"Service {service_id} connection test to {remote_host}:{remote_port} failed: {e}")
+            return False, "starting"
 
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Send a prompt to a running VLLM service.
+        """Send a prompt to a running VLLM service or service group.
+        
+        For service groups: Uses round-robin load balancing to route to healthy replicas.
+        For single services: Routes directly.
         
         Tries chat endpoint first (for instruction-tuned models).
         Falls back to completions endpoint if chat template error occurs (for base models).
+        
+        Optimized: Skips expensive status checks for services that were recently used successfully.
+        """
+        # Check if this is a service group
+        if self.service_manager.is_group(service_id):
+            return self._prompt_service_group(service_id, prompt, **kwargs)
+        
+        # Single service flow (existing logic)
+        return self._prompt_single_service(service_id, prompt, **kwargs)
+    
+    def _prompt_service_group(self, group_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
+        """Send a prompt to a service group using load balancing with automatic failover.
+        
+        Strategy: Try replicas in round-robin order. Mark replica unhealthy only if it fails.
+        This allows replicas to be used as soon as they're allocated (regardless of status tracking).
+        """
+        # Get group info
+        group_info = self.service_manager.get_group_info(group_id)
+        if not group_info:
+            return {
+                "success": False,
+                "error": f"Service group {group_id} not found",
+                "message": "The requested service group could not be found.",
+                "service_id": group_id
+            }
+        
+        # Get all replicas (regardless of status)
+        all_replicas = group_info.get("replicas", [])
+        if not all_replicas:
+            return {
+                "success": False,
+                "error": "Service group has no replicas",
+                "message": "The service group exists but has no replicas.",
+                "service_id": group_id
+            }
+        
+        # Try replicas in round-robin order
+        # The load balancer will cycle through regardless of health status
+        attempted_replicas = []
+        
+        for attempt in range(len(all_replicas)):
+            # Get next replica based on round-robin
+            selected_replica = self.load_balancer.select_replica(group_id, all_replicas)
+            if not selected_replica:
+                return {
+                    "success": False,
+                    "error": "Load balancer failed to select replica",
+                    "message": "Internal error: load balancer could not select a replica.",
+                    "service_id": group_id
+                }
+            
+            replica_id = selected_replica["id"]
+            self.logger.info(f"Routing prompt for group {group_id} to replica {replica_id} (attempt {attempt + 1}/{len(all_replicas)})")
+            attempted_replicas.append(replica_id)
+            
+            # Try to send prompt to this replica
+            result = self._prompt_single_service(replica_id, prompt, **kwargs)
+            
+            if result.get("success"):
+                # Success! Mark replica as healthy and return
+                self.service_manager.update_replica_status(replica_id, "running")
+                result["routed_to"] = replica_id
+                result["group_id"] = group_id
+                self.logger.info(f"Successfully routed to replica {replica_id}")
+                return result
+            else:
+                # This replica failed - mark it unhealthy and try next one
+                self.logger.warning(f"Replica {replica_id} failed: {result.get('error')}. Trying next replica...")
+                self.service_manager.update_replica_status(replica_id, "failed")
+                
+                # If this is not the last attempt, continue to next replica
+                if attempt < len(all_replicas) - 1:
+                    continue
+        
+        # All replicas failed
+        return {
+            "success": False,
+            "error": "All replicas failed",
+            "message": f"Could not route prompt to any of the {len(all_replicas)} replicas.",
+            "service_id": group_id,
+            "num_replicas": len(all_replicas),
+            "attempted_replicas": attempted_replicas,
+            "replica_statuses": {r["id"]: r["status"] for r in all_replicas}
+        }
+    
+    def _prompt_single_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
+        """Send a prompt to a single VLLM service (not a group).
+        
+        Tries chat endpoint first (for instruction-tuned models).
+        Falls back to completions endpoint if chat template error occurs (for base models).
+        
+        Optimized: Skips expensive status checks for services that were recently used successfully.
         """
         # Try to get service info directly (works for just-created services too)
         service_info = self.service_manager.get_service(service_id)
@@ -256,21 +379,30 @@ class VllmService(InferenceService):
                 "service_id": service_id
             }
         
-        # Check if service is ready
-        is_ready, status = self._check_service_ready(service_id, service_info)
-        if not is_ready:
-            return {
-                "success": False,
-                "error": f"Service is not ready yet (status: {status})",
-                "message": "The vLLM service is still starting up. Please wait a moment and try again.",
-                "service_id": service_id,
-                "status": status
-            }
+        # FAST PATH: Skip expensive checks if service was recently used successfully (within 5 minutes)
+        skip_readiness_check = self.service_manager.is_service_recently_healthy(service_id, max_age_seconds=300)
+        
+        if skip_readiness_check:
+            self.logger.debug(f"Fast path: Skipping readiness check for recently-used service {service_id}")
+            status = "running"  # Assume it's still running
+        else:
+            # SLOW PATH: Do full readiness check for services not recently used
+            is_ready, status = self._check_service_ready(service_id, service_info)
+            if not is_ready:
+                return {
+                    "success": False,
+                    "error": f"Service is not ready yet (status: {status})",
+                    "message": "The vLLM service is still starting up. Please wait a moment and try again.",
+                    "service_id": service_id,
+                    "status": status
+                }
         
         # Try to get the endpoint
         endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
         if not endpoint:
             # Service exists but endpoint not available yet
+            # Invalidate health status since endpoint is missing
+            self.service_manager.invalidate_service_health(service_id)
             return {
                 "success": False,
                 "error": "Service endpoint not available",
@@ -292,21 +424,33 @@ class VllmService(InferenceService):
         
         try:
             # Try chat endpoint first (works for instruction-tuned models)
-            response = self._try_chat_endpoint(endpoint, model, prompt, **kwargs)
+            response = self._try_chat_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
             
             # Check if we got a chat template error
             if self._is_chat_template_error(response):
                 self.logger.info("Chat template error detected, retrying with completions endpoint")
                 
                 # Retry with completions endpoint (works for base models)
-                response = self._try_completions_endpoint(endpoint, model, prompt, **kwargs)
-                return self._parse_completions_response(response, endpoint, service_id)
+                response = self._try_completions_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
+                result = self._parse_completions_response(response, endpoint, service_id)
+            else:
+                # No chat template error - parse as chat response
+                result = self._parse_chat_response(response, endpoint, service_id)
             
-            # No chat template error - parse as chat response
-            return self._parse_chat_response(response, endpoint, service_id)
+            # Mark service as healthy on successful response
+            if result.get("success"):
+                self.service_manager.mark_service_healthy(service_id)
+            else:
+                # Invalidate health on error response
+                self.service_manager.invalidate_service_health(service_id)
+            
+            return result
                 
         except requests.exceptions.RequestException as e:
             error_str = str(e)
+            
+            # Invalidate health status on any request exception
+            self.service_manager.invalidate_service_health(service_id)
             
             # Check if it's a connection error (service not ready)
             if "Connection refused" in error_str or "NewConnectionError" in error_str:
@@ -329,13 +473,42 @@ class VllmService(InferenceService):
                 "endpoint": endpoint
             }
         except Exception as e:
+            # Invalidate health status on any exception
+            self.service_manager.invalidate_service_health(service_id)
+            
             self.logger.exception("Error in prompt")
             return {
                 "success": False,
                 "error": f"Error processing request: {str(e)}"
             }
 
-    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
+    def _calculate_timeout(self, service_id: str) -> int:
+        """Calculate appropriate timeout based on number of nodes in service.
+        
+        Multi-node tensor parallelism requires more time for NCCL communication
+        and coordination. Formula: BASE_TIMEOUT + (num_nodes - 1) * TIMEOUT_PER_EXTRA_NODE
+        
+        Args:
+            service_id: The service ID to check node count for
+            
+        Returns:
+            Timeout in seconds
+        """
+        try:
+            service_info = self.service_manager.get_service(service_id)
+            if service_info:
+                node_count = service_info.get("node_count", 1)
+                if node_count > 1:
+                    timeout = BASE_TIMEOUT + (node_count - 1) * TIMEOUT_PER_EXTRA_NODE
+                    self.logger.debug(f"Using extended timeout {timeout}s for {node_count}-node service {service_id}")
+                    return timeout
+        except Exception as e:
+            self.logger.warning(f"Failed to get node count for service {service_id}: {e}")
+        
+        # Default to base timeout
+        return BASE_TIMEOUT
+
+    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
         """Try to send prompt using chat completions endpoint."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -352,7 +525,10 @@ class VllmService(InferenceService):
             "stream": False
         }
         
-        self.logger.debug("Trying chat endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
+        # Calculate timeout based on node count
+        timeout = self._calculate_timeout(service_id) if service_id else BASE_TIMEOUT
+        
+        self.logger.debug("Trying chat endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
         # Use SSH to make the HTTP request
         ssh_manager = self.deployer.ssh_manager
@@ -362,7 +538,7 @@ class VllmService(InferenceService):
             method="POST",
             path=path,
             json_data=request_data,
-            timeout=30
+            timeout=timeout
         )
         
         # Create a mock response object that matches requests.Response interface
@@ -378,7 +554,7 @@ class VllmService(InferenceService):
         
         return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
 
-    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, **kwargs) -> Dict[str, Any]:
+    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
         """Try to send prompt using completions endpoint (for base models)."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -395,7 +571,10 @@ class VllmService(InferenceService):
             "stream": False
         }
         
-        self.logger.debug("Trying completions endpoint via SSH: %s:%s%s", remote_host, remote_port, path)
+        # Calculate timeout based on node count
+        timeout = self._calculate_timeout(service_id) if service_id else BASE_TIMEOUT
+        
+        self.logger.debug("Trying completions endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
         # Use SSH to make the HTTP request
         ssh_manager = self.deployer.ssh_manager
@@ -405,7 +584,7 @@ class VllmService(InferenceService):
             method="POST",
             path=path,
             json_data=request_data,
-            timeout=30
+            timeout=timeout
         )
         
         # Create a mock response object that matches requests.Response interface

@@ -12,70 +12,7 @@ This script demonstrates the basic workflow:
 import requests
 import time
 import os
-
-
-def wait_for_server(server_url: str, max_wait: int = 30) -> bool:
-    """Wait for server to be ready."""
-    print(f"Waiting for server at {server_url}...")
-    start = time.time()
-    
-    while time.time() - start < max_wait:
-        try:
-            response = requests.get(f"{server_url}/health", timeout=2)
-            if response.status_code == 200:
-                print("Server is ready!")
-                return True
-        except requests.exceptions.RequestException:
-            pass
-        time.sleep(2)
-    
-    print("Server not available")
-    return False
-
-
-def wait_for_service_ready(server_url: str, service_id: str, max_wait: int = 300) -> bool:
-    """
-    Wait for service to be ready by polling the status endpoint.
-    """
-    print(f"Waiting for service {service_id} to be ready...")
-    api_base = f"{server_url}/api/v1"
-    start = time.time()
-    last_status = None
-    
-    while time.time() - start < max_wait:
-        try:
-            # Poll the status endpoint
-            response = requests.get(
-                f"{api_base}/services/{service_id}/status",
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                status_data = response.json()
-                current_status = status_data.get("status")
-                
-                # Print status changes
-                if current_status != last_status:
-                    elapsed = int(time.time() - start)
-                    print(f"  Status: {current_status} (waited {elapsed}s)")
-                    last_status = current_status
-                
-                # Service is ready when status is "running"
-                if current_status == "running":
-                    print(f"[+] Service is ready!")
-                    return True
-                
-                # Service failed
-                if current_status in ["failed", "cancelled"]:
-                    print(f"[-] Service failed with status: {current_status}")
-                    return False
-        except requests.exceptions.RequestException:
-            pass
-        
-        time.sleep(3)
-    
-    print(f"[-] Service did not become ready within {max_wait}s")
-    return False
+from utils.server_utils import wait_for_server, wait_for_service_ready
 
 
 def main():
@@ -85,7 +22,6 @@ def main():
     # Configuration
     server_url = os.getenv("SERVER_URL", "http://localhost:8001")
     api_base = f"{server_url}/api/v1"
-    model = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     
     service_id = None
     
@@ -97,15 +33,11 @@ def main():
             return
         
         # Step 2: Create vLLM service
-        print(f"\n[*] Creating vLLM service with model: {model}...")
+        print(f"\n[*] Creating vLLM service...")
         response = requests.post(
             f"{api_base}/services",
             json={
-                "recipe_name": "inference/vllm",
-                "config": {
-                    "nodes": 2,  
-                    "model": model
-                }
+                "recipe_name": "inference/vllm-single-node"
             },
             timeout=60
         )

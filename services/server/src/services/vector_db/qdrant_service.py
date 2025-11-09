@@ -49,12 +49,16 @@ class QdrantService(VectorDbService):
     def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str]:
         """Check if a vector DB service is ready to accept requests.
         
+        Uses a hybrid approach:
+        1. Check SLURM status first (fast filter for pending/building jobs)
+        2. For RUNNING jobs, test HTTP connection to /collections endpoint
+        
         Args:
             service_id: The service ID to check
             service_info: The service information dict
             
         Returns:
-            Tuple of (is_ready: bool, status: str) where status is the current LIVE status from SLURM
+            Tuple of (is_ready: bool, status: str) where status is the current LIVE status
         """
         # Get the current LIVE status from SLURM
         try:
@@ -63,46 +67,52 @@ class QdrantService(VectorDbService):
             self.logger.warning(f"Failed to get status for service {service_id}: {e}")
             basic_status = service_info.get("status", "unknown").lower()
         
-        # If not running yet, return basic status
+        # If not running yet, return basic status (no need to test connection)
         if basic_status != "running":
             is_ready = basic_status not in ["pending", "building", "starting"]
             return is_ready, basic_status
         
-        # For running jobs, check logs with vector-db specific indicators
+        # For RUNNING jobs, test actual HTTP connection to confirm Qdrant is ready
+        # This replaces log parsing with a definitive connection test
+        endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_QDRANT_PORT)
+        if not endpoint:
+            # Job is running but endpoint not available yet
+            self.logger.debug(f"Service {service_id} is RUNNING but endpoint not resolved yet")
+            return False, "starting"
+        
+        # Try lightweight HTTP GET to /collections with short timeout
         try:
-            detailed_status = self.deployer.get_detailed_status_from_logs(
-                service_id,
-                ready_indicators=[
-                    'listening on 6333',  # Qdrant
-                    'Qdrant HTTP listening on',  # Qdrant
-                    'starting service:',  # Qdrant actix server
-                    'Server started'  # Generic vector DB indicator
-                ],
-                starting_indicators=[
-                    'Starting Qdrant',
-                    'Starting container',
-                    'Running vLLM container'  # Generic container start
-                ]
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            remote_host = parsed.hostname
+            remote_port = parsed.port or DEFAULT_QDRANT_PORT
+            path = "/collections"
+            
+            self.logger.debug(f"Testing readiness via connection to {remote_host}:{remote_port}{path}")
+            
+            # Use SSH to make the HTTP request with short timeout
+            ssh_manager = self.deployer.ssh_manager
+            success, status_code, body = ssh_manager.http_request_via_ssh(
+                remote_host=remote_host,
+                remote_port=remote_port,
+                method="GET",
+                path=path,
+                timeout=8  # Short timeout for health checks
             )
             
-            # If detailed status says it's running, it's ready
-            if detailed_status == 'running':
-                return True, 'running'
-            
-            # If detailed status is still starting, service is NOT ready yet
-            # (we need to wait for the log indicators showing it's actually listening)
-            if detailed_status == 'starting':
-                return False, 'starting'
-            
-            # For building or other statuses
-            is_ready = detailed_status not in ["pending", "building", "starting"]
-            return is_ready, detailed_status
-            
+            # Connection succeeded and got valid HTTP response
+            if status_code >= 200 and status_code < 300:
+                self.logger.debug(f"Service {service_id} is ready (HTTP {status_code})")
+                return True, "running"
+            else:
+                # Connected but got error response - likely still initializing
+                self.logger.debug(f"Service {service_id} connected but returned HTTP {status_code}")
+                return False, "starting"
+                
         except Exception as e:
-            self.logger.warning(f"Failed to get detailed status for service {service_id}: {e}")
-            # Fallback: return basic status without assuming readiness
-            # We should NOT assume it's ready just because we can construct an endpoint URL
-            return False, basic_status
+            # Connection failed - service not ready yet
+            self.logger.debug(f"Service {service_id} connection test failed: {e}")
+            return False, "starting"
 
     def get_collections(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
         """Get list of collections from a Qdrant service.

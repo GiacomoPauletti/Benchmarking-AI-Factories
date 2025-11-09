@@ -21,13 +21,24 @@ class ServiceRequest(BaseModel):
 
 
 class ServiceResponse(BaseModel):
-    """Schema for service responses."""
-    id: str  # This is the SLURM job ID
+    """Schema for service responses.
+    
+    For regular services, this contains basic service information.
+    For service groups (replicas), includes additional fields for group management.
+    """
+    id: str  # This is the SLURM job ID (or group ID for service groups)
     name: str
     recipe_name: str
     status: str
     config: Dict[str, Any]
     created_at: str
+    
+    # Optional fields for service groups
+    type: Optional[str] = None  # "group" for service groups
+    replicas: Optional[List[Dict[str, Any]]] = None  # List of replica info dicts
+    num_replicas: Optional[int] = None  # Total number of replicas
+    group_id: Optional[str] = None  # For replicas: ID of parent group
+    replica_index: Optional[int] = None  # For replicas: index within group
 
 
 class RecipeResponse(BaseModel):
