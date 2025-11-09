@@ -127,22 +127,15 @@ class MonitoringWorkflow:
         Returns:
             Service data dictionary with id, name, status, etc.
         """
-        print("[LAUNCH] Step 2a: Launching vLLM service...")
-        
-        # Server API expects recipe_name and optional config
-        payload = {
-            "recipe_name": "inference/vllm",
-            "config": {
-                "resources": {
-                    "nodes": "1"
-                }
-            }
-        }
-        
+        print("[LAUNCH] Step 2a: Launching single noded vLLM service...")
+      
         try:
             response = requests.post(
                 f"{self.server_url}/api/v1/services",
-                json=payload
+                json={
+                    "recipe_name": "inference/vllm-single-node"
+                },
+                timeout=60
             )
             response.raise_for_status()
             service = response.json()
