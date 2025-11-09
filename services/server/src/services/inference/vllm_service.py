@@ -185,12 +185,16 @@ class VllmService(InferenceService):
     def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str]:
         """Check if a vLLM service is ready to accept requests.
         
+        Uses a hybrid approach:
+        1. Check SLURM status first (fast, eliminates pending/building jobs)
+        2. For RUNNING jobs, test HTTP connection to /v1/models endpoint
+        
         Args:
             service_id: The service ID to check
             service_info: The service information dict
             
         Returns:
-            Tuple of (is_ready: bool, status: str) where status is the current LIVE status from SLURM
+            Tuple of (is_ready: bool, status: str) where status is the current LIVE status
         """
         # Get the current LIVE status from SLURM
         try:
@@ -199,42 +203,60 @@ class VllmService(InferenceService):
             self.logger.warning(f"Failed to get status for service {service_id}: {e}")
             basic_status = service_info.get("status", "unknown").lower()
         
-        # If not running yet, return basic status
+        # If not running yet, return basic status (no need to test connection)
         if basic_status != "running":
             is_ready = basic_status not in ["pending", "building", "starting"]
             return is_ready, basic_status
         
-        # For running jobs, check logs with vLLM-specific indicators
+        # For RUNNING jobs, test actual HTTP connection to confirm vLLM is ready
+        # This replaces log parsing with a definitive connection test
+        endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
+        if not endpoint:
+            # Job is running but endpoint not available yet
+            self.logger.debug(f"Service {service_id} is RUNNING but endpoint not resolved yet")
+            return False, "starting"
+        
+        # Try lightweight HTTP GET to /v1/models with short timeout
         try:
-            detailed_status = self.deployer.get_detailed_status_from_logs(
-                service_id,
-                ready_indicators=[
-                    'Application startup complete',
-                    'Uvicorn running on',
-                    'vLLM API server running'
-                ],
-                starting_indicators=[
-                    'Starting vLLM',
-                    'Starting container',
-                    'Running vLLM container',
-                    'Loading model'
-                ]
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            remote_host = parsed.hostname
+            remote_port = parsed.port or 8001
+            path = "/v1/models"
+            
+            self.logger.debug(f"Testing readiness via connection to {remote_host}:{remote_port}{path}")
+            
+            # Use SSH to make the HTTP request with short timeout
+            ssh_manager = self.deployer.ssh_manager
+            success, status_code, body = ssh_manager.http_request_via_ssh(
+                remote_host=remote_host,
+                remote_port=remote_port,
+                method="GET",
+                path=path,
+                timeout=8  # Short timeout for health checks (vs 30s for prompts)
             )
             
-            is_ready = detailed_status not in ["pending", "building", "starting"]
-            return is_ready, detailed_status
-            
+            # Connection succeeded and got valid HTTP response
+            if status_code >= 200 and status_code < 300:
+                self.logger.debug(f"Service {service_id} is ready (HTTP {status_code})")
+                return True, "running"
+            else:
+                # Connected but got error response - likely still initializing
+                self.logger.debug(f"Service {service_id} connected but returned HTTP {status_code}")
+                return False, "starting"
+                
         except Exception as e:
-            self.logger.warning(f"Failed to get detailed status for service {service_id}: {e}")
-            # Fallback to basic status
-            is_ready = basic_status not in ["pending", "building", "starting"]
-            return is_ready, basic_status
+            # Connection failed - service not ready yet
+            self.logger.debug(f"Service {service_id} connection test failed: {e}")
+            return False, "starting"
 
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a running VLLM service.
         
         Tries chat endpoint first (for instruction-tuned models).
         Falls back to completions endpoint if chat template error occurs (for base models).
+        
+        Optimized: Skips expensive status checks for services that were recently used successfully.
         """
         # Try to get service info directly (works for just-created services too)
         service_info = self.service_manager.get_service(service_id)
@@ -256,21 +278,30 @@ class VllmService(InferenceService):
                 "service_id": service_id
             }
         
-        # Check if service is ready
-        is_ready, status = self._check_service_ready(service_id, service_info)
-        if not is_ready:
-            return {
-                "success": False,
-                "error": f"Service is not ready yet (status: {status})",
-                "message": "The vLLM service is still starting up. Please wait a moment and try again.",
-                "service_id": service_id,
-                "status": status
-            }
+        # FAST PATH: Skip expensive checks if service was recently used successfully (within 5 minutes)
+        skip_readiness_check = self.service_manager.is_service_recently_healthy(service_id, max_age_seconds=300)
+        
+        if skip_readiness_check:
+            self.logger.debug(f"Fast path: Skipping readiness check for recently-used service {service_id}")
+            status = "running"  # Assume it's still running
+        else:
+            # SLOW PATH: Do full readiness check for services not recently used
+            is_ready, status = self._check_service_ready(service_id, service_info)
+            if not is_ready:
+                return {
+                    "success": False,
+                    "error": f"Service is not ready yet (status: {status})",
+                    "message": "The vLLM service is still starting up. Please wait a moment and try again.",
+                    "service_id": service_id,
+                    "status": status
+                }
         
         # Try to get the endpoint
         endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
         if not endpoint:
             # Service exists but endpoint not available yet
+            # Invalidate health status since endpoint is missing
+            self.service_manager.invalidate_service_health(service_id)
             return {
                 "success": False,
                 "error": "Service endpoint not available",
@@ -300,13 +331,25 @@ class VllmService(InferenceService):
                 
                 # Retry with completions endpoint (works for base models)
                 response = self._try_completions_endpoint(endpoint, model, prompt, **kwargs)
-                return self._parse_completions_response(response, endpoint, service_id)
+                result = self._parse_completions_response(response, endpoint, service_id)
+            else:
+                # No chat template error - parse as chat response
+                result = self._parse_chat_response(response, endpoint, service_id)
             
-            # No chat template error - parse as chat response
-            return self._parse_chat_response(response, endpoint, service_id)
+            # Mark service as healthy on successful response
+            if result.get("success"):
+                self.service_manager.mark_service_healthy(service_id)
+            else:
+                # Invalidate health on error response
+                self.service_manager.invalidate_service_health(service_id)
+            
+            return result
                 
         except requests.exceptions.RequestException as e:
             error_str = str(e)
+            
+            # Invalidate health status on any request exception
+            self.service_manager.invalidate_service_health(service_id)
             
             # Check if it's a connection error (service not ready)
             if "Connection refused" in error_str or "NewConnectionError" in error_str:
@@ -329,6 +372,9 @@ class VllmService(InferenceService):
                 "endpoint": endpoint
             }
         except Exception as e:
+            # Invalidate health status on any exception
+            self.service_manager.invalidate_service_health(service_id)
+            
             self.logger.exception("Error in prompt")
             return {
                 "success": False,

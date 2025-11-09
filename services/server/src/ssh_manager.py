@@ -198,6 +198,7 @@ class SSHManager:
         """Fetch a file from the remote MeluXina filesystem via SSH.
         
         Uses SSH to cat the remote file and save it locally.
+        Optimized to reduce retry attempts for faster log fetching.
         
         Args:
             remote_path: Absolute path to the file on MeluXina
@@ -208,10 +209,10 @@ class SSHManager:
         """
         import time
 
-        # Try a few times because remote FS or SSH may be slow to produce the file
-        max_attempts = 3
+        # Reduced retry attempts for faster log fetching (was 3, now 1)
+        max_attempts = 1
         attempt = 0
-        per_attempt_timeout = 30
+        per_attempt_timeout = 20  # Reduced from 30 to 20
 
         while attempt < max_attempts:
             attempt += 1
@@ -219,9 +220,9 @@ class SSHManager:
             exists = False
             non_empty = False
             try:
-                exists, _, _ = self.execute_remote_command(f"test -f {remote_path}", timeout=10)
+                exists, _, _ = self.execute_remote_command(f"test -f {remote_path}", timeout=5)
                 if exists:
-                    non_empty, _, _ = self.execute_remote_command(f"test -s {remote_path}", timeout=10)
+                    non_empty, _, _ = self.execute_remote_command(f"test -s {remote_path}", timeout=5)
             except Exception:
                 exists = False
                 non_empty = False
@@ -259,13 +260,13 @@ class SSHManager:
                 except Exception as e:
                     self.logger.warning(f"Error fetching remote file {remote_path} (attempt {attempt}): {e}")
 
-            # Backoff before retrying
+            # Backoff before retrying (though we typically only have 1 attempt now)
             if attempt < max_attempts:
-                sleep_seconds = 2 ** attempt  # 2,4,8
+                sleep_seconds = 2
                 self.logger.debug(f"Waiting {sleep_seconds}s before retrying fetch of {remote_path}")
                 time.sleep(sleep_seconds)
 
-        self.logger.warning(f"Exhausted attempts fetching remote file: {remote_path}")
+        self.logger.debug(f"Could not fetch remote file after {max_attempts} attempt(s): {remote_path}")
         return False
     
     def sync_directory_to_remote(self, local_dir: Path, remote_dir: str, 

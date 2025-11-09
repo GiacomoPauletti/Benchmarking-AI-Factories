@@ -41,6 +41,7 @@ class ServiceManager:
         self._services: Dict[str, Dict[str, Any]] = {}
         self._services_by_recipe: Dict[str, List[str]] = defaultdict(list)
         self._services_by_status: Dict[str, List[str]] = defaultdict(list)
+        self._last_successful_prompt: Dict[str, float] = {}  # {service_id: timestamp}
         self._instance_lock = threading.RLock()
 
     def register_service(self, service_data: Dict[str, Any]) -> None:
@@ -231,3 +232,46 @@ class ServiceManager:
                     matches.append(service_data.copy())
 
             return matches
+    
+    def mark_service_healthy(self, service_id: str) -> None:
+        """
+        Mark a service as healthy after successful prompt response.
+        
+        This is used to skip expensive status checks for recently-used services.
+        
+        Args:
+            service_id: Service ID to mark as healthy
+        """
+        import time
+        with self._instance_lock:
+            self._last_successful_prompt[service_id] = time.time()
+    
+    def is_service_recently_healthy(self, service_id: str, max_age_seconds: int = 300) -> bool:
+        """
+        Check if a service was successfully used recently.
+        
+        Args:
+            service_id: Service ID to check
+            max_age_seconds: Maximum age in seconds to consider "recent" (default: 5 minutes)
+        
+        Returns:
+            True if service was successfully used within max_age_seconds, False otherwise
+        """
+        import time
+        with self._instance_lock:
+            if service_id not in self._last_successful_prompt:
+                return False
+            
+            last_success_time = self._last_successful_prompt[service_id]
+            age = time.time() - last_success_time
+            return age < max_age_seconds
+    
+    def invalidate_service_health(self, service_id: str) -> None:
+        """
+        Invalidate health status for a service (e.g., after an error).
+        
+        Args:
+            service_id: Service ID to invalidate
+        """
+        with self._instance_lock:
+            self._last_successful_prompt.pop(service_id, None)

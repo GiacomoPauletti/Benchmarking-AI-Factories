@@ -172,8 +172,18 @@ class SlurmDeployer:
         if job_id == 0:
             raise RuntimeError(f"SLURM job submission failed: received job_id=0. Response: {result}")
         
-        # Track this job for background updates
+        # Track this job for background updates IMMEDIATELY
         self.cache_manager.track_job(str(job_id))
+        
+        # Pre-warm the cache by fetching initial status and details
+        # This ensures the cache is hot when the first prompt arrives
+        try:
+            initial_status = self.get_job_status(str(job_id))
+            self.get_job_details(str(job_id))
+            self.logger.debug(f"Pre-warmed cache for new job {job_id} (status: {initial_status})")
+        except Exception as e:
+            self.logger.warning(f"Failed to pre-warm cache for job {job_id}: {e}")
+            # Not critical - background updates will handle it
         
         return {
             "id": str(job_id),  # Use SLURM job ID directly as service ID
@@ -295,9 +305,21 @@ class SlurmDeployer:
                 return 'building'
         
         # Check if application is fully ready (using provided indicators)
+        found_ready = False
         for indicator in ready_indicators:
             if indicator in logs:
-                return 'running'
+                found_ready = True
+                break
+        
+        if found_ready:
+            return 'running'
+        
+        # Debug: Log what we're actually seeing if no ready indicators match
+        self.logger.debug(f"Job {job_id}: No ready indicators found. Checking starting indicators...")
+        self.logger.debug(f"Ready indicators checked: {ready_indicators}")
+        # Show a sample of the logs (last 500 chars)
+        log_sample = logs[-500:] if len(logs) > 500 else logs
+        self.logger.debug(f"Log sample (last 500 chars): {log_sample}")
         
         # Check for starting phase (using provided indicators)
         for indicator in starting_indicators:
@@ -408,6 +430,64 @@ class SlurmDeployer:
             True if file was successfully fetched, False otherwise
         """
         return self.ssh_manager.fetch_remote_file(remote_path, local_path)
+    
+    def _fetch_remote_log_file_tail(self, remote_path: str, local_path: Path, lines: int = 200) -> bool:
+        """Fetch only the last N lines of a log file from remote using tail.
+        
+        This is much faster than fetching the entire file, especially for large logs.
+        
+        Args:
+            remote_path: Absolute path to the log file on MeluXina
+            local_path: Local path where the file should be saved
+            lines: Number of lines to fetch from the end of the file
+            
+        Returns:
+            True if file was successfully fetched, False otherwise
+        """
+        import subprocess
+        
+        try:
+            # Check if file exists on remote
+            exists, _, _ = self.ssh_manager.execute_remote_command(
+                f"test -f {remote_path}", 
+                timeout=5
+            )
+            
+            if not exists:
+                self.logger.debug(f"Remote file does not exist: {remote_path}")
+                return False
+            
+            # Use tail to fetch only the last N lines
+            cmd = self.ssh_manager.ssh_base_cmd + [
+                self.ssh_manager.ssh_target, 
+                f"tail -n {lines} {remote_path}"
+            ]
+            
+            env = os.environ.copy()
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,  # Shorter timeout since we're fetching less data
+                env=env
+            )
+            
+            if result.returncode == 0:
+                # Save the output to local file
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text(result.stdout)
+                self.logger.debug(f"Successfully fetched last {lines} lines from {remote_path}")
+                return True
+            else:
+                self.logger.warning(f"Failed to fetch tail of {remote_path}: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"Timeout fetching tail of remote file: {remote_path}")
+            return False
+        except Exception as e:
+            self.logger.warning(f"Error fetching tail of remote file {remote_path}: {e}")
+            return False
 
     def get_job_logs(self, job_id: str) -> str:
         """Get logs from SLURM job.
@@ -417,7 +497,11 @@ class SlurmDeployer:
         return self.cache_manager.get_logs(str(job_id))
     
     def _fetch_job_logs_uncached(self, job_id: str) -> str:
-        """Get logs from SLURM job, fetching from remote if needed."""
+        """Get logs from SLURM job, fetching from remote if needed.
+        
+        Optimized to fetch only the last 200 lines using tail for faster retrieval.
+        Only fetches stdout since stderr rarely contains readiness indicators.
+        """
         try:
             # Use local path for cached logs
             local_log_dir = self.local_base_path / "logs"
@@ -433,39 +517,22 @@ class SlurmDeployer:
             # SLURM creates log files as: {recipe_name}_{job_id}.out
             # (using the 'name' field from job submission, which is the recipe name)
             stdout_local = local_log_dir / f"{recipe_name}_{job_id}.out"
-            stderr_local = local_log_dir / f"{recipe_name}_{job_id}.err"
-            
             stdout_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.out"
-            stderr_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.err"
             
             logs = []
             
-            # Always re-fetch logs from remote to get latest content
-            # (logs are continuously being written while job runs)
-            self.logger.info(f"Fetching latest stdout for job {job_id} from MeluXina...")
-            self._fetch_remote_log_file(stdout_remote, stdout_local)
+            # Fetch only the last 200 lines of stdout using tail for faster retrieval
+            # (readiness indicators are typically near the end of logs)
+            self._fetch_remote_log_file_tail(stdout_remote, stdout_local, lines=200)
             
             if stdout_local.exists():
                 try:
                     content = stdout_local.read_text()
-                    logs.append(f"=== SLURM STDOUT ({stdout_local.name}) ===\n{content}")
+                    logs.append(f"=== SLURM STDOUT (last 200 lines) ({stdout_local.name}) ===\n{content}")
                 except Exception as e:
                     logs.append(f"=== SLURM STDOUT ===\nError reading {stdout_local.name}: {e}")
             else:
                 logs.append(f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)")
-            
-            # Always re-fetch stderr from remote to get latest content
-            self.logger.info(f"Fetching latest stderr for job {job_id} from MeluXina...")
-            self._fetch_remote_log_file(stderr_remote, stderr_local)
-            
-            if stderr_local.exists():
-                try:
-                    content = stderr_local.read_text()
-                    logs.append(f"=== SLURM STDERR ({stderr_local.name}) ===\n{content}")
-                except Exception as e:
-                    logs.append(f"=== SLURM STDERR ===\nError reading {stderr_local.name}: {e}")
-            else:
-                logs.append(f"=== SLURM STDERR ===\nLog not yet available (job may not have started)")
             
             return "\n\n".join(logs)
             
