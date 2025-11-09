@@ -3,6 +3,7 @@
 from typing import Dict, List, Optional, Any
 import requests
 from .inference_service import InferenceService
+from load_balancer import LoadBalancer
 
 DEFAULT_VLLM_PORT = 8001
 BASE_TIMEOUT = 30  # Base timeout for single-node setups
@@ -11,6 +12,11 @@ TIMEOUT_PER_EXTRA_NODE = 30  # Additional timeout per extra node beyond first
 
 class VllmService(InferenceService):
     """Handles all vLLM-specific inference operations."""
+    
+    def __init__(self, deployer, service_manager, endpoint_resolver, logger):
+        """Initialize VllmService with load balancer support."""
+        super().__init__(deployer, service_manager, endpoint_resolver, logger)
+        self.load_balancer = LoadBalancer()
 
     def find_services(self) -> List[Dict[str, Any]]:
         """Find running VLLM services and their endpoints."""
@@ -253,7 +259,100 @@ class VllmService(InferenceService):
             return False, "starting"
 
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Send a prompt to a running VLLM service.
+        """Send a prompt to a running VLLM service or service group.
+        
+        For service groups: Uses round-robin load balancing to route to healthy replicas.
+        For single services: Routes directly.
+        
+        Tries chat endpoint first (for instruction-tuned models).
+        Falls back to completions endpoint if chat template error occurs (for base models).
+        
+        Optimized: Skips expensive status checks for services that were recently used successfully.
+        """
+        # Check if this is a service group
+        if self.service_manager.is_group(service_id):
+            return self._prompt_service_group(service_id, prompt, **kwargs)
+        
+        # Single service flow (existing logic)
+        return self._prompt_single_service(service_id, prompt, **kwargs)
+    
+    def _prompt_service_group(self, group_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
+        """Send a prompt to a service group using load balancing with automatic failover.
+        
+        Strategy: Try replicas in round-robin order. Mark replica unhealthy only if it fails.
+        This allows replicas to be used as soon as they're allocated (regardless of status tracking).
+        """
+        # Get group info
+        group_info = self.service_manager.get_group_info(group_id)
+        if not group_info:
+            return {
+                "success": False,
+                "error": f"Service group {group_id} not found",
+                "message": "The requested service group could not be found.",
+                "service_id": group_id
+            }
+        
+        # Get all replicas (regardless of status)
+        all_replicas = group_info.get("replicas", [])
+        if not all_replicas:
+            return {
+                "success": False,
+                "error": "Service group has no replicas",
+                "message": "The service group exists but has no replicas.",
+                "service_id": group_id
+            }
+        
+        # Try replicas in round-robin order
+        # The load balancer will cycle through regardless of health status
+        attempted_replicas = []
+        
+        for attempt in range(len(all_replicas)):
+            # Get next replica based on round-robin
+            selected_replica = self.load_balancer.select_replica(group_id, all_replicas)
+            if not selected_replica:
+                return {
+                    "success": False,
+                    "error": "Load balancer failed to select replica",
+                    "message": "Internal error: load balancer could not select a replica.",
+                    "service_id": group_id
+                }
+            
+            replica_id = selected_replica["id"]
+            self.logger.info(f"Routing prompt for group {group_id} to replica {replica_id} (attempt {attempt + 1}/{len(all_replicas)})")
+            attempted_replicas.append(replica_id)
+            
+            # Try to send prompt to this replica
+            result = self._prompt_single_service(replica_id, prompt, **kwargs)
+            
+            if result.get("success"):
+                # Success! Mark replica as healthy and return
+                self.service_manager.update_replica_status(replica_id, "running")
+                result["routed_to"] = replica_id
+                result["group_id"] = group_id
+                self.logger.info(f"Successfully routed to replica {replica_id}")
+                return result
+            else:
+                # This replica failed - mark it unhealthy and try next one
+                self.logger.warning(f"Replica {replica_id} failed: {result.get('error')}. Trying next replica...")
+                self.service_manager.update_replica_status(replica_id, "failed")
+                
+                # If this is not the last attempt, continue to next replica
+                if attempt < len(all_replicas) - 1:
+                    continue
+        
+        # All replicas failed
+        return {
+            "success": False,
+            "error": "All replicas failed",
+            "message": f"Could not route prompt to any of the {len(all_replicas)} replicas.",
+            "service_id": group_id,
+            "num_replicas": len(all_replicas),
+            "attempted_replicas": attempted_replicas,
+            "replica_statuses": {r["id"]: r["status"] for r in all_replicas}
+        }
+    
+    def _prompt_single_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
+        """Send a prompt to a single VLLM service (not a group).
         
         Tries chat endpoint first (for instruction-tuned models).
         Falls back to completions endpoint if chat template error occurs (for base models).

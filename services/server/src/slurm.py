@@ -694,6 +694,10 @@ class SlurmDeployer:
         merged_env = recipe.get("environment", {}).copy()
         if "environment" in config:
             merged_env.update(config["environment"])
+        
+        # For replicas: set VLLM_PORT from replica_port config if present
+        if "replica_port" in config:
+            merged_env["VLLM_PORT"] = str(config["replica_port"])
 
         # Build the job description according to v0.0.40 schema
         # Use REMOTE path for SLURM job execution on MeluXina
@@ -722,8 +726,8 @@ class SlurmDeployer:
         local_log_dir = self.local_base_path / "logs"
         local_log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate the full script
-        full_script = self._create_script(recipe, recipe_path, merged_env, resources)
+        # Generate the full script (pass full config for replica support)
+        full_script = self._create_script(recipe, recipe_path, merged_env, resources, config)
         
         # Debug: Log script length
         self.logger.debug(f"Generated script length: {len(full_script)} bytes")
@@ -733,13 +737,24 @@ class SlurmDeployer:
             "job": job_desc
         }
     
-    def _create_script(self, recipe: Dict[str, Any], recipe_path: Path, merged_env: Dict[str, str] = None, merged_resources: Dict[str, Any] = None) -> str:
-        """Generate the SLURM job script using recipe builders."""
+    def _create_script(self, recipe: Dict[str, Any], recipe_path: Path, merged_env: Dict[str, str] = None, merged_resources: Dict[str, Any] = None, config: Dict[str, Any] = None) -> str:
+        """Generate the SLURM job script using recipe builders.
+        
+        Args:
+            recipe: Recipe configuration
+            recipe_path: Path to recipe file
+            merged_env: Merged environment variables
+            merged_resources: Merged resource configuration
+            config: Full user config (for replica-specific settings like replica_port)
+        """
         # Use merged resources or fall back to recipe resources
         resources = merged_resources if merged_resources is not None else recipe.get("resources", {})
 
         # Use merged environment or fall back to recipe environment
         environment = merged_env if merged_env is not None else recipe.get("environment", {})
+        
+        # Default to empty config if not provided
+        config = config or {}
 
         # Resolve paths and names
         category = recipe_path.parent.name

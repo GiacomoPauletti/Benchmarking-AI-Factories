@@ -18,6 +18,7 @@ import threading
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from collections import defaultdict
+from service_group_manager import ServiceGroupManager
 
 
 class ServiceManager:
@@ -43,6 +44,9 @@ class ServiceManager:
         self._services_by_status: Dict[str, List[str]] = defaultdict(list)
         self._last_successful_prompt: Dict[str, float] = {}  # {service_id: timestamp}
         self._instance_lock = threading.RLock()
+        
+        # Service group manager for replica groups
+        self.group_manager = ServiceGroupManager()
 
     def register_service(self, service_data: Dict[str, Any]) -> None:
         """
@@ -275,3 +279,73 @@ class ServiceManager:
         """
         with self._instance_lock:
             self._last_successful_prompt.pop(service_id, None)
+    
+    # ========== Service Group Methods ==========
+    
+    def is_group(self, service_id: str) -> bool:
+        """Check if a service ID is actually a service group.
+        
+        Args:
+            service_id: Service ID to check
+            
+        Returns:
+            True if this is a service group, False otherwise
+        """
+        return self.group_manager.is_group(service_id)
+    
+    def get_group_info(self, group_id: str) -> Optional[Dict[str, Any]]:
+        """Get service group information.
+        
+        Args:
+            group_id: Service group ID
+            
+        Returns:
+            Group info dict or None if not found
+        """
+        return self.group_manager.get_group(group_id)
+    
+    def get_group_for_replica(self, replica_id: str) -> Optional[str]:
+        """Get the group ID that a replica belongs to.
+        
+        Args:
+            replica_id: Replica service ID
+            
+        Returns:
+            Group ID or None if not part of a group
+        """
+        return self.group_manager.get_group_for_replica(replica_id)
+    
+    def update_replica_status(self, replica_id: str, status: str) -> None:
+        """Update the status of a replica in its group.
+        
+        Args:
+            replica_id: Replica service ID
+            status: New status
+        """
+        # Update in regular service tracking
+        self.update_service_status(replica_id, status)
+        
+        # Update in group manager
+        self.group_manager.update_replica_status(replica_id, status)
+    
+    def get_healthy_replicas(self, group_id: str) -> List[Dict[str, Any]]:
+        """Get list of healthy replicas for a group.
+        
+        Args:
+            group_id: Service group ID
+            
+        Returns:
+            List of healthy replica info dicts
+        """
+        return self.group_manager.get_healthy_replicas(group_id)
+    
+    def get_all_replica_ids(self, group_id: str) -> List[str]:
+        """Get all replica IDs for a group.
+        
+        Args:
+            group_id: Service group ID
+            
+        Returns:
+            List of replica service IDs
+        """
+        return self.group_manager.get_all_replica_ids(group_id)
