@@ -1,0 +1,15 @@
+{
+  "session_id": "server-metrics-1762296943",
+  "status": "STOPPED",
+  "workdir": "/app/state/server-metrics-1762296943",
+  "prometheus_url": "http://prometheus:9090",
+  "config_path": "/app/config/prometheus.yml",
+  "scrape_interval": "10s",
+  "labels": {
+    "environment": "local",
+    "purpose": "server-metrics-example"
+  },
+  "created_at": "2025-11-04T22:55:43.555125Z",
+  "started_at": "2025-11-04T22:55:43.555142Z",
+  "stopped_at": "2025-11-10T15:29:00.125605Z"
+}

@@ -38,6 +38,77 @@ services:
     tty: true
     restart: unless-stopped
 
+  # Prometheus - Metrics storage and scraping
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      # Config managed by Monitoring Service
+      - ./services/monitoring/config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-storage:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'        # Enable hot reload via /-/reload
+      - '--web.enable-admin-api'        # Enable admin operations
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - ai-factory
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  monitoring:
+    build:
+      context: ./services/monitoring
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-monitoring
+    ports:
+      - "8002:8002"
+    volumes:
+      # Mount source code for hot-reload during development
+      - ./services/monitoring/src:/app/src
+      - ./services/monitoring/tests:/app/tests
+      - ./services/monitoring/logs:/app/logs
+      - ./services/monitoring/state:/app/state
+      # Shared Prometheus config (monitoring service updates it)
+      - ./services/monitoring/config:/app/config
+      # Mount metrics output directory for collected artifacts
+      - ./services/monitoring/metrics_output:/app/metrics_output
+    environment:
+      # Prometheus settings
+      - MONITORING_PROMETHEUS_URL=http://prometheus:9090
+      - MONITORING_PROMETHEUS_CONFIG_PATH=/app/config/prometheus.yml
+      - MONITORING_DEPLOYMENT_MODE=local
+      
+      # Server API (for metrics proxy)
+      - MONITORING_SERVER_API_URL=http://server:8001
+      
+      # Application Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - APP_LOG_DIR=/app/logs
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    networks: 
+      - ai-factory
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      server:
+        condition: service_started
+
   # TODO: Add other services when ready
   # client:
   #   build:
@@ -45,23 +116,6 @@ services:
   #     dockerfile: Dockerfile
   #   container_name: benchmarking-ai-client
   #   ...
-
-  # monitoring:
-  #   build:
-  #     context: ./services/monitoring
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "8003:8003"
-  #   environment:
-  #     - SERVER_URL=http://server-service:8001
-  #     - CLIENT_URL=http://client-service:8002
-  #   volumes:
-  #     - ./services/monitoring/src:/app/src
-  #     - ./logs:/app/logs
-  #   restart: unless-stopped
-  #   depends_on:
-  #     - server-service
-  #     - client-service
 
   # Logs
 
@@ -80,31 +134,10 @@ services:
     networks:
       - ai-factory
     depends_on:
-      - grafana-renderer
-      - prometheus
-      - loki
-  
-  grafana-renderer:
-    image: grafana/grafana-image-renderer:3.10.0
-    container_name: grafana-renderer
-    ports:
-      - "8081:8081"
-    restart: unless-stopped
-    networks:
-      - ai-factory
-  
-  prometheus:
-    build:
-      context: ./services/prometheus
-      dockerfile: Dockerfile
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - prometheus-storage:/prometheus
-    networks:
-      - ai-factory
-    restart: unless-stopped
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
 
   loki:
     image: grafana/loki:2.8.0

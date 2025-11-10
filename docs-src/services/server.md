@@ -219,7 +219,7 @@ Each recipe YAML file contains:
 ### Example: vLLM Recipe
 
 ```yaml
-name: vllm-example
+name: vllm-single-node
 category: inference
 description: "vLLM high-performance inference server for large language models"
 version: "0.2.0"
@@ -243,36 +243,51 @@ resources:
   memory: "32G"
   time_limit: 15
   gpu: "4"
-
 ```
 
-### Data Parallelism with Replicas
+### Multi-Replica Configuration
 
-The `replicas` field in recipe YAML creates a service group with multiple independent instances for high-throughput workloads:
+The `vllm-replicas` recipe creates multiple replicas on a single node for high-throughput inference:
 
 ```yaml
-name: vllm-data-parallel
+name: vllm-replicas
 category: inference
-# ... other fields ...
-resources:
-  nodes: "1"    # Each replica gets 1 node
-  gpu: "4"      # Each replica uses 4 GPUs
-replicas: 2     # Create 2 replicas (can be overridden in API request)
+description: "vLLM with multiple replicas - flexible GPU allocation per replica"
+
+environment:
+  VLLM_HOST: "0.0.0.0"
+  VLLM_MODEL: "Qwen/Qwen2.5-0.5B-Instruct"
+  # ... other settings ...
+
+resources:  # Per node (not per replica)
+  nodes: "1"  # Number of nodes to allocate
+  cpu: "8"    # CPUs per node
+  memory: "64G"  # Memory per node
+  time_limit: 15
+  gpu: "4"    # Total GPUs per node
+
+# Replica group configuration
+# System calculates: replicas_per_node = gpu / gpu_per_replica
+gpu_per_replica: 1  # Each replica uses 1 GPU (data parallel)
+base_port: 8001     # First replica uses 8001, second uses 8002, etc.
 ```
 
-Each replica runs as a separate SLURM job on a different node. Requests are automatically load-balanced using round-robin with failover. If a replica fails, subsequent requests route to healthy replicas.
-
-**Limitation**: Currently only single-node multi-GPU replicas are supported. Multi-node multi-GPU (combining `distributed` and `replicas`) is not yet implemented.
+**How it works:**
+- With `gpu: 4` and `gpu_per_replica: 1`, you get 4 replicas
+- Each replica runs independently on separate GPUs (0, 1, 2, 3)
+- Replicas listen on consecutive ports (8001, 8002, 8003, 8004)
+- All replicas run in a single SLURM job
+- Load balancing distributes requests using round-robin with automatic failover
 
 ### How Recipes Are Used
 
-1. **Service Creation**: User calls `/api/v1/services` with `recipe_name: "inference/vllm"`
-2. **Recipe Loading**: `RecipeLoader` reads `recipes/inference/vllm.yaml`
-3. **Configuration Merge**: User-provided config (e.g., `nodes: 2`, `replicas: 3`) overrides recipe defaults
-4. **Replica Detection**: If `replicas` field is present, create service group instead of single service
+1. **Service Creation**: User calls `/api/v1/services` with `recipe_name: "inference/vllm-single-node"`
+2. **Recipe Loading**: `RecipeLoader` reads `recipes/inference/vllm-single-node.yaml`
+3. **Configuration Merge**: User-provided config (e.g., `gpu: 8`) overrides recipe defaults
+4. **Replica Detection**: If `gpu_per_replica` field is present, calculate replicas per node
 5. **Builder Selection**: `BuilderRegistry` selects recipe-specific builder or category default
-6. **Script Generation**: Builder generates SLURM script(s) using recipe metadata and merged config
-7. **Job Submission**: For replicas, submit N independent SLURM jobs; for single service, submit one job
+6. **Script Generation**: Builder generates SLURM script with replica configuration
+7. **Job Submission**: Submit single SLURM job that launches all replicas on assigned GPUs
 
 ### Recipe-Specific Builders
 

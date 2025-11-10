@@ -27,24 +27,41 @@ class EndpointResolver:
         self.recipe_loader = recipe_loader
         self.logger = logging.getLogger(__name__)
     
-    def resolve(self, job_id: str, default_port: Optional[int] = None) -> Optional[str]:
+    def resolve(self, replica_id: str, default_port: Optional[int] = None) -> Optional[str]:
         """
-        Resolve the HTTP endpoint for a service.
+        Resolve the HTTP endpoint for a service or replica.
+        
+        Supports two ID formats:
+        1. Simple job ID: "3712345" - resolves using recipe port
+        2. Composite replica ID: "3712345:8002" - uses specified port
         
         This method:
-        1. Gets the SLURM job details to find which node it's running on
-        2. Looks up the service's recipe to find the configured port
-        3. Falls back to default_port if recipe doesn't specify one
-        4. Returns the full HTTP endpoint URL
+        1. Parses the replica_id to extract job_id and optional port
+        2. Gets the SLURM job details to find which node it's running on
+        3. Uses specified port if provided, otherwise looks up recipe port
+        4. Falls back to default_port if no port found
+        5. Returns the full HTTP endpoint URL
         
         Args:
-            job_id: SLURM job ID
-            default_port: Fallback port if recipe doesn't specify one
+            replica_id: SLURM job ID or composite "job_id:port"
+            default_port: Fallback port if not specified
         
         Returns:
-            HTTP endpoint string (e.g., "http://mel0343:6333"), or None if resolution fails
+            HTTP endpoint string (e.g., "http://mel0343:8002"), or None if resolution fails
         """
         try:
+            # Parse replica_id to extract job_id and optional port
+            if ":" in replica_id:
+                # Composite format: "job_id:port"
+                job_id, port_str = replica_id.split(":", 1)
+                specified_port = int(port_str)
+                self.logger.debug(f"Parsed composite replica_id {replica_id}: job={job_id}, port={specified_port}")
+            else:
+                # Simple format: just job_id
+                job_id = replica_id
+                specified_port = None
+                self.logger.debug(f"Simple job ID: {job_id}")
+            
             # Get job details from SLURM
             job_details = self.deployer.get_job_details(job_id)
             
@@ -67,22 +84,27 @@ class EndpointResolver:
                 return None
             
             # Determine the port
-            port = self._get_port_for_job(job_id)
+            if specified_port is not None:
+                # Use port from composite replica_id
+                port = specified_port
+            else:
+                # Look up port from recipe
+                port = self._get_port_for_job(job_id)
+                
+                # Fallback to default port if needed
+                if port is None:
+                    port = default_port
             
-            # Fallback to default port if needed
             if port is None:
-                port = default_port
-            
-            if port is None:
-                self.logger.warning("No port found for job %s", job_id)
+                self.logger.warning("No port found for replica %s (job %s)", replica_id, job_id)
                 return None
             
             endpoint = f"http://{node}:{port}"
-            self.logger.debug("Resolved endpoint for job %s: %s (from nodes: %s)", job_id, endpoint, nodes)
+            self.logger.debug("Resolved endpoint for replica %s: %s (from nodes: %s)", replica_id, endpoint, nodes)
             return endpoint
             
         except Exception as e:
-            self.logger.exception("Error resolving endpoint for job %s: %s", job_id, e)
+            self.logger.exception("Error resolving endpoint for replica %s: %s", replica_id, e)
             return None
     
     def _get_port_for_job(self, job_id: str) -> Optional[int]:

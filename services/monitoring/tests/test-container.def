@@ -1,0 +1,45 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update --allow-releaseinfo-change || true
+    apt-get install -y --no-install-recommends ca-certificates curl git && rm -rf /var/lib/apt/lists/*
+    python -m pip install --no-cache-dir --upgrade pip
+    # test-only deps
+    python -m pip install --no-cache-dir pytest pytest-mock requests
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONPATH=/app:$PYTHONPATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
+%runscript
+    #!/bin/bash
+    set -euo pipefail
+
+    if [ ! -d "/app/services/monitoring" ]; then
+      echo "Project root must be bind-mounted to /app"
+      exit 1
+    fi
+
+    cd /app
+    UNIT_LOG="services/monitoring/tests/unit-test.log"
+    INT_LOG="services/monitoring/tests/integration-test.log"
+
+    echo "[tests] running unit tests..."
+    python -m pytest -q services/monitoring/tests/test_unit_*.py > "$UNIT_LOG" 2>&1 || {
+      echo "Unit tests failed; see $UNIT_LOG"
+      exit 1
+    }
+    echo "Unit tests passed (log: $UNIT_LOG)"
+
+    echo "[tests] running integration tests..."
+    python -m pytest -q services/monitoring/tests/test_integration.py > "$INT_LOG" 2>&1 || {
+      echo "Integration tests failed; see $INT_LOG"
+      exit 1
+    }
+    echo "Integration tests passed (log: $INT_LOG)"
+
+    echo "All Monitoring tests completed successfully."

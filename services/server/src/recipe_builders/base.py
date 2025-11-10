@@ -66,32 +66,32 @@ class RecipeScriptBuilder(ABC):
         pass
     
     def supports_distributed(self) -> bool:
-        """Check if this builder supports distributed execution.
+        """Check if this builder supports replica group execution.
         
         Returns:
-            True if distributed execution is supported, False otherwise
+            True if replica group execution is supported, False otherwise
         """
         return False
     
-    def build_distributed_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                                   recipe: Dict[str, Any], 
-                                   distributed_cfg: Dict[str, Any]) -> str:
-        """Build the bash block for distributed multi-node execution.
+    def build_replica_group_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
+                                      recipe: Dict[str, Any], 
+                                      config: Dict[str, Any]) -> str:
+        """Build the bash block for replica group execution.
         
-        This is optional - only implement if the recipe type supports distributed execution.
+        This is optional - only implement if the recipe type supports replica groups.
         
         Args:
             paths: Container and filesystem paths
             resources: Resource requirements
             recipe: Full recipe configuration
-            distributed_cfg: Distributed execution configuration
+            config: Merged recipe + user configuration
             
         Returns:
-            Bash script block for distributed execution
+            Bash script block for replica group execution
             
         Raises:
-            NotImplementedError: If distributed execution is not supported
+            NotImplementedError: If replica groups are not supported
         """
         raise NotImplementedError(
-            f"{self.__class__.__name__} does not support distributed execution"
+            f"{self.__class__.__name__} does not support replica group execution"
         )
