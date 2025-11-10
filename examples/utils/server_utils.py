@@ -102,11 +102,11 @@ def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: in
                                   timeout: int = 600, check_interval: int = 3) -> bool:
     """Wait for at least min_healthy replicas in a service group to be ready.
     
-    Checks replica statuses from the group's node_jobs structure.
+    Uses the /service-groups/{group_id} endpoint to check group status.
     
     Args:
         server_url: Base URL of the server (e.g., "http://localhost:8001")
-        group_id: The service group ID
+        group_id: The service group ID (e.g., "sg-...")
         min_healthy: Minimum number of healthy replicas needed
         timeout: Maximum time to wait in seconds
         check_interval: How often to check status in seconds
@@ -121,39 +121,32 @@ def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: in
     
     while time.time() - start_time < timeout:
         try:
-            # Get group info to find all replicas
-            response = requests.get(f"{api_base}/services/{group_id}", timeout=5)
+            # Get service group info
+            response = requests.get(f"{api_base}/service-groups/{group_id}", timeout=10)
             
             if response.status_code == 200:
-                data = response.json()
+                group_data = response.json()
                 
-                # Extract replicas from node_jobs structure
-                node_jobs = data.get("node_jobs", [])
-                all_replicas = []
-                for node_job in node_jobs:
-                    all_replicas.extend(node_job.get("replicas", []))
+                # Extract replica counts from group data
+                healthy_count = group_data.get("healthy_replicas", 0)
+                total_count = group_data.get("total_replicas", 0)
+                starting_count = group_data.get("starting_replicas", 0)
+                pending_count = group_data.get("pending_replicas", 0)
+                failed_count = group_data.get("failed_replicas", 0)
                 
-                if not all_replicas:
-                    elapsed = int(time.time() - start_time)
-                    print(f"  Waiting for replicas to be registered... ({elapsed}s elapsed)", end="\r")
-                    time.sleep(check_interval)
-                    continue
-                
-                # Check status of each replica (status is already in the replica data)
-                healthy_count = sum(1 for r in all_replicas if r.get("status") == "running")
-                starting_count = sum(1 for r in all_replicas if r.get("status") == "starting")
-                pending_count = sum(1 for r in all_replicas if r.get("status") in ["pending", "building"])
-                
-                print(f"  Status: {healthy_count}/{len(all_replicas)} running, {starting_count} starting, {pending_count} pending", end="\r")
+                print(f"  Status: {healthy_count}/{total_count} running, {starting_count} starting, {pending_count} pending, {failed_count} failed     ", end="\r")
                 
                 if healthy_count >= min_healthy:
-                    print(f"\nService group is ready with {healthy_count} healthy replicas!")
+                    print(f"\n[+] Service group is ready with {healthy_count} healthy replicas!")
                     return True
-            
+            elif response.status_code == 404:
+                # Service group not found yet - replicas may not be registered
+                elapsed = int(time.time() - start_time)
+                print(f"  Waiting for replicas to be registered... ({elapsed}s elapsed)     ", end="\r")
         except requests.exceptions.RequestException as e:
-            print(f"\n  Connection error: {e}", end="\r")
+            print(f"\n  Connection error: {e}")
         
         time.sleep(check_interval)
     
-    print(f"\nTimeout waiting for service group after {timeout}s")
+    print(f"\n[-] Timeout waiting for service group after {timeout}s")
     return False

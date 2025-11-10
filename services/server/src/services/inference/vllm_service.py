@@ -300,8 +300,8 @@ class VllmService(InferenceService):
                 "service_id": group_id
             }
         
-        # Get all replicas (regardless of status)
-        all_replicas = group_info.get("replicas", [])
+        # Get all replicas (regardless of status) - must use flattened list
+        all_replicas = self.service_manager.group_manager.get_all_replicas_flat(group_id)
         if not all_replicas:
             return {
                 "success": False,

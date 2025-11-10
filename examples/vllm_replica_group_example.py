@@ -20,7 +20,85 @@ Architecture:
 import requests
 import time
 import os
+from threading import Thread
+from queue import Queue
 from utils.server_utils import wait_for_server, wait_for_service_group_ready
+
+
+def send_prompt(thread_id, server_url, service_id, prompt, results_queue):
+    """
+    Send a prompt to the vLLM service group and store the result.
+    
+    Args:
+        thread_id: Identifier for this thread
+        server_url: Base server URL
+        service_id: ID of the vLLM service group
+        prompt: The prompt text to send
+        results_queue: Queue to store results
+    """
+    api_base = f"{server_url}/api/v1"
+    start_time = time.time()
+    
+    try:
+        print(f"[Thread {thread_id}] Sending: '{prompt[:40]}...'")
+        
+        response = requests.post(
+            f"{api_base}/vllm/{service_id}/prompt",
+            json={
+                "prompt": prompt,
+                "max_tokens": 50,
+                "temperature": 0.7
+            },
+            timeout=120
+        )
+        
+        elapsed_time = time.time() - start_time
+        
+        if response.status_code != 200:
+            results_queue.put({
+                "thread_id": thread_id,
+                "prompt": prompt,
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+                "elapsed_time": elapsed_time
+            })
+            return
+        
+        data = response.json()
+        
+        if not data.get("success"):
+            results_queue.put({
+                "thread_id": thread_id,
+                "prompt": prompt,
+                "success": False,
+                "error": data.get("error", "Unknown error"),
+                "elapsed_time": elapsed_time
+            })
+            return
+        
+        routed_to = data.get("routed_to", "unknown")
+        results_queue.put({
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "success": True,
+            "response": data.get("response", ""),
+            "routed_to": routed_to,
+            "usage": data.get("usage", {}),
+            "elapsed_time": elapsed_time
+        })
+        
+        print(f"[Thread {thread_id}] ✓ Completed in {elapsed_time:.2f}s -> replica {routed_to}")
+        
+    except Exception as e:
+        elapsed_time = time.time() - start_time
+        results_queue.put({
+            "thread_id": thread_id,
+            "prompt": prompt,
+            "success": False,
+            "error": str(e),
+            "elapsed_time": elapsed_time
+        })
+        print(f"[Thread {thread_id}] ✗ Error: {e}")
 
 
 def main():
@@ -97,7 +175,7 @@ def main():
             print("    You can still continue - the script will work with however many are healthy")
             # Don't return - continue with whatever replicas are available
         
-        # Step 4: Send multiple prompts to demonstrate load balancing
+        # Step 4: Send multiple prompts concurrently to demonstrate load balancing
         prompts = [
             "What is the capital of France?",
             "Explain machine learning in one sentence.",
@@ -109,108 +187,114 @@ def main():
             "What is the largest planet?",
         ]
         
-        print(f"\n[*] Sending {len(prompts)} prompts to demonstrate load balancing...")
+        print(f"\n[*] Sending {len(prompts)} prompts CONCURRENTLY to demonstrate load balancing...")
         print("    Each replica handles requests on its dedicated GPU")
+        print("    All requests sent at nearly the same time (like multiple clients)")
         print("=" * 80)
         
-        results = []
-        for i, prompt in enumerate(prompts, 1):
-            print(f"\n[Prompt {i}/{len(prompts)}] {prompt}")
-            
-            response = requests.post(
-                f"{api_base}/vllm/{service_id}/prompt",
-                json={
-                    "prompt": prompt,
-                    "max_tokens": 50,
-                    "temperature": 0.7
-                },
-                timeout=120
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                if data.get("success"):
-                    answer = data.get("response", "")
-                    routed_to = data.get("routed_to", "unknown")
-                    usage = data.get("usage", {})
-                    
-                    # Parse composite replica ID to show port
-                    if ":" in routed_to:
-                        job_id, port = routed_to.split(":", 1)
-                        replica_label = f"{routed_to} (port {port})"
-                    else:
-                        replica_label = routed_to
-                    
-                    print(f"[+] Response from replica {replica_label}:")
-                    print(f"  {answer}")
-                    print(f"  Tokens: {usage.get('total_tokens', 'N/A')}")
-                    
-                    results.append({
-                        "prompt": prompt,
-                        "replica": routed_to,
-                        "success": True
-                    })
-                else:
-                    print(f"[-] Error: {data.get('error')}")
-                    results.append({
-                        "prompt": prompt,
-                        "replica": None,
-                        "success": False
-                    })
-            else:
-                print(f"[-] HTTP Error {response.status_code}: {response.text}")
-                results.append({
-                    "prompt": prompt,
-                    "replica": None,
-                    "success": False
-                })
-            
-            # Small delay between requests
-            time.sleep(1)
+        # Launch all requests concurrently
+        threads = []
+        results_queue = Queue()
+        overall_start = time.time()
         
-        # Step 5: Show load balancing statistics
+        for i, prompt in enumerate(prompts):
+            thread = Thread(
+                target=send_prompt,
+                args=(i + 1, server_url, service_id, prompt, results_queue)
+            )
+            threads.append(thread)
+            thread.start()
+            # Very small stagger to simulate "almost same time"
+            time.sleep(0.05)
+        
+        # Wait for all threads to complete
+        print(f"\n[*] Waiting for all {len(prompts)} requests to complete...")
+        for thread in threads:
+            thread.join()
+        
+        overall_elapsed = time.time() - overall_start
+        print(f"\n[+] All requests completed in {overall_elapsed:.2f}s")
+        
+        # Collect results
+        results = []
+        while not results_queue.empty():
+            results.append(results_queue.get())
+        
+        # Sort by thread ID for display
+        results.sort(key=lambda x: x["thread_id"])
+        
+        # Step 5: Display detailed results
+        print("\n" + "=" * 80)
+        print("Detailed Results:")
+        print("=" * 80)
+        
+        for result in results:
+            thread_id = result["thread_id"]
+            prompt = result["prompt"]
+            
+            if result["success"]:
+                routed_to = result["routed_to"]
+                response = result["response"]
+                elapsed = result["elapsed_time"]
+                usage = result.get("usage", {})
+                
+                # Parse composite replica ID to show port
+                if ":" in routed_to:
+                    job_id, port = routed_to.split(":", 1)
+                    replica_label = f"port {port}"
+                else:
+                    replica_label = routed_to
+                
+                print(f"\n[Request {thread_id}] {prompt}")
+                print(f"  → Routed to: {routed_to} ({replica_label})")
+                print(f"  → Response: {response[:80]}...")
+                print(f"  → Time: {elapsed:.2f}s | Tokens: {usage.get('total_tokens', 'N/A')}")
+            else:
+                print(f"\n[Request {thread_id}] {prompt}")
+                print(f"  → FAILED: {result['error']}")
+                print(f"  → Time: {result['elapsed_time']:.2f}s")
+        
+        # Step 6: Show load balancing statistics
         print("\n" + "=" * 80)
         print("Load Balancing Summary:")
         print("=" * 80)
         
         successful = [r for r in results if r["success"]]
-        replica_counts = {}
-        for result in successful:
-            replica = result["replica"]
-            replica_counts[replica] = replica_counts.get(replica, 0) + 1
+        failed = [r for r in results if not r["success"]]
         
         print(f"\nTotal requests: {len(prompts)}")
         print(f"Successful: {len(successful)}")
-        print(f"Failed: {len(prompts) - len(successful)}")
+        print(f"Failed: {len(failed)}")
+        print(f"Overall time: {overall_elapsed:.2f}s")
         
         if successful:
-            print(f"\nRequests per replica (by port):")
+            avg_time = sum(r["elapsed_time"] for r in successful) / len(successful)
+            print(f"Average response time: {avg_time:.2f}s")
+            
+            # Count requests per replica
+            replica_counts = {}
+            for result in successful:
+                replica = result["routed_to"]
+                replica_counts[replica] = replica_counts.get(replica, 0) + 1
+            
+            print(f"\nRequests per replica:")
             for replica, count in sorted(replica_counts.items()):
                 # Parse to show port more clearly
                 if ":" in replica:
                     job_id, port = replica.split(":", 1)
-                    print(f"  {replica} (port {port}): {count} requests")
+                    percentage = (count / len(successful)) * 100
+                    print(f"  Replica {replica} (port {port}): {count} requests ({percentage:.1f}%)")
                 else:
-                    print(f"  {replica}: {count} requests")
+                    print(f"  Replica {replica}: {count} requests")
             
             # Check distribution
             if len(replica_counts) > 1:
                 print(f"\n[+] Load balancing is working! Requests were distributed across {len(replica_counts)} replicas.")
                 print(f"    All replicas are running on the same node but using different GPUs and ports.")
+                print(f"    Concurrent requests were automatically routed to available replicas.")
             else:
                 print(f"\n[!] All requests went to the same replica.")
                 print(f"    This might happen if only 1 replica is healthy.")
-        
-        # Step 6: Show replica group benefits
-        print("\n" + "=" * 80)
-        print("Replica Group Benefits:")
-        print("=" * 80)
-        print("✓ Resource efficiency: Single SLURM job manages multiple replicas")
-        print("✓ Better GPU utilization: One replica per GPU (4 GPUs = 4 replicas)")
-        print("✓ Reduced overhead: No need for separate SLURM jobs per replica")
-        print("✓ Fault tolerance: If one replica fails, others continue running")
-        print("✓ Load balancing: Requests automatically distributed across replicas")
         
         print("\n[+] Example completed successfully!")
         

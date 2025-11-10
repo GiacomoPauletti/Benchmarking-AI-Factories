@@ -117,10 +117,10 @@ class ServerService:
         return service_data
     
     def _start_service_group(self, recipe_name: str, config: Dict[str, Any], recipe: Dict[str, Any]) -> Dict[str, Any]:
-        """Start a service group with replica architecture (UNIFIED APPROACH).
+        """Start a service group with replica architecture.
 
         This mode runs multiple services within a single SLURM job,
-        each process bound to specific GPU(s) and listening on a different port.
+        each process bound to specific CPU/GPU(s) and listening on a different port.
         
         Defaults to 1 replica per node if gpu_per_replica not specified.
         """        
@@ -500,3 +500,270 @@ class ServerService:
         """Send a prompt to a running VLLM service."""
         return self.vllm_service.prompt(service_id, prompt, **kwargs)
     
+    # ========================================================================
+    # Service Group Management Methods
+    # ========================================================================
+    
+    def list_service_groups(self) -> List[Dict[str, Any]]:
+        """List all service groups with summary information.
+        
+        Returns:
+            List of service group summary objects
+        """
+        groups = self.service_manager.group_manager.list_groups()
+        
+        # Enrich each group with current status counts
+        enriched_groups = []
+        for group in groups:
+            group_id = group["id"]
+            
+            # Get all replica service IDs for this group
+            all_services = self.service_manager.list_services()
+            replica_ids = [s["id"] for s in all_services if s.get("group_id") == group_id]
+            
+            # Get status for each replica using existing service functions
+            status_counts = {
+                "healthy": 0,
+                "starting": 0,
+                "pending": 0,
+                "failed": 0
+            }
+            
+            for replica_id in replica_ids:
+                status_dict = self.get_service_status(replica_id)
+                status = status_dict.get("status", "unknown")
+                
+                if status == "running":
+                    status_counts["healthy"] += 1
+                elif status == "starting":
+                    status_counts["starting"] += 1
+                elif status in ["pending", "building"]:
+                    status_counts["pending"] += 1
+                elif status in ["failed", "cancelled"]:
+                    status_counts["failed"] += 1
+            
+            enriched_groups.append({
+                "id": group_id,
+                "type": group.get("type", "replica_group"),
+                "recipe_name": group.get("recipe_name", "unknown"),
+                "total_replicas": len(replica_ids),
+                "healthy_replicas": status_counts["healthy"],
+                "starting_replicas": status_counts["starting"],
+                "pending_replicas": status_counts["pending"],
+                "failed_replicas": status_counts["failed"],
+                "created_at": group.get("created_at")
+            })
+        
+        return enriched_groups
+    
+    def get_service_group(self, group_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a service group.
+        
+        Args:
+            group_id: The service group ID
+            
+        Returns:
+            Detailed group information or None if not found
+        """
+        # Get all services from service manager
+        all_services = self.service_manager.list_services()
+        
+        # Filter services by group_id
+        group_replicas = [s for s in all_services if s.get("group_id") == group_id]
+        
+        if not group_replicas:
+            return None
+        
+        # Get full service info for each replica using existing get_service function
+        enriched_replicas = []
+        for replica in group_replicas:
+            replica_id = replica["id"]
+            # Use get_service to get full info including current status
+            service_info = self.get_service(replica_id)
+            if service_info:
+                enriched_replicas.append(service_info)
+            else:
+                # Fallback to stored data if get_service fails
+                enriched_replicas.append(replica)
+        
+        # Count replica statuses
+        status_counts = {
+            "healthy": sum(1 for r in enriched_replicas if r.get("status") == "running"),
+            "starting": sum(1 for r in enriched_replicas if r.get("status") == "starting"),
+            "pending": sum(1 for r in enriched_replicas if r.get("status") in ["pending", "building"]),
+            "failed": sum(1 for r in enriched_replicas if r.get("status") in ["failed", "cancelled"])
+        }
+        
+        # Extract common fields from first replica
+        first_replica = enriched_replicas[0]
+        recipe_name = first_replica.get("recipe_name", "unknown")
+        base_port = first_replica.get("config", {}).get("base_port")
+        
+        # Group replicas by job_id to create node_jobs structure
+        node_jobs = {}
+        for replica in enriched_replicas:
+            job_id = replica.get("id", "").split(":")[0]  # Extract job_id from composite ID
+            node_index = replica.get("config", {}).get("node_index", 0)
+            
+            if job_id not in node_jobs:
+                node_jobs[job_id] = {
+                    "job_id": job_id,
+                    "node_index": node_index,
+                    "replicas": []
+                }
+            
+            node_jobs[job_id]["replicas"].append({
+                "id": replica.get("id"),
+                "name": replica.get("name"),
+                "status": replica.get("status"),
+                "port": replica.get("config", {}).get("port"),
+                "gpu_id": replica.get("config", {}).get("gpu_id"),
+                "replica_index": replica.get("replica_index")
+            })
+        
+        return {
+            "id": group_id,
+            "type": "replica_group",
+            "replicas": [
+                {
+                    "id": r.get("id"),
+                    "name": r.get("name"),
+                    "status": r.get("status"),
+                    "port": r.get("config", {}).get("port"),
+                    "gpu_id": r.get("config", {}).get("gpu_id"),
+                    "replica_index": r.get("replica_index"),
+                    "job_id": r.get("id", "").split(":")[0]
+                }
+                for r in enriched_replicas
+            ],
+            "total_replicas": len(enriched_replicas),
+            "healthy_replicas": status_counts["healthy"],
+            "starting_replicas": status_counts["starting"],
+            "pending_replicas": status_counts["pending"],
+            "failed_replicas": status_counts["failed"],
+            "recipe_name": recipe_name,
+            "base_port": base_port,
+            "node_jobs": list(node_jobs.values())
+        }
+    
+    def stop_service_group(self, group_id: str) -> Dict[str, Any]:
+        """Stop all replicas in a service group.
+        
+        Args:
+            group_id: The service group ID
+            
+        Returns:
+            Result dictionary with success status and count of stopped replicas
+        """
+        # Get all replicas in the group
+        all_replicas = self.service_manager.group_manager.get_all_replicas_flat(group_id)
+        
+        if not all_replicas:
+            return {
+                "success": False,
+                "error": f"Service group '{group_id}' not found"
+            }
+        
+        # Stop each replica
+        stopped_count = 0
+        failed_replicas = []
+        
+        for replica in all_replicas:
+            replica_id = replica["id"]
+            try:
+                if self.stop_service(replica_id):
+                    stopped_count += 1
+                else:
+                    failed_replicas.append(replica_id)
+            except Exception as e:
+                self.logger.error(f"Failed to stop replica {replica_id}: {e}")
+                failed_replicas.append(replica_id)
+        
+        # Update group status to cancelled
+        self.service_manager.group_manager.update_group_status(group_id, "cancelled")
+        
+        if failed_replicas:
+            return {
+                "success": True,
+                "message": f"Service group {group_id} partially stopped",
+                "group_id": group_id,
+                "replicas_stopped": stopped_count,
+                "replicas_failed": len(failed_replicas),
+                "failed_replica_ids": failed_replicas
+            }
+        
+        return {
+            "success": True,
+            "message": f"Service group {group_id} stopped successfully",
+            "group_id": group_id,
+            "replicas_stopped": stopped_count
+        }
+    
+    def get_service_group_status(self, group_id: str) -> Optional[Dict[str, Any]]:
+        """Get aggregated status of a service group.
+        
+        Args:
+            group_id: The service group ID
+            
+        Returns:
+            Status summary or None if group not found
+        """
+        # Get all replicas in the group
+        all_replicas = self.service_manager.group_manager.get_all_replicas_flat(group_id)
+        
+        if not all_replicas:
+            return None
+        
+        # Count replica statuses
+        status_counts = {
+            "healthy": 0,
+            "starting": 0,
+            "pending": 0,
+            "failed": 0
+        }
+        
+        replica_statuses = []
+        for replica in all_replicas:
+            replica_id = replica["id"]
+            status_dict = self.get_service_status(replica_id)
+            current_status = status_dict.get("status", "unknown")
+            
+            replica_statuses.append({
+                "id": replica_id,
+                "status": current_status
+            })
+            
+            # Count by category
+            if current_status == "running":
+                status_counts["healthy"] += 1
+            elif current_status == "starting":
+                status_counts["starting"] += 1
+            elif current_status in ["pending", "building"]:
+                status_counts["pending"] += 1
+            elif current_status in ["failed", "cancelled"]:
+                status_counts["failed"] += 1
+        
+        # Determine overall status
+        total = len(all_replicas)
+        if status_counts["healthy"] == total:
+            overall_status = "healthy"
+        elif status_counts["failed"] == total:
+            overall_status = "failed"
+        elif status_counts["healthy"] > 0 and status_counts["failed"] > 0:
+            overall_status = "degraded"
+        elif status_counts["healthy"] > 0:
+            overall_status = "partial"
+        else:
+            overall_status = "starting"
+        
+        return {
+            "group_id": group_id,
+            "overall_status": overall_status,
+            "total_replicas": total,
+            "healthy_replicas": status_counts["healthy"],
+            "starting_replicas": status_counts["starting"],
+            "pending_replicas": status_counts["pending"],
+            "failed_replicas": status_counts["failed"],
+            "replica_statuses": replica_statuses
+        }
+
