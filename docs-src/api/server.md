@@ -11,34 +11,52 @@ The Server Service provides a REST API for managing SLURM jobs and AI workload o
 
 ### Create vLLM Service with Default Model
 
-Create a vLLM service with default configuration (Qwen/Qwen2.5-0.5B-Instruct):
+Create a single-node vLLM service with default configuration (Qwen/Qwen2.5-0.5B-Instruct):
 
 ```bash
 curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "recipe_name": "inference/vllm"
+    "recipe_name": "inference/vllm-single-node"
   }'
 ```
 
-### Create Data-Parallel vLLM Service Group
+By default, this will use one slurm node with its 4 GPUs for tensor-parallelism.
+Currently, multi-node-multi-gpu is not supported, only single-node-multi-gpu. 
 
-Create multiple vLLM replicas for high-throughput workloads. Requests are automatically load-balanced across healthy replicas:
+### Create Multi-Replica vLLM Service Group
+
+Create multiple vLLM replicas on a single node for high-throughput workloads. Each replica uses a subset of GPUs and listens on a different port:
 
 ```bash
 curl -X POST http://localhost:8001/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{
-    "recipe_name": "inference/vllm-data-parallel",
+    "recipe_name": "inference/vllm-replicas"
+  }'
+```
+
+**How it works:**
+- Default: 4 GPUs with `gpu_per_replica: 1` -> 4 replicas (ports 8001-8004)
+- Each replica runs independently on the same node
+- Requests are load-balanced using round-robin with automatic failover
+- If a replica fails, traffic routes to healthy replicas
+
+**Customizing replicas:**
+```bash
+curl -X POST http://localhost:8001/api/v1/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recipe_name": "inference/vllm-replicas",
     "config": {
-      "replicas": 3
+      "resources": {
+        "gpu": "4"
+      },
+      "gpu_per_replica": 2
     }
   }'
 ```
-
-The `replicas` field in the recipe YAML (or config override) creates a service group where each replica runs on a separate node. Prompts are distributed using round-robin load balancing with automatic failover.
-
-**Note**: Currently only single-node multi-GPU replicas are supported (e.g., 1 node × 4 GPUs per replica). Multi-node multi-GPU is not yet implemented.
+This creates 4 replicas (4 GPUs ÷ 2 GPUs per replica) on a single node.
 
 ### Create vLLM Service with Custom Model
 
@@ -149,6 +167,48 @@ curl -X POST http://localhost:8001/api/v1/services \
   }'
 ```
 
+### List Service Groups
+
+Get all replica groups with their status:
+
+```bash
+curl http://localhost:8001/api/v1/service-groups
+```
+
+### Get Service Group Details
+
+Get information about a specific replica group:
+
+```bash
+curl http://localhost:8001/api/v1/service-groups/3652098
+```
+
+Response includes replica count, job IDs, ports, and health status.
+
+### Get Service Group Status
+
+Check aggregated status across all replicas:
+
+```bash
+curl http://localhost:8001/api/v1/service-groups/3652098/status
+```
+
+Returns:
+- `overall_status`: Aggregate state (all running, partially running, etc.)
+- `healthy_replicas`: Count of ready replicas
+- `total_replicas`: Total replica count
+- `replica_statuses`: Per-replica status and endpoints
+
+### Stop Service Group
+
+Stop all replicas in a group:
+
+```bash
+curl -X DELETE http://localhost:8001/api/v1/service-groups/3652098
+```
+
+This cancels the underlying SLURM job, stopping all replicas on the node.
+
 ### List All Services
 
 ```bash
@@ -197,7 +257,7 @@ curl http://localhost:8001/api/v1/vllm/3652098/models
 
 ### Send Prompt to vLLM Service
 
-Send a text prompt to a single service or service group (group automatically routes to a healthy replica):
+Send a text prompt to a single service or service group (automatically routes to a healthy replica):
 
 ```bash
 curl -X POST http://localhost:8001/api/v1/vllm/3652098/prompt \
@@ -208,7 +268,19 @@ curl -X POST http://localhost:8001/api/v1/vllm/3652098/prompt \
   }'
 ```
 
-When using a service group, the response includes `routed_to` and `group_id` fields showing which replica handled the request.
+**Service group response includes routing information:**
+```json
+{
+  "success": true,
+  "text": "Why do programmers prefer dark mode?...",
+  "routed_to": "3652098:8002",
+  "group_id": "3652098",
+  "total_replicas": 4,
+  "usage": {...}
+}
+```
+
+The `routed_to` field shows which replica handled the request (job_id:port).
 
 ### Send Prompt with Advanced Options
 
@@ -308,17 +380,19 @@ If you prefer runnable Python demos that exercise the Server API (vector DB and 
 - `examples/qdrant_simple_example_with_metrics.py`
 - `examples/vllm_simple_example.py`
 - `examples/vllm_simple_example_with_metrics.py`
-- `examples/vllm_data_parallel_example.py` - demonstrates replica groups with load balancing
 
 Run an example locally (adjust arguments or SERVICE_ID inside the script where required):
 
 ```bash
-python3 examples/vllm_data_parallel_example.py
+python3 examples/vllm_simple_example.py
 ```
 
+### Service Behavior
 
 - **Default Model**: If not specified, services use `Qwen/Qwen2.5-0.5B-Instruct`
 - **Model Sources**: Models must be available on HuggingFace or cached locally
 - **Resource Defaults**: Each recipe has default resource allocations that can be overridden
-- **Status Values**: Services progress through states: `pending` → `building` → `starting` → `running`
+- **Status Values**: Services progress through states: `pending` → `configuring` → `running`
 - **Service ID**: The SLURM job ID is used as the service identifier
+- **Load Balancing**: Replica groups use round-robin with health checks and automatic failover
+- **Replica Ports**: Each replica gets a unique port (base_port + index), e.g., 8001, 8002, 8003, 8004

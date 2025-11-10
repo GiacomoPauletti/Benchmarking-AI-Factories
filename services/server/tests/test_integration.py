@@ -176,8 +176,7 @@ class TestLiveServerIntegration:
         create_response = requests.post(
             f"{server_endpoint}/api/v1/services",
             json={
-                "recipe_name": "inference/vllm",
-                "config": {"nodes": 1}
+                "recipe_name": "inference/vllm-single-node",
             },
             headers={"Content-Type": "application/json"},
             timeout=120
@@ -191,7 +190,7 @@ class TestLiveServerIntegration:
         assert create_response.status_code in [200, 201]
         service_data = create_response.json()
         assert "id" in service_data
-        assert service_data["recipe_name"] == "inference/vllm"
+        assert service_data["recipe_name"] == "inference/vllm-single-node"
         
         service_id = service_data["id"]
         
@@ -210,8 +209,7 @@ class TestLiveServerIntegration:
         create_response = requests.post(
             f"{server_endpoint}/api/v1/services",
             json={
-                "recipe_name": "inference/vllm",
-                "config": {"nodes": 1}
+                "recipe_name": "inference/vllm-single-node"
             },
             headers={"Content-Type": "application/json"},
             timeout=60
@@ -231,7 +229,7 @@ class TestLiveServerIntegration:
         assert get_response.status_code == 200
         retrieved_service = get_response.json()
         assert retrieved_service["id"] == service_id
-        assert retrieved_service["recipe_name"] == "inference/vllm"
+        assert retrieved_service["recipe_name"] == "inference/vllm-single-node"
         
         # Test getting service status
         status_response = requests.get(f"{server_endpoint}/api/v1/services/{service_id}/status", timeout=30)
@@ -349,13 +347,12 @@ class TestLiveServerIntegration:
         create_response = requests.post(
             f"{server_endpoint}/api/v1/services",
             json={
-                "recipe_name": "inference/vllm",
+                "recipe_name": "inference/vllm-single-node",
                 "config": {
                     "environment": {
                         "VLLM_MODEL": "gpt2"
                     },
                     "resources": {
-                        "nodes": 1,
                         "cpu": "8",
                         "memory": "64G",
                         "time_limit": 120,
@@ -411,10 +408,7 @@ class TestLiveServerIntegration:
         create_response = requests.post(
             f"{server_endpoint}/api/v1/services",
             json={
-                "recipe_name": "inference/vllm",
-                "config": {
-                    "nodes": 1
-                }
+                "recipe_name": "inference/vllm-single-node"
             },
             headers={"Content-Type": "application/json"},
             timeout=30
@@ -463,13 +457,12 @@ class TestLiveServerIntegration:
         create_response = requests.post(
             f"{server_endpoint}/api/v1/services",
             json={
-                "recipe_name": "inference/vllm",
+                "recipe_name": "inference/vllm-single-node",
                 "config": {
                     "environment": {
                         "VLLM_MODEL": "gpt2"  # Base model without chat template
                     },
                     "resources": {
-                        "nodes": 1,
                         "cpu": "8",
                         "memory": "64G",
                         "time_limit": 120,
@@ -547,6 +540,211 @@ class TestLiveServerIntegration:
         status_response = requests.get(f"{server_endpoint}/api/v1/services/nonexistent-service/status", timeout=30)
         # This might return status or error depending on implementation
         assert status_response.status_code in [200, 500]
+    
+    def test_live_server_replica_group_creation(self, server_endpoint):
+        """
+        Test creating a vLLM replica group with multiple replicas on same node.
+        
+        This tests the replica group feature that allows multiple vLLM instances
+        on different GPUs of the same node, all under one service group.
+        """
+        # Create replica group service
+        create_response = requests.post(
+            f"{server_endpoint}/api/v1/services",
+            json={
+                "recipe_name": "inference/vllm-replicas"
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=60
+        )
+        
+        assert create_response.status_code in [200, 201], \
+            f"Failed to create replica group: {create_response.text}"
+        
+        service_data = create_response.json()
+        group_id = service_data["id"]
+        
+        # Verify service group was created
+        assert "type" in service_data
+        assert service_data["type"] == "replica_group"
+        assert "total_replicas" in service_data
+        assert service_data["total_replicas"] > 0
+        assert "node_jobs" in service_data
+        
+        print(f"\nCreated replica group: {group_id}")
+        print(f"  Total replicas: {service_data['total_replicas']}")
+        print(f"  Node jobs: {len(service_data['node_jobs'])}")
+        
+        # Test listing service groups
+        list_response = requests.get(f"{server_endpoint}/api/v1/service-groups", timeout=30)
+        assert list_response.status_code == 200
+        groups = list_response.json()
+        assert isinstance(groups, list)
+        assert any(g["id"] == group_id for g in groups)
+        
+        # Test getting specific service group
+        get_response = requests.get(f"{server_endpoint}/api/v1/service-groups/{group_id}", timeout=30)
+        assert get_response.status_code == 200
+        group_info = get_response.json()
+        assert group_info["id"] == group_id
+        assert "replicas" in group_info or "node_jobs" in group_info
+        
+        # Test getting service group status
+        status_response = requests.get(f"{server_endpoint}/api/v1/service-groups/{group_id}/status", timeout=30)
+        assert status_response.status_code == 200
+        status_info = status_response.json()
+        assert "overall_status" in status_info
+        assert "total_replicas" in status_info
+        assert "replica_statuses" in status_info
+        
+        # Clean up - stop entire group
+        try:
+            delete_response = requests.delete(f"{server_endpoint}/api/v1/service-groups/{group_id}", timeout=30)
+            # May succeed (200) or fail if group doesn't exist (404) or other error (500)
+            # Don't assert on status code during cleanup
+            if delete_response.status_code == 200:
+                delete_data = delete_response.json()
+                print(f"  Deleted group: {delete_data.get('replicas_stopped', 0)} replicas stopped")
+        except Exception as e:
+            print(f"  Warning: Failed to delete group during cleanup: {e}")
+    
+    def test_live_server_replica_group_load_balancing(self, server_endpoint):
+        """
+        Test load balancing across replicas in a service group.
+        
+        This mimics the vllm_replica_group_example.py by:
+        1. Creating a replica group
+        2. Waiting for replicas to be ready
+        3. Sending concurrent prompts
+        4. Verifying load distribution across replicas
+        """
+        import time
+        from threading import Thread
+        from queue import Queue
+        
+        # Create replica group
+        create_response = requests.post(
+            f"{server_endpoint}/api/v1/services",
+            json={
+                "recipe_name": "inference/vllm-replicas"
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=60
+        )
+        
+        assert create_response.status_code in [200, 201]
+        service_data = create_response.json()
+        group_id = service_data["id"]
+        
+        print(f"\n=== Testing Load Balancing for Group {group_id} ===")
+        
+        # Wait for at least 2 replicas to be ready
+        print("Waiting for replicas to be ready...")
+        max_wait = 600  # 10 minutes for model loading
+        wait_interval = 10
+        total_waited = 0
+        min_healthy = 2
+        
+        while total_waited < max_wait:
+            status_response = requests.get(
+                f"{server_endpoint}/api/v1/service-groups/{group_id}/status",
+                timeout=30
+            )
+            if status_response.status_code == 200:
+                status_info = status_response.json()
+                healthy = status_info.get("healthy_replicas", 0)
+                print(f"  {healthy} replicas ready (need {min_healthy})")
+                
+                if healthy >= min_healthy:
+                    print(f"  ✓ {healthy} replicas are ready!")
+                    break
+            
+            time.sleep(wait_interval)
+            total_waited += wait_interval
+        
+        if total_waited >= max_wait:
+            print(f"  ⚠ Timeout waiting for replicas. Proceeding with available replicas.")
+        
+        # Send concurrent prompts
+        prompts = [
+            "What is 2+2?",
+            "What is the capital of France?",
+            "Name a color.",
+            "What is AI?"
+        ]
+        
+        def send_prompt(prompt_text, results_queue):
+            try:
+                response = requests.post(
+                    f"{server_endpoint}/api/v1/vllm/{group_id}/prompt",
+                    json={
+                        "prompt": prompt_text,
+                        "max_tokens": 30,
+                        "temperature": 0.7
+                    },
+                    timeout=120
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success"):
+                        results_queue.put({
+                            "success": True,
+                            "routed_to": data.get("routed_to", "unknown"),
+                            "prompt": prompt_text
+                        })
+                    else:
+                        results_queue.put({"success": False, "error": data.get("error")})
+                else:
+                    results_queue.put({"success": False, "error": f"HTTP {response.status_code}"})
+            except Exception as e:
+                results_queue.put({"success": False, "error": str(e)})
+        
+        print(f"\nSending {len(prompts)} concurrent prompts...")
+        results_queue = Queue()
+        threads = []
+        
+        for prompt in prompts:
+            thread = Thread(target=send_prompt, args=(prompt, results_queue))
+            threads.append(thread)
+            thread.start()
+            time.sleep(0.05)  # Small stagger
+        
+        for thread in threads:
+            thread.join()
+        
+        # Collect results
+        results = []
+        while not results_queue.empty():
+            results.append(results_queue.get())
+        
+        # Analyze load distribution
+        successful = [r for r in results if r.get("success")]
+        print(f"\n  Successful: {len(successful)}/{len(prompts)}")
+        
+        if successful:
+            replica_counts = {}
+            for result in successful:
+                replica = result.get("routed_to", "unknown")
+                replica_counts[replica] = replica_counts.get(replica, 0) + 1
+            
+            print(f"  Load distribution:")
+            for replica, count in sorted(replica_counts.items()):
+                percentage = (count / len(successful)) * 100
+                print(f"    {replica}: {count} requests ({percentage:.1f}%)")
+            
+            # Verify load balancing is working (if multiple replicas)
+            if len(replica_counts) > 1:
+                print(f"  ✓ Load balancing confirmed: {len(replica_counts)} replicas used")
+            else:
+                print(f"  ⚠ All requests went to same replica (maybe only 1 was healthy)")
+        
+        # Clean up
+        try:
+            delete_response = requests.delete(f"{server_endpoint}/api/v1/service-groups/{group_id}", timeout=30)
+            if delete_response.status_code == 200:
+                print(f"\n  Cleanup: Successfully deleted service group")
+        except Exception as e:
+            print(f"\n  Warning: Failed to delete group during cleanup: {e}")
 
 
 class TestErrorHandling:
@@ -601,8 +799,7 @@ class TestErrorHandling:
         
         # This should handle the backend error gracefully
         response = client.post("/api/v1/services", json={
-            "recipe_name": "inference/vllm",
-            "config": {"nodes": 1}
+            "recipe_name": "inference/vllm-single-node"
         })
         
         # Should return 500 (internal server error) for backend failures

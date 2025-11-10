@@ -7,6 +7,7 @@ from pathlib import Path
 import requests
 from typing import Dict, List, Optional, Any
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from slurm import SlurmDeployer
 from service_manager import ServiceManager
@@ -296,7 +297,7 @@ class ServerService:
             try:
                 # Determine service type from recipe name
                 if recipe_name.startswith("inference/vllm"):
-                    is_ready, status = self.vllm_service._check_service_ready(service_id, stored_service)
+                    is_ready, status, _ = self.vllm_service._check_ready_and_discover_model(service_id, stored_service)
                 elif recipe_name.startswith("vector-db/"):
                     is_ready, status = self.vector_db_service._check_service_ready(service_id, stored_service)
                 else:
@@ -398,7 +399,7 @@ class ServerService:
                 recipe_name = stored_service.get("recipe_name", "")
                 # Check actual service readiness (health endpoint, etc.)
                 if recipe_name.startswith("inference/vllm"):
-                    is_ready, current_status = self.vllm_service._check_service_ready(service_id, stored_service)
+                    is_ready, current_status, _ = self.vllm_service._check_ready_and_discover_model(service_id, stored_service)
                     return {"status": current_status}
                 elif recipe_name.startswith("vector-db/"):
                     is_ready, current_status = self.vector_db_service._check_service_ready(service_id, stored_service)
@@ -420,7 +421,7 @@ class ServerService:
         try:
             recipe_name = stored_service.get("recipe_name", "")
             if recipe_name.startswith("inference/vllm"):
-                is_ready, current_status = self.vllm_service._check_service_ready(service_id, stored_service)
+                is_ready, current_status, _ = self.vllm_service._check_ready_and_discover_model(service_id, stored_service)
             elif recipe_name.startswith("vector-db/"):
                 is_ready, current_status = self.vector_db_service._check_service_ready(service_id, stored_service)
             else:
@@ -521,7 +522,7 @@ class ServerService:
             all_services = self.service_manager.list_services()
             replica_ids = [s["id"] for s in all_services if s.get("group_id") == group_id]
             
-            # Get status for each replica using existing service functions
+            # Get status for each replica in parallel using existing service functions
             status_counts = {
                 "healthy": 0,
                 "starting": 0,
@@ -529,18 +530,36 @@ class ServerService:
                 "failed": 0
             }
             
-            for replica_id in replica_ids:
-                status_dict = self.get_service_status(replica_id)
-                status = status_dict.get("status", "unknown")
+            # Check all replicas in parallel
+            replica_statuses = {}
+            max_workers = min(len(replica_ids), 8)  # Cap at 8 concurrent checks
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all status check tasks
+                future_to_id = {
+                    executor.submit(self.get_service_status, replica_id): replica_id
+                    for replica_id in replica_ids
+                }
                 
-                if status == "running":
-                    status_counts["healthy"] += 1
-                elif status == "starting":
-                    status_counts["starting"] += 1
-                elif status in ["pending", "building"]:
-                    status_counts["pending"] += 1
-                elif status in ["failed", "cancelled"]:
-                    status_counts["failed"] += 1
+                # Collect results as they complete
+                for future in as_completed(future_to_id):
+                    replica_id = future_to_id[future]
+                    try:
+                        status_dict = future.result()
+                        status = status_dict.get("status", "unknown")
+                        replica_statuses[replica_id] = status
+                        
+                        # Count by category
+                        if status == "running":
+                            status_counts["healthy"] += 1
+                        elif status == "starting":
+                            status_counts["starting"] += 1
+                        elif status in ["pending", "building"]:
+                            status_counts["pending"] += 1
+                        elif status in ["failed", "cancelled"]:
+                            status_counts["failed"] += 1
+                    except Exception as e:
+                        self.logger.error(f"Failed to get status for replica {replica_id}: {e}")
+                        replica_statuses[replica_id] = "unknown"
             
             enriched_groups.append({
                 "id": group_id,
@@ -700,7 +719,7 @@ class ServerService:
         }
     
     def get_service_group_status(self, group_id: str) -> Optional[Dict[str, Any]]:
-        """Get aggregated status of a service group.
+        """Get aggregated status of a service group with parallel status checks.
         
         Args:
             group_id: The service group ID
@@ -723,25 +742,45 @@ class ServerService:
         }
         
         replica_statuses = []
-        for replica in all_replicas:
-            replica_id = replica["id"]
-            status_dict = self.get_service_status(replica_id)
-            current_status = status_dict.get("status", "unknown")
+        
+        # Check all replicas in parallel
+        max_workers = min(len(all_replicas), 8)  # Cap at 8 concurrent checks
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all status check tasks
+            future_to_replica = {
+                executor.submit(self.get_service_status, replica["id"]): replica
+                for replica in all_replicas
+            }
             
-            replica_statuses.append({
-                "id": replica_id,
-                "status": current_status
-            })
-            
-            # Count by category
-            if current_status == "running":
-                status_counts["healthy"] += 1
-            elif current_status == "starting":
-                status_counts["starting"] += 1
-            elif current_status in ["pending", "building"]:
-                status_counts["pending"] += 1
-            elif current_status in ["failed", "cancelled"]:
-                status_counts["failed"] += 1
+            # Collect results as they complete
+            for future in as_completed(future_to_replica):
+                replica = future_to_replica[future]
+                replica_id = replica["id"]
+                
+                try:
+                    status_dict = future.result()
+                    current_status = status_dict.get("status", "unknown")
+                    
+                    replica_statuses.append({
+                        "id": replica_id,
+                        "status": current_status
+                    })
+                    
+                    # Count by category
+                    if current_status == "running":
+                        status_counts["healthy"] += 1
+                    elif current_status == "starting":
+                        status_counts["starting"] += 1
+                    elif current_status in ["pending", "building"]:
+                        status_counts["pending"] += 1
+                    elif current_status in ["failed", "cancelled"]:
+                        status_counts["failed"] += 1
+                except Exception as e:
+                    self.logger.error(f"Failed to get status for replica {replica_id}: {e}")
+                    replica_statuses.append({
+                        "id": replica_id,
+                        "status": "unknown"
+                    })
         
         # Determine overall status
         total = len(all_replicas)

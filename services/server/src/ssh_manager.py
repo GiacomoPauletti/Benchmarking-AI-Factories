@@ -1,14 +1,16 @@
 """
 SSH connection management for MeluXina HPC cluster.
 Handles SSH tunnels, remote file operations, and command execution.
+Uses SSH ControlMaster for persistent connections to reduce overhead.
 """
 
 import os
 import subprocess
 import logging
 import requests
+import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 
 class SSHManager:
@@ -63,7 +65,158 @@ class SSHManager:
         self.ssh_base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
         self.ssh_base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
         
+        # ControlMaster setup for persistent SSH connections
+        self.control_socket_dir = Path("/tmp/ssh-control-sockets")
+        self.control_socket_dir.mkdir(parents=True, exist_ok=True)
+        self._control_master_socket = self.control_socket_dir / f"master-{self.ssh_user}@{self.ssh_host}:{self.ssh_port}"
+        self._control_master_active = False
+        self._last_control_check = 0
+        self._control_check_interval = 30  # Check every 30s
+        
         self.logger.info(f"SSH Manager initialized for {self.ssh_target}:{self.ssh_port} (using SSH agent)")
+        self.logger.info(f"ControlMaster socket: {self._control_master_socket}")
+    
+    def _ensure_control_master(self) -> bool:
+        """Ensure a ControlMaster connection is active.
+        
+        Creates a persistent SSH connection that can be reused by subsequent commands,
+        significantly reducing connection overhead.
+        
+        Returns:
+            True if control master is active, False otherwise
+        """
+        now = time.time()
+        
+        # Check if we recently verified the connection
+        if self._control_master_active and (now - self._last_control_check) < self._control_check_interval:
+            return True
+        
+        # Check if control master socket exists and is responsive
+        if self._control_master_socket.exists():
+            try:
+                # Test if control master is alive with a quick command
+                test_cmd = self.ssh_base_cmd + [
+                    "-S", str(self._control_master_socket),
+                    "-O", "check",
+                    self.ssh_target
+                ]
+                result = subprocess.run(
+                    test_cmd,
+                    capture_output=True,
+                    timeout=2,
+                    env=os.environ.copy()
+                )
+                
+                if result.returncode == 0:
+                    self.logger.debug("ControlMaster connection is alive")
+                    self._control_master_active = True
+                    self._last_control_check = now
+                    return True
+                else:
+                    self.logger.debug("ControlMaster check failed, will recreate")
+            except Exception as e:
+                self.logger.debug(f"ControlMaster check error: {e}")
+        
+        # Create new control master
+        try:
+            self.logger.info("Creating ControlMaster connection...")
+            
+            master_cmd = self.ssh_base_cmd + [
+                "-M",  # Master mode
+                "-S", str(self._control_master_socket),  # Control socket path
+                "-o", "ControlPersist=600",  # Keep connection alive for 10 minutes after last use
+                "-o", "ServerAliveInterval=60",  # Send keepalive every 60s
+                "-o", "ServerAliveCountMax=3",  # Allow 3 missed keepalives before disconnect
+                "-o", "ExitOnForwardFailure=yes",
+                "-fN",  # Background, no command execution
+                self.ssh_target
+            ]
+            
+            result = subprocess.run(
+                master_cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=os.environ.copy()
+            )
+            
+            if result.returncode != 0:
+                self.logger.warning(f"Failed to create ControlMaster: {result.stderr}")
+                self._control_master_active = False
+                return False
+            
+            # Wait briefly for socket to be created
+            time.sleep(0.5)
+            
+            if self._control_master_socket.exists():
+                self.logger.info("ControlMaster connection established successfully")
+                self._control_master_active = True
+                self._last_control_check = now
+                return True
+            else:
+                self.logger.warning("ControlMaster socket not created")
+                self._control_master_active = False
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.logger.warning("Timeout creating ControlMaster connection")
+            self._control_master_active = False
+            return False
+        except Exception as e:
+            self.logger.warning(f"Error creating ControlMaster: {e}")
+            self._control_master_active = False
+            return False
+    
+    def _get_ssh_command(self, command: str = None, use_control_master: bool = True) -> list:
+        """Build SSH command with optional ControlMaster support.
+        
+        Args:
+            command: Optional command to execute
+            use_control_master: Whether to use ControlMaster (default: True)
+            
+        Returns:
+            List of command parts for subprocess
+        """
+        cmd = self.ssh_base_cmd.copy()
+        
+        # Add ControlMaster socket if available
+        if use_control_master and self._ensure_control_master():
+            cmd.extend(["-S", str(self._control_master_socket)])
+        
+        # Add target
+        cmd.append(self.ssh_target)
+        
+        # Add command if provided
+        if command:
+            cmd.append(command)
+        
+        return cmd
+    
+    def close_control_master(self):
+        """Close the ControlMaster connection gracefully."""
+        if not self._control_master_active or not self._control_master_socket.exists():
+            return
+        
+        try:
+            self.logger.info("Closing ControlMaster connection...")
+            exit_cmd = self.ssh_base_cmd + [
+                "-S", str(self._control_master_socket),
+                "-O", "exit",
+                self.ssh_target
+            ]
+            subprocess.run(
+                exit_cmd,
+                capture_output=True,
+                timeout=5,
+                env=os.environ.copy()
+            )
+            self._control_master_active = False
+            self.logger.info("ControlMaster connection closed")
+        except Exception as e:
+            self.logger.warning(f"Error closing ControlMaster: {e}")
+    
+    def get_slurm_token(self) -> str:
+        self.logger.info(f"ControlMaster socket: {self._control_master_socket}")
     
     def get_slurm_token(self) -> str:
         """Fetch a fresh SLURM JWT token from MeluXina.
@@ -336,7 +489,7 @@ class SSHManager:
             return False
     
     def execute_remote_command(self, command: str, timeout: int = 30) -> Tuple[bool, str, str]:
-        """Execute a command on MeluXina via SSH.
+        """Execute a command on MeluXina via SSH with ControlMaster.
         
         Args:
             command: Command to execute
@@ -346,7 +499,7 @@ class SSHManager:
             Tuple of (success, stdout, stderr)
         """
         try:
-            cmd = self.ssh_base_cmd + [self.ssh_target, command]
+            cmd = self._get_ssh_command(command, use_control_master=True)
             
             # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
             env = os.environ.copy()

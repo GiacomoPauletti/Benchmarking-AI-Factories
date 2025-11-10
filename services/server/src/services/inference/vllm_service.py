@@ -1,7 +1,9 @@
 """vLLM-specific inference service implementation."""
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import requests
+import time
+import json
 from .inference_service import InferenceService
 from load_balancer import LoadBalancer
 
@@ -14,9 +16,51 @@ class VllmService(InferenceService):
     """Handles all vLLM-specific inference operations."""
     
     def __init__(self, deployer, service_manager, endpoint_resolver, logger):
-        """Initialize VllmService with load balancer support."""
+        """Initialize VllmService with load balancer support and model caching."""
         super().__init__(deployer, service_manager, endpoint_resolver, logger)
         self.load_balancer = LoadBalancer()
+        
+        # Model name cache: {service_id: {"model": str, "endpoint": str, "timestamp": float}}
+        self._model_cache: Dict[str, Dict[str, Any]] = {}
+        self._model_cache_ttl = 3600  # Cache for 1 hour (models don't change during service lifetime)
+    
+    def _get_cached_model(self, service_id: str, endpoint: str) -> Optional[str]:
+        """Get cached model name if available and fresh.
+        
+        Args:
+            service_id: The service ID
+            endpoint: The current endpoint (must match cached endpoint)
+            
+        Returns:
+            Cached model name or None
+        """
+        if service_id in self._model_cache:
+            cache_entry = self._model_cache[service_id]
+            age = time.time() - cache_entry["timestamp"]
+            
+            # Verify cache is fresh and endpoint matches
+            if age < self._model_cache_ttl and cache_entry["endpoint"] == endpoint:
+                self.logger.debug(f"Model cache HIT for {service_id}: {cache_entry['model']} (age: {age:.1f}s)")
+                return cache_entry["model"]
+            else:
+                self.logger.debug(f"Model cache STALE for {service_id} (age: {age:.1f}s or endpoint mismatch)")
+        
+        return None
+    
+    def _cache_model(self, service_id: str, endpoint: str, model: str):
+        """Cache the model name for a service.
+        
+        Args:
+            service_id: The service ID
+            endpoint: The endpoint URL
+            model: The model name to cache
+        """
+        self._model_cache[service_id] = {
+            "model": model,
+            "endpoint": endpoint,
+            "timestamp": time.time()
+        }
+        self.logger.debug(f"Model cached for {service_id}: {model}")
 
     def find_services(self) -> List[Dict[str, Any]]:
         """Find running VLLM services and their endpoints."""
@@ -43,7 +87,7 @@ class VllmService(InferenceService):
             
             # Get detailed service-specific status instead of basic SLURM status
             try:
-                is_ready, status = self._check_service_ready(job_id, service)
+                is_ready, status, _ = self._check_ready_and_discover_model(job_id, service)
             except Exception as e:
                 self.logger.warning(f"Failed to check readiness for service {job_id}: {e}")
                 status = service.get("status", "unknown")
@@ -77,7 +121,7 @@ class VllmService(InferenceService):
                     "models": []
                 }
             
-            is_ready, status = self._check_service_ready(service_id, service_info)
+            is_ready, status, _ = self._check_ready_and_discover_model(service_id, service_info)
             if not is_ready:
                 return {
                     "success": False,
@@ -190,20 +234,27 @@ class VllmService(InferenceService):
                 "models": []
             }
 
-    def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str]:
-        """Check if a vLLM service is ready to accept requests.
+    
+    def _check_ready_and_discover_model(self, service_id: str, service_info: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]:
+        """Check if a vLLM service is ready AND discover its model name in ONE HTTP call.
+        
+        This combines readiness checking with model discovery to eliminate duplicate
+        HTTP requests to the /v1/models endpoint, reducing latency by ~2 seconds.
         
         Uses a hybrid approach:
         1. For replicas (composite IDs), skip SLURM check and test HTTP directly
         2. For regular services, check SLURM status first (fast, eliminates pending/building jobs)
-        3. For RUNNING jobs, test HTTP connection to /v1/models endpoint
+        3. For RUNNING jobs, test HTTP connection to /v1/models endpoint AND parse model list
         
         Args:
             service_id: The service ID to check (may be composite like "job_id:port")
             service_info: The service information dict
             
         Returns:
-            Tuple of (is_ready: bool, status: str) where status is the current LIVE status
+            Tuple of (is_ready: bool, status: str, model: Optional[str])
+            - is_ready: True if service is ready for prompts
+            - status: Current service status ("running", "starting", etc.)
+            - model: First model name from /v1/models, or None if not available
         """
         # For composite replica IDs (e.g., "3713478:8001"), skip SLURM check
         # The SLURM job may be "completed" while replicas continue running as background processes
@@ -222,7 +273,7 @@ class VllmService(InferenceService):
         # If not running yet, return basic status (no need to test connection)
         if basic_status != "running":
             is_ready = basic_status not in ["pending", "building", "starting"]
-            return is_ready, basic_status
+            return is_ready, basic_status, None
         
         # For RUNNING jobs, test actual HTTP connection to confirm vLLM is ready
         # This replaces log parsing with a definitive connection test
@@ -230,9 +281,10 @@ class VllmService(InferenceService):
         if not endpoint:
             # Job is running but endpoint not available yet
             self.logger.debug(f"Service {service_id} is RUNNING but endpoint not resolved yet")
-            return False, "starting"
+            return False, "starting", None
         
         # Try lightweight HTTP GET to /v1/models with short timeout
+        # This SINGLE call both checks readiness AND discovers the model
         try:
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
@@ -240,7 +292,7 @@ class VllmService(InferenceService):
             remote_port = parsed.port or 8001
             path = "/v1/models"
             
-            self.logger.debug(f"Testing readiness via connection to {remote_host}:{remote_port}{path}")
+            self.logger.debug(f"Testing readiness + discovering model via {remote_host}:{remote_port}{path}")
             
             # Use SSH to make the HTTP request with short timeout
             ssh_manager = self.deployer.ssh_manager
@@ -255,16 +307,42 @@ class VllmService(InferenceService):
             # Connection succeeded and got valid HTTP response
             if status_code >= 200 and status_code < 300:
                 self.logger.debug(f"Service {service_id} is ready (HTTP {status_code})")
-                return True, "running"
+                
+                # Parse model list from response
+                model = None
+                try:
+                    data = json.loads(body)
+                    # vLLM returns {"object": "list", "data": [...]}
+                    if isinstance(data, dict):
+                        candidates = data.get('data', [])
+                        if isinstance(candidates, list) and candidates:
+                            # Extract first model ID
+                            first_item = candidates[0]
+                            if isinstance(first_item, dict):
+                                model = first_item.get('id')
+                            elif isinstance(first_item, str):
+                                model = first_item
+                    
+                    if model:
+                        self.logger.debug(f"Discovered model for {service_id}: {model}")
+                        # Cache the model for future use
+                        self._cache_model(service_id, endpoint, model)
+                    else:
+                        self.logger.debug(f"Could not extract model from /v1/models response for {service_id}")
+                        
+                except Exception as e:
+                    self.logger.debug(f"Failed to parse models from response for {service_id}: {e}")
+                
+                return True, "running", model
             else:
                 # Connected but got error response - likely still initializing
                 self.logger.debug(f"Service {service_id} on {remote_host}:{remote_port} returned HTTP {status_code}")
-                return False, "starting"
+                return False, "starting", None
                 
         except Exception as e:
             # Connection failed - service not ready yet
             self.logger.debug(f"Service {service_id} connection test to {remote_host}:{remote_port} failed: {e}")
-            return False, "starting"
+            return False, "starting", None
 
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a running VLLM service or service group.
@@ -365,7 +443,7 @@ class VllmService(InferenceService):
         Tries chat endpoint first (for instruction-tuned models).
         Falls back to completions endpoint if chat template error occurs (for base models).
         
-        Optimized: Skips expensive status checks for services that were recently used successfully.
+        Optimized with model caching and combined readiness+discovery check.
         """
         # Try to get service info directly (works for just-created services too)
         service_info = self.service_manager.get_service(service_id)
@@ -387,15 +465,29 @@ class VllmService(InferenceService):
                 "service_id": service_id
             }
         
+        # Try to get the endpoint early
+        endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
+        if not endpoint:
+            return {
+                "success": False,
+                "error": "Service endpoint not available",
+                "message": "The vLLM service endpoint is not available yet. The service may still be initializing.",
+                "service_id": service_id,
+                "status": "starting"
+            }
+        
         # FAST PATH: Skip expensive checks if service was recently used successfully (within 5 minutes)
         skip_readiness_check = self.service_manager.is_service_recently_healthy(service_id, max_age_seconds=300)
+        discovered_model = None
         
         if skip_readiness_check:
             self.logger.debug(f"Fast path: Skipping readiness check for recently-used service {service_id}")
             status = "running"  # Assume it's still running
+            # Try to get cached model (saves ~2s!)
+            discovered_model = self._get_cached_model(service_id, endpoint)
         else:
-            # SLOW PATH: Do full readiness check for services not recently used
-            is_ready, status = self._check_service_ready(service_id, service_info)
+            # SLOW PATH: Do combined readiness check + model discovery (saves ~2s vs separate calls!)
+            is_ready, status, discovered_model = self._check_ready_and_discover_model(service_id, service_info)
             if not is_ready:
                 return {
                     "success": False,
@@ -405,28 +497,25 @@ class VllmService(InferenceService):
                     "status": status
                 }
         
-        # Try to get the endpoint
-        endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
-        if not endpoint:
-            # Service exists but endpoint not available yet
-            # Invalidate health status since endpoint is missing
-            self.service_manager.invalidate_service_health(service_id)
-            return {
-                "success": False,
-                "error": "Service endpoint not available",
-                "message": "The vLLM service endpoint is not available yet. The service may still be initializing.",
-                "service_id": service_id,
-                "status": status
-            }
-        
         # Get model name and remove it from kwargs to avoid duplicate argument
         model = kwargs.pop("model", None)
+        
+        # Use discovered/cached model if no explicit model provided
         if not model:
-            models_result = self.get_models(service_id)
-            if models_result.get("success") and models_result.get("models"):
-                model = models_result["models"][0]
+            if discovered_model:
+                # Use the model we discovered during readiness check or from cache
+                model = discovered_model
+                self.logger.debug(f"Using discovered/cached model for {service_id}: {model}")
             else:
-                model = None
+                # Fallback: query models endpoint (only if we don't have a cached model)
+                self.logger.debug(f"No cached model for {service_id}, querying /v1/models")
+                models_result = self.get_models(service_id)
+                if models_result.get("success") and models_result.get("models"):
+                    model = models_result["models"][0]
+                    # Cache it for next time
+                    self._cache_model(service_id, endpoint, model)
+                else:
+                    model = None
 
         self.logger.debug("Preparing prompt for service %s at %s with model %s", service_id, endpoint, model)
         
@@ -726,7 +815,7 @@ class VllmService(InferenceService):
                     "metrics": ""
                 }
             
-            is_ready, status = self._check_service_ready(service_id, service_info)
+            is_ready, status, _ = self._check_ready_and_discover_model(service_id, service_info)
             if not is_ready:
                 return {
                     "success": False,

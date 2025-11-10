@@ -16,5 +16,5 @@
     "tables": "metrics_output/metrics_summary.csv",
     "manifest": "metrics_output/MANIFEST.json"
   },
-  "stopped_at": "2025-11-09T22:29:06.475713Z"
+  "stopped_at": "2025-11-10T15:29:00.049616Z"
 }
