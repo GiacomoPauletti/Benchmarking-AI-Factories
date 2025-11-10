@@ -10,73 +10,81 @@ from .base import ScriptPaths
 
 
 class VllmInferenceBuilder(InferenceRecipeBuilder):
-    """vLLM-specific script builder with tensor parallelism support."""
+    """vLLM-specific script builder with replica group support."""
     
-    def build_distributed_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                                recipe: Dict[str, Any],
-                                distributed_cfg: Dict[str, Any]) -> str:
-        """Build distributed multi-node run block for vLLM with tensor parallelism.
+    def build_replica_group_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
+                                      recipe: Dict[str, Any],
+                                      config: Dict[str, Any]) -> str:
+        """Build replica group run block for vLLM.
         
-        For single-node setups, uses Ray backend (default).
-        For multi-node setups, uses external_launcher with srun.
+        Supports multiple replicas per node with flexible GPU allocation:
+        - Each replica runs as a separate process
+        - Each replica bound to specific GPU(s) via CUDA_VISIBLE_DEVICES
+        - Each replica listens on unique port (base_port + index)
+        
+        Args:
+            paths: Container and filesystem paths
+            resources: Resource requirements (gpu, cpu, memory)
+            recipe: Recipe configuration
+            config: Combined recipe + user config with gpu_per_replica, base_port, etc.
         """
-        nodes = int(resources.get("nodes", 1))
         project_ws = paths.remote_base_path
         hf_cache = f"{project_ws}/huggingface_cache"
         nv_flag = "--nv" if resources.get("gpu") else ""
         
-        nproc_per_node = int(distributed_cfg.get("nproc_per_node", 1))
-        master_port = distributed_cfg.get("master_port", 29500)
-        # Get model from distributed config, or fallback to recipe environment, or use default
-        model = distributed_cfg.get("model", recipe.get("environment", {}).get("VLLM_MODEL", "Qwen/Qwen2.5-0.5B-Instruct"))
-        max_len = distributed_cfg.get("max_model_len", 4096)
-        gpu_mem = distributed_cfg.get("gpu_memory_utilization", 0.9)
+        # Read configuration
+        model = config.get("model", recipe.get("environment", {}).get("VLLM_MODEL", "Qwen/Qwen2.5-0.5B-Instruct"))
+        max_len = config.get("max_model_len", 4096)
+        gpu_mem = config.get("gpu_memory_utilization", 0.9)
         
-        # For single-node, use simpler Ray-based approach
-        if nodes == 1:
-            return self._build_single_node_run_block(paths, resources, recipe, distributed_cfg, 
-                                                     model, max_len, gpu_mem, nproc_per_node, hf_cache, nv_flag)
-
-        # For multi-node, use external_launcher approach
-        return self._build_multi_node_run_block(paths, resources, recipe, distributed_cfg,
-                                                model, max_len, gpu_mem, nproc_per_node, master_port, hf_cache, nv_flag)
-    
-    def _build_single_node_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                                      recipe: Dict[str, Any], distributed_cfg: Dict[str, Any],
-                                      model: str, max_len: int, gpu_mem: float,
-                                      tensor_parallel: int, hf_cache: str, nv_flag: str) -> str:
-        """Build single-node vLLM run block using Ray backend (default).
+        # Get replica group configuration
+        total_gpus = int(resources.get("gpu", 4))
+        gpu_per_replica = int(config.get("gpu_per_replica") or recipe.get("gpu_per_replica", 1))
+        base_port = int(config.get("base_port") or recipe.get("base_port", 8001))
         
-        Supports replica_port in distributed_cfg for data-parallel deployments.
-        """
-        project_ws = paths.remote_base_path
+        # Calculate replicas per node
+        replicas_per_node = total_gpus // gpu_per_replica
         
-        # Support custom port for replicas (default to 8001)
-        vllm_port = distributed_cfg.get("replica_port", 8001)
-        
-        return f"""
-echo "=== Starting single-node vLLM (Ray backend) ==="
+        # Build script using srun for proper resource isolation
+        script = f"""
+echo "=== Starting vLLM replica group ({replicas_per_node} replicas) ==="
 export VLLM_MODEL={model}
 export VLLM_MAX_MODEL_LEN={max_len}
 export VLLM_GPU_MEMORY_UTILIZATION={gpu_mem}
-export VLLM_TENSOR_PARALLEL={tensor_parallel}
-export VLLM_PORT={vllm_port}
 
 # Setup HuggingFace cache on shared filesystem
 export HF_CACHE_HOST="{hf_cache}"
 mkdir -p $HF_CACHE_HOST
 chmod 755 $HF_CACHE_HOST
 
-echo "Launching vLLM server:"
-echo "- Node: $(hostname)"
-echo "- Port: $VLLM_PORT"
-echo "- GPUs (tensor parallel): $VLLM_TENSOR_PARALLEL"
-echo "- Model: $VLLM_MODEL"
-echo "- Max model len: $VLLM_MAX_MODEL_LEN"
-echo "- HF Cache: $HF_CACHE_HOST"
+echo "Node: $(hostname)"
+echo "Starting {replicas_per_node} vLLM replicas using srun for resource isolation..."
+echo "Base port: {base_port}"
+echo "Model: $VLLM_MODEL"
+echo "GPUs per replica: {gpu_per_replica}"
+echo "HF Cache: $HF_CACHE_HOST"
 
-# Launch single vLLM process with Ray backend (handles multi-GPU internally)
-apptainer exec {nv_flag} \\
+# Array to track background PIDs
+declare -a REPLICA_PIDS=()
+
+"""
+        
+        # Generate launch command for each replica using srun
+        for i in range(replicas_per_node):
+            port = base_port + i
+            
+            if gpu_per_replica == 1:
+                tensor_parallel = 1
+            else:
+                tensor_parallel = gpu_per_replica
+            
+            # Use srun --exact for proper resource isolation per replica
+            # This ensures SLURM manages GPU binding automatically
+            script += f"""
+# Replica {i}: Port {port}, {gpu_per_replica} GPU(s)
+echo "Launching replica {i} on port {port} (srun task {i})..."
+srun --ntasks=1 --exact --gpus-per-task={gpu_per_replica} \\
+    apptainer exec {nv_flag} \\
     --bind {paths.log_dir}:/app/logs \\
     --bind {project_ws}:/workspace \\
     --bind $HF_CACHE_HOST:/hf_cache \\
@@ -91,21 +99,44 @@ apptainer exec {nv_flag} \\
         python3 -m vllm.entrypoints.openai.api_server \\
             --model $VLLM_MODEL \\
             --host 0.0.0.0 \\
-            --port $VLLM_PORT \\
-            --tensor-parallel-size $VLLM_TENSOR_PARALLEL \\
+            --port {port} \\
+            --tensor-parallel-size {tensor_parallel} \\
             --max-model-len $VLLM_MAX_MODEL_LEN \\
-            --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION \\
-            2>&1 | tee /app/logs/vllm_server.log
-    "
+            --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
+    " > {paths.log_dir}/vllm_${{SLURM_JOB_ID}}_replica_{i}.log 2>&1 &
 
-container_exit_code=$?
-echo "vLLM server exited with: $container_exit_code"
-[ $container_exit_code -ne 0 ] && echo "ERROR: vLLM container run failed"
+REPLICA_PIDS+=($!)
+echo "Replica {i} started with PID ${{REPLICA_PIDS[-1]}} (output: vllm_${{SLURM_JOB_ID}}_replica_{i}.log)"
+sleep 2  # Brief delay between launches
+
 """
-    
-    def _build_multi_node_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                                     recipe: Dict[str, Any], distributed_cfg: Dict[str, Any],
-                                     model: str, max_len: int, gpu_mem: float,
-                                     nproc_per_node: int, master_port: int, hf_cache: str, nv_flag: str) -> str:
-        """Build multi-node vLLM run block using Ray backend with proper multi-node setup."""
-        raise NotImplementedError("Multi-node vLLM with tensor parallelism is not yet implemented.")
+        
+        # Add wait logic to keep job alive - THIS IS CRITICAL!
+        script += f"""
+# Wait for all replicas and handle termination
+echo "All {replicas_per_node} replicas launched. PIDs: ${{REPLICA_PIDS[@]}}"
+echo "Waiting for replicas to complete..."
+
+# Function to cleanup on exit
+cleanup() {{
+    echo "Received termination signal, stopping all replicas..."
+    for pid in "${{REPLICA_PIDS[@]}}"; do
+        if kill -0 $pid 2>/dev/null; then
+            echo "Stopping PID $pid..."
+            kill $pid 2>/dev/null
+        fi
+    done
+    exit 0
+}}
+
+trap cleanup SIGTERM SIGINT
+
+# Wait for all background processes - THIS KEEPS THE JOB ALIVE
+for pid in "${{REPLICA_PIDS[@]}}"; do
+    wait $pid || echo "Process $pid exited with code $?"
+done
+
+echo "All replicas completed"
+"""
+        
+        return script

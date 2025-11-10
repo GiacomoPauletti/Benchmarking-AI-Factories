@@ -33,10 +33,18 @@ class ServiceResponse(BaseModel):
     config: Dict[str, Any]
     created_at: str
     
-    # Optional fields for service groups
-    type: Optional[str] = None  # "group" for service groups
+    # Optional fields for replica groups
+    type: Optional[str] = None  # "group" or "replica_group"
     replicas: Optional[List[Dict[str, Any]]] = None  # List of replica info dicts
     num_replicas: Optional[int] = None  # Total number of replicas
+    
+    # Optional fields for replica groups
+    num_nodes: Optional[int] = None  # Number of nodes
+    replicas_per_node: Optional[int] = None  # Replicas per node
+    total_replicas: Optional[int] = None  # Total replicas across all nodes
+    node_jobs: Optional[List[Dict[str, Any]]] = None  # Node job structure
+    
+    # Optional fields for individual replicas
     group_id: Optional[str] = None  # For replicas: ID of parent group
     replica_index: Optional[int] = None  # For replicas: index within group
 

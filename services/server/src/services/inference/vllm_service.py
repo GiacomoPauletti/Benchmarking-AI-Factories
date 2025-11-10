@@ -194,22 +194,30 @@ class VllmService(InferenceService):
         """Check if a vLLM service is ready to accept requests.
         
         Uses a hybrid approach:
-        1. Check SLURM status first (fast, eliminates pending/building jobs)
-        2. For RUNNING jobs, test HTTP connection to /v1/models endpoint
+        1. For replicas (composite IDs), skip SLURM check and test HTTP directly
+        2. For regular services, check SLURM status first (fast, eliminates pending/building jobs)
+        3. For RUNNING jobs, test HTTP connection to /v1/models endpoint
         
         Args:
-            service_id: The service ID to check
+            service_id: The service ID to check (may be composite like "job_id:port")
             service_info: The service information dict
             
         Returns:
             Tuple of (is_ready: bool, status: str) where status is the current LIVE status
         """
-        # Get the current LIVE status from SLURM
-        try:
-            basic_status = self.deployer.get_job_status(service_id).lower()
-        except Exception as e:
-            self.logger.warning(f"Failed to get status for service {service_id}: {e}")
-            basic_status = service_info.get("status", "unknown").lower()
+        # For composite replica IDs (e.g., "3713478:8001"), skip SLURM check
+        # The SLURM job may be "completed" while replicas continue running as background processes
+        if ":" in service_id:
+            # Replicas: test HTTP connection directly without checking SLURM status
+            self.logger.debug(f"Checking replica {service_id} via direct HTTP test (skipping SLURM status)")
+            basic_status = "running"  # Assume running and let HTTP test determine actual state
+        else:
+            # Regular services: Get the current LIVE status from SLURM
+            try:
+                basic_status = self.deployer.get_job_status(service_id).lower()
+            except Exception as e:
+                self.logger.warning(f"Failed to get status for service {service_id}: {e}")
+                basic_status = service_info.get("status", "unknown").lower()
         
         # If not running yet, return basic status (no need to test connection)
         if basic_status != "running":

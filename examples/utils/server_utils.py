@@ -99,10 +99,10 @@ def wait_for_service_ready(
 
 
 def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: int = 1, 
-                                  timeout: int = 600, check_interval: int = 1) -> bool:
+                                  timeout: int = 600, check_interval: int = 3) -> bool:
     """Wait for at least min_healthy replicas in a service group to be ready.
     
-    Polls each replica's /status endpoint to verify it's running and ready.
+    Checks replica statuses from the group's node_jobs structure.
     
     Args:
         server_url: Base URL of the server (e.g., "http://localhost:8001")
@@ -126,40 +126,32 @@ def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: in
             
             if response.status_code == 200:
                 data = response.json()
-                replicas = data.get("replicas", [])
                 
-                if not replicas:
+                # Extract replicas from node_jobs structure
+                node_jobs = data.get("node_jobs", [])
+                all_replicas = []
+                for node_job in node_jobs:
+                    all_replicas.extend(node_job.get("replicas", []))
+                
+                if not all_replicas:
                     elapsed = int(time.time() - start_time)
                     print(f"  Waiting for replicas to be registered... ({elapsed}s elapsed)", end="\r")
                     time.sleep(check_interval)
                     continue
                 
-                # Check status of each replica
-                healthy_count = 0
-                for replica in replicas:
-                    replica_id = replica.get("id")
-                    try:
-                        # Poll the status endpoint for this replica
-                        status_response = requests.get(
-                            f"{api_base}/services/{replica_id}/status",
-                            timeout=5
-                        )
-                        if status_response.status_code == 200:
-                            status_data = status_response.json()
-                            if status_data.get("status") == "running":
-                                healthy_count += 1
-                    except requests.exceptions.RequestException:
-                        # Replica not ready yet
-                        pass
+                # Check status of each replica (status is already in the replica data)
+                healthy_count = sum(1 for r in all_replicas if r.get("status") == "running")
+                starting_count = sum(1 for r in all_replicas if r.get("status") == "starting")
+                pending_count = sum(1 for r in all_replicas if r.get("status") in ["pending", "building"])
                 
-                print(f"  Status: {healthy_count}/{len(replicas)} replicas ready", end="\r")
+                print(f"  Status: {healthy_count}/{len(all_replicas)} running, {starting_count} starting, {pending_count} pending", end="\r")
                 
                 if healthy_count >= min_healthy:
                     print(f"\nService group is ready with {healthy_count} healthy replicas!")
                     return True
             
-        except requests.exceptions.RequestException:
-            pass
+        except requests.exceptions.RequestException as e:
+            print(f"\n  Connection error: {e}", end="\r")
         
         time.sleep(check_interval)
     
