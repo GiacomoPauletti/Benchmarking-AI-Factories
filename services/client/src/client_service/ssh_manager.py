@@ -68,6 +68,14 @@ class SSHManager:
             expanded_key = os.path.expanduser(self.ssh_key_path)
             self.ssh_base_cmd.extend(["-i", expanded_key])
         
+        # Add options for non-interactive execution
+        self.ssh_base_cmd.extend([
+            "-o", "StrictHostKeyChecking=no",  # Don't ask for host key confirmation
+            "-o", "UserKnownHostsFile=/dev/null",  # Don't save host keys
+            "-o", "BatchMode=yes",  # Non-interactive mode
+            "-o", "ConnectTimeout=30"  # Connection timeout
+        ])
+        
         self.logger.info(f"SSH Manager singleton initialized for {self.ssh_target}:{self.ssh_port}")
         self._initialized = True
     

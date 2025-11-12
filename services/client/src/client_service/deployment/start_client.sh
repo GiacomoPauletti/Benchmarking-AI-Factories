@@ -9,6 +9,7 @@
 
 set -e
 
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_MODE=false
 CONTAINER_IMAGE="client_container.sif"
@@ -60,6 +61,9 @@ NUM_CLIENTS="$1"
 SERVER_ADDR="$2"
 BENCHMARK_ID="$3"
 
+# Writes on a file for debugging
+touch ./client_debug.log
+echo "Starting client with args: $NUM_CLIENTS $SERVER_ADDR $BENCHMARK_ID" >> ./client_debug.log
 
 # Check if we're in the correct directory or if container image exists
 if [ "$CONTAINER_MODE" = "true" ]; then

@@ -69,7 +69,7 @@ services:
     restart: unless-stopped
     command: >
       python -m main
-      ${CLIENT_SERVICE_SERVER_ADDR:-http://localhost:8001}
+      ${CLIENT_SERVICE_SERVER_ADDR:-http://localhost:8002}
       --host ${CLIENT_SERVICE_HOST:-0.0.0.0}
       --port ${CLIENT_SERVICE_PORT:-8002}
       ${CLIENT_SERVICE_CONTAINER_MODE:+--container}

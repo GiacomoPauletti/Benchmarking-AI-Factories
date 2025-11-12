@@ -5,6 +5,7 @@ import logging
 import subprocess
 from typing import Optional
 from .slurm_token import SlurmToken
+from client_service.ssh_manager import SSHManager
 
 # Default values
 DEFAULT_URL = "http://slurmrestd.meluxina.lxp.lu:6820"
@@ -34,6 +35,8 @@ class SlurmConfig:
         if self._initialized:
             return
             
+        self._ssh_manager = SSHManager.get_instance()
+
         self._url = DEFAULT_URL
         self._api_ver = DEFAULT_API_VER
         self._account = DEFAULT_ACCOUNT
@@ -42,7 +45,7 @@ class SlurmConfig:
         
         # Try to get token from environment first
         logger.info("Initializing SlurmConfig singleton...")
-        raw_token = self.create_new_token()  # Without SSH manager, only checks environment
+        raw_token = self.create_new_token()
         if raw_token:
             self._token = SlurmToken(raw_token)
             logger.info("SlurmConfig singleton initialized successfully with token from environment")
@@ -72,11 +75,9 @@ class SlurmConfig:
             logger.warning("Could not detect username automatically")
             return ""
 
-    def get_slurm_token(self, ssh_manager) -> str:
+    def get_slurm_token(self) -> str:
         """Fetch a fresh SLURM JWT token from MeluXina via SSH.
         
-        Args:
-            ssh_manager: SSHManager instance to execute remote commands
             
         Returns:
             SLURM JWT token string
@@ -85,22 +86,23 @@ class SlurmConfig:
             RuntimeError: If token fetch fails
         """
         logger.info("Fetching SLURM JWT token from MeluXina...")
-        success, stdout, stderr = ssh_manager.execute_remote_command("scontrol token", timeout=10)
+        success, stdout, stderr = self._ssh_manager.execute_remote_command("scontrol token", timeout=10)
         
         if not success:
             raise RuntimeError(f"Failed to fetch SLURM token: {stderr}")
-        
+
         # Parse output: "SLURM_JWT=eyJhbGc..."
         for line in stdout.strip().split('\n'):
             if line.startswith('SLURM_JWT='):
                 token = line.split('=', 1)[1].strip()
                 logger.info("Successfully fetched SLURM JWT token")
+                logger.info(f"SLURM JWT token: {token}")
                 return token
         
         logger.error("SLURM token not found in command output. Raising error.")
         raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
 
-    def create_new_token(self, ssh_manager=None, lifetime: int = 300) -> Optional[str]:
+    def create_new_token(self, lifetime: int = 300) -> Optional[str]:
         """
         Create a new JWT token for Slurm authentication.
         
@@ -115,24 +117,8 @@ class SlurmConfig:
             JWT token string or None if not available
         """
         # Try SSH method first if SSH manager is provided
-        if ssh_manager:
-            try:
-                logger.info("Fetching new token via SSH...")
-                return self.get_slurm_token(ssh_manager)
-            except Exception as e:
-                logger.error(f"Failed to fetch token via SSH: {e}")
-                logger.info("Falling back to environment variable")
-        
-        # Fallback to environment variable
-        env_token = os.getenv('SLURM_JWT')
-        if env_token:
-            logger.info("Using token from SLURM_JWT environment variable")
-            return env_token
-        else:
-            logger.error("No SLURM_JWT token found in environment")
-            if not ssh_manager:
-                logger.error("No SSH manager provided and no environment token available")
-            return None
+        logger.info("Fetching new token via SSH...")
+        return self.get_slurm_token()
 
     @classmethod
     def load_from_file(cls, file_path: str):

@@ -9,21 +9,21 @@
 
 set -e
 
-# Default values
-LOCAL_MODE=false
+# Default values - now runs locally by default
+LOCAL_MODE=true
 
 # Parse command line arguments
-if [ "$1" = "--test-local" ]; then
-    echo "🧪 Testing shell locally without Slurm allocation..."
-    echo "⚠️  This runs on the login node - use only for testing!"
-    LOCAL_MODE=true
+if [ "$1" = "--cluster" ]; then
+    echo "🚀 Running on cluster with Slurm allocation..."
+    echo "📋 Allocation: Account p200981, Queue default, Time limit 2h"
+    LOCAL_MODE=false
 fi
 
 if [ "$LOCAL_MODE" = "true" ]; then
-    echo "🧪 Starting shell in local test mode..."
+    echo "🧪 Starting shell in local mode..."
+    echo "💻 Running on local machine for development testing"
 else
     echo "🚀 Starting interactive Meluxina shell for AI Factory testing..."
-    echo "📋 Allocation: Account p200981, Queue default, Time limit 2h"
     echo "⏳ Requesting compute node allocation..."
 fi
 echo ""

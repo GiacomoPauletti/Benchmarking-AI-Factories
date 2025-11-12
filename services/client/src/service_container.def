@@ -19,6 +19,7 @@ From: python:3.11-slim
 
 %files
     # Copy the entire client service source code
+    ../.env                 /app/src/.env
     client_service/         /app/src/
     __init__.py             /app/src/
     main.py                 /app/src/
@@ -29,6 +30,9 @@ From: python:3.11-slim
     export PYTHONPATH="/app:$PYTHONPATH"
     export PYTHONUNBUFFERED=1
     export CLIENT_SERVICE_PORT=8001
+    if [ -f /app/src/.env ]; then
+        export $(grep -v '^#' /app/src/.env | xargs)
+    fi
 
 %post
     # Update system and install dependencies
