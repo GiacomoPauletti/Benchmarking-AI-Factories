@@ -2,8 +2,7 @@
 Prometheus manager - controls a local Prometheus instance via HTTP API.
 
 This file replaces the older `local_prometheus.py` module. Prometheus runs as a
-persistent Docker service; this manager interacts with it over HTTP for health
-checks, config reloads, and queries.
+persistent Docker service; this manager interacts with it over HTTP for health checks, and queries.
 """
 import logging
 import requests
@@ -20,7 +19,6 @@ class PrometheusManager:
 
     Responsibilities:
     - Check Prometheus health/readiness
-    - Hot-reload configuration
     - Query metrics via HTTP API
     - Get scrape target status
 
@@ -30,14 +28,12 @@ class PrometheusManager:
     - Manage SLURM jobs
     """
 
-    def __init__(self, prometheus_url: str, config_path: Path):
+    def __init__(self, prometheus_url: str):
         """
         Args:
             prometheus_url: Base URL of Prometheus (e.g., http://prometheus:9090)
-            config_path: Path to prometheus.yml config file
         """
         self.url = prometheus_url.rstrip('/')
-        self.config_path = Path(config_path)
         self.session = requests.Session()
         self.session.headers.update({'Content-Type': 'application/json'})
 
@@ -76,33 +72,6 @@ class PrometheusManager:
 
         logger.warning(f"Prometheus did not become ready within {timeout_s}s")
         return False
-
-    def reload_config(self) -> bool:
-        """
-        Hot-reload Prometheus configuration.
-
-        Prometheus must be started with --web.enable-lifecycle flag.
-
-        Returns:
-            True if reload successful, False otherwise
-        """
-        try:
-            response = self.session.post(f"{self.url}/-/reload", timeout=10)
-            response.raise_for_status()
-            logger.info("Prometheus configuration reloaded successfully")
-            return True
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                logger.error(
-                    "Reload failed: Prometheus not started with --web.enable-lifecycle. "
-                    "Check docker-compose.yml command section."
-                )
-            else:
-                logger.error(f"Failed to reload Prometheus: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Error reloading Prometheus: {e}")
-            return False
 
     def query_range(
         self,
@@ -181,22 +150,6 @@ class PrometheusManager:
             return response.json()
         except Exception as e:
             logger.error(f"Failed to get targets: {e}")
-            return None
-
-    def get_config(self) -> Optional[str]:
-        """
-        Get current Prometheus configuration as YAML string.
-
-        Returns:
-            YAML config string or None if failed
-        """
-        try:
-            response = self.session.get(f"{self.url}/api/v1/status/config", timeout=10)
-            response.raise_for_status()
-            result = response.json()
-            return result.get("data", {}).get("yaml")
-        except Exception as e:
-            logger.error(f"Failed to get config: {e}")
             return None
 
     def get_metadata(self, metric: Optional[str] = None) -> Optional[Dict[str, Any]]:
