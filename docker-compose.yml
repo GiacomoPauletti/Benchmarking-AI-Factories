@@ -40,19 +40,18 @@ services:
 
   # Prometheus - Metrics storage and scraping
   prometheus:
-    image: prom/prometheus:v2.48.0
+    build:
+      context: ./services/prometheus
+      dockerfile: Dockerfile
     container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
-      # Config managed by Monitoring Service
-      - ./services/monitoring/config/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-storage:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=15d'
-      - '--web.enable-lifecycle'        # Enable hot reload via /-/reload
       - '--web.enable-admin-api'        # Enable admin operations
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
@@ -78,16 +77,9 @@ services:
       - ./services/monitoring/src:/app/src
       - ./services/monitoring/tests:/app/tests
       - ./services/monitoring/logs:/app/logs
-      - ./services/monitoring/state:/app/state
-      # Shared Prometheus config (monitoring service updates it)
-      - ./services/monitoring/config:/app/config
-      # Mount metrics output directory for collected artifacts
-      - ./services/monitoring/metrics_output:/app/metrics_output
     environment:
       # Prometheus settings
       - MONITORING_PROMETHEUS_URL=http://prometheus:9090
-      - MONITORING_PROMETHEUS_CONFIG_PATH=/app/config/prometheus.yml
-      - MONITORING_DEPLOYMENT_MODE=local
       
       # Server API (for metrics proxy)
       - MONITORING_SERVER_API_URL=http://server:8001

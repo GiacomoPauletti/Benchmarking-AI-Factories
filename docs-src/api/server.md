@@ -304,7 +304,7 @@ curl http://localhost:8001/api/v1/recipes
 ### Get Recipe Details
 
 ```bash
-curl http://localhost:8001/api/v1/recipes/inference/vllm
+curl http://localhost:8001/api/v1/recipes/vllm-single-node
 ```
 
 ## Vector DB (Qdrant) Examples

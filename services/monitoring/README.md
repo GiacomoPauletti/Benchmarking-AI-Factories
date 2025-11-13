@@ -2,8 +2,8 @@
 
 > Unified, reproducible monitoring for end-to-end AI Factory benchmarks on MeluXina.
 
-* **Purpose:** orchestrate Prometheus, register benchmark targets (clients, services, exporters), collect time-window metrics, and produce standardized artifacts for analysis and reports.
-* **Scope (MVP):** Slurm-only orchestration (no Kubernetes), FastAPI REST API + CLI control, Prometheus hot-reload, CSV/JSON artifacts, containerized test suite.
+* **Purpose:** Collect time-window metrics and produce standardized artifacts for analysis and reports.
+* **Scope (MVP):** Slurm-only orchestration (no Kubernetes), FastAPI REST API + CLI control, CSV/JSON artifacts, containerized test suite.
 * **Non-goals (for now):** automatic exporter deployment, long-term TSDB management, dashboards. Those are planned follow-ups.
 
 ## 🔄 Architecture Update (Nov 2024)
@@ -25,7 +25,6 @@ The monitoring service has been refactored to follow the same architecture patte
 - Monitoring service manages Prometheus via HTTP API only (no start/stop, just configure & reload)
 - Server microservice proxies `/metrics` from SLURM services (vLLM, Qdrant) so Prometheus can scrape them
 - Grafana connects directly to Prometheus for visualization
-- Hot-reload enabled via `--web.enable-lifecycle` flag
 
 See [`src/README.md`](src/README.md) for detailed documentation.
 
@@ -35,10 +34,8 @@ See [`src/README.md`](src/README.md) for detailed documentation.
 
 Benchmarking an **AI Factory** involves multiple components (inference servers, vector DBs, file/object stores) running across HPC nodes. We need a single, repeatable way to:
 
-1. Tell **Prometheus** what to scrape (services under test + node/GPU exporters).
-2. Launch and manage Prometheus on MeluXina via **Slurm**.
-3. Collect a **specific time window** of metrics and compute KPIs (throughput, p50/p95/p99 latency, CPU/GPU utilization).
-4. Save results as **artifacts** (CSV + MANIFEST.json) that downstream dashboards/report builders can consume.
+1. Collect a **specific time window** of metrics and compute KPIs (throughput, p50/p95/p99 latency, CPU/GPU utilization).
+2. Save results as **artifacts** (CSV + MANIFEST.json) that downstream dashboards/report builders can consume.
 
 ---
 
@@ -49,13 +46,11 @@ Benchmarking an **AI Factory** involves multiple components (inference servers, 
 1. **Prometheus** runs as a persistent Docker service (not SLURM job)
 2. **PrometheusManager** manages Prometheus via HTTP API:
    - Health checks (`/-/healthy`, `/-/ready`)
-   - Configuration hot-reload (`/-/reload`)
    - PromQL queries (`/api/v1/query`, `/api/v1/query_range`)
 3. **Server Metrics Proxy** exposes `/metrics` endpoints that proxy metrics from SLURM services (vLLM, Qdrant)
 4. **Registry** keeps the canonical list of what to monitor (clients, services, exporters) per session
-5. **ConfigRenderer** generates `prometheus.yml` from the registry and triggers hot-reload
-6. **CollectorAgg** queries the Prometheus HTTP API for a given window, computes aggregates (p50/p95/p99, averages), and writes artifacts
-7. **StateStore** persists session state (artifact paths, registered targets)
+5. **CollectorAgg** queries the Prometheus HTTP API for a given window, computes aggregates (p50/p95/p99, averages), and writes artifacts
+6. **StateStore** persists session state (artifact paths, registered targets)
 
 The **MonitoringService** facade wires these pieces together.
 
@@ -143,12 +138,9 @@ flowchart LR
 * **PrometheusManager** — HTTP-based Prometheus control:
 
   * `is_healthy()`, `is_ready()` — Health checks
-  * `reload_config()` — Triggers hot-reload via `/-/reload`
   * `query_instant()`, `query_range()` — Execute PromQL queries
   * `get_targets()` — List all scrape targets
   
-* **ConfigRenderer** — Renders `prometheus.yml` from registry targets and hot-reloads Prometheus (`/-/reload`)
-
 * **CollectorAgg** — Calls Prometheus HTTP API to pull a time window, computes KPIs (throughput, p50/p95/p99 latency, avg CPU/GPU), saves **CSV** + **MANIFEST.json**
 
 * **Registry** — Canonical store of: clients, exporters (node/DCGM), service endpoints
@@ -361,12 +353,10 @@ Logs:
 ## Configuration & assumptions
 
 * **Prometheus** runs as a Docker service (defined in `docker-compose.yml`)
-* Prometheus is started with `--web.enable-lifecycle` so hot-reload works
 * **Server microservice** proxies `/metrics` from SLURM services:
   - `/metrics/vllm/{job_id}` - Proxies vLLM metrics from SLURM job
   - `/metrics/qdrant/{job_id}` - Proxies Qdrant metrics from SLURM job
 * Prometheus scrapes these proxy endpoints (reachable within Docker network)
-* **Monitoring service** configures Prometheus via `prometheus.yml` updates + hot-reload
 * Grafana queries Prometheus directly for visualization
 
 ### Environment Variables
@@ -374,12 +364,8 @@ Logs:
 Configuration is managed via `services/monitoring/src/core/settings.py`:
 
 ```bash
-# Deployment mode
-DEPLOYMENT_MODE=development  # or 'production'
-
 # Prometheus connection
 PROMETHEUS_URL=http://prometheus:9090
-PROMETHEUS_CONFIG_PATH=/etc/prometheus/prometheus.yml
 
 # Server API (for metrics proxying)
 SERVER_API_URL=http://server-api:8001
@@ -421,11 +407,6 @@ DEFAULT_SCRAPE_TIMEOUT=10s
   - Confirm SLURM job is running and exposing metrics
   - Check Server metrics proxy: `curl http://localhost:8001/metrics/vllm/{job_id}`
   - Verify Prometheus targets: `curl http://localhost:9090/targets` or check UI
-  
-* **Reload failed:**
-  - Prometheus must be started with `--web.enable-lifecycle`
-  - Check prometheus.yml syntax: `docker-compose exec prometheus promtool check config /etc/prometheus/prometheus.yml`
-  - View reload endpoint: `curl -X POST http://localhost:9090/-/reload`
   
 * **Monitoring API errors:**
   - Check service logs: `docker-compose logs monitoring`

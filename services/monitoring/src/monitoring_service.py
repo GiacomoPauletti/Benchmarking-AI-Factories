@@ -25,7 +25,6 @@ class MonitoringService:
 
     Architecture (Local Deployment):
     - Prometheus runs as a Docker service (managed by docker-compose)
-    - MonitoringService manages Prometheus configuration and hot-reloads it
     - Metrics are scraped from local services and proxied SLURM services
     - No SLURM dependency for Prometheus itself
     """
@@ -33,7 +32,6 @@ class MonitoringService:
     def __init__(
         self,
         prometheus_url: Optional[str] = None,
-        config_path: Optional[Path] = None,
         state_dir: Optional[Path] = None
     ) -> None:
         self.logger = logging.getLogger(__name__)
@@ -41,20 +39,17 @@ class MonitoringService:
         
         # Use settings or override
         self.prometheus_url = prometheus_url or settings.prometheus_url
-        self.config_path = config_path or settings.prometheus_config_path
         self.state_dir = state_dir or settings.state_dir
         
         # Initialize components
         self.state = StateStore(self.state_dir)
         self.registry = Registry(self.state_dir)
-        self.prom = PrometheusManager(self.prometheus_url, self.config_path)
+        self.prom = PrometheusManager(self.prometheus_url)
         
         # Ensure directories exist
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
         
         self.logger.info(f"Prometheus URL: {self.prometheus_url}")
-        self.logger.info(f"Config path: {self.config_path}")
 
     # -------------------- Helper methods --------------------
 
@@ -85,14 +80,11 @@ class MonitoringService:
         In local deployment, this:
         1. Checks for existing RUNNING session (raises error if found)
         2. Creates session metadata and workspace
-        3. Renders Prometheus config with any pre-registered targets
-        4. Hot-reloads Prometheus to activate the session
-        5. Verifies Prometheus is ready
+        3. Verifies Prometheus is ready
         
         Args:
             cfg: Configuration dictionary with:
                 - run_id (str, optional): Session identifier (auto-generated if not provided)
-                - scrape_interval (str, optional): Prometheus scrape interval (default: "15s")
                 - labels (dict, optional): Additional labels for this session
         
         Returns:
@@ -113,42 +105,13 @@ class MonitoringService:
         workdir = Path(self.state_dir) / sid
         workdir.mkdir(parents=True, exist_ok=True)
 
-        scrape_interval = cfg.get("scrape_interval", settings.default_scrape_interval)
-        
         # Get any pre-registered targets for this session
         targets = self.registry.list_targets(sid)
-        
-        # Render config directly to the shared Prometheus config location
-        renderer = ConfigRenderer(workdir)
-        cfg_path = renderer.render(
-            targets, 
-            scrape_interval,
-            output_path=self.config_path
-        )
-
-        # Hot-reload Prometheus to pick up new config
-        if not self.prom.reload_config():
-            raise RuntimeError("Failed to reload Prometheus configuration")
 
         # Verify Prometheus is ready
         if not self.prom.is_ready(timeout_s=10):
             raise RuntimeError("Prometheus is not ready")
-
-        session_data = {
-            "session_id": sid,
-            "status": "RUNNING",
-            "workdir": str(workdir),
-            "prometheus_url": self.prometheus_url,
-            "config_path": str(cfg_path),
-            "scrape_interval": scrape_interval,
-            "labels": cfg.get("labels", {}),
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "started_at": datetime.utcnow().isoformat() + "Z",
-        }
         
-        self.state.write(sid, session_data)
-        
-        self.logger.info(f"Created and started monitoring session {sid} with {len(targets)} targets")
         return {
             "session_id": sid, 
             "prometheus_url": self.prometheus_url, 
@@ -156,28 +119,6 @@ class MonitoringService:
             "workdir": str(workdir),
             "targets_count": len(targets)
         }
-
-    def start(self, session_id: str) -> Dict[str, Any]:
-        """
-        DEPRECATED: Sessions are now started automatically when created.
-        
-        This method is kept for backward compatibility but simply returns
-        the session status. Use create_session() instead.
-        
-        Args:
-            session_id: The session identifier
-        
-        Returns:
-            Dictionary with status and prometheus_url
-        """
-        import warnings
-        warnings.warn(
-            "MonitoringService.start() is deprecated. Sessions are now started "
-            "automatically when created. Use create_session() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        return self.status(session_id)
 
     def status(self, session_id: str) -> Dict[str, Any]:
         """
@@ -248,25 +189,6 @@ class MonitoringService:
             "stopped_at": datetime.utcnow().isoformat() + "Z"
         })
         
-        # Regenerate Prometheus config without this session's targets
-        workdir = Path(st.get("workdir", self.state_dir / session_id))
-        renderer = ConfigRenderer(workdir)
-        
-        # Aggregate all remaining targets from other RUNNING sessions (if any)
-        combined_targets = {"node": [], "dcgm": [], "services": []}
-        for session in self.state.list_all():
-            if session.get("session_id") != session_id and session.get("status") == "RUNNING":
-                session_targets = self.registry.list_targets(session["session_id"])
-                combined_targets["node"].extend(session_targets.get("node", []))
-                combined_targets["dcgm"].extend(session_targets.get("dcgm", []))
-                combined_targets["services"].extend(session_targets.get("services", []))
-        
-        renderer.render(
-            combined_targets,
-            st.get("scrape_interval", settings.default_scrape_interval),
-            output_path=self.config_path
-        )
-        
         # Hot reload Prometheus to stop scraping stopped session's targets
         self.prom.reload_config()
         
@@ -317,18 +239,6 @@ class MonitoringService:
             Confirmation dictionary with client_id
         """
         self.registry.upsert_client(req)
-        st = self.state.read(req["session_id"])
-        
-        if st.get("status") == "RUNNING":
-            # Hot reload config
-            workdir = Path(st["workdir"])
-            renderer = ConfigRenderer(workdir)
-            renderer.render(
-                self.registry.list_targets(req["session_id"]), 
-                st.get("scrape_interval", settings.default_scrape_interval),
-                output_path=self.config_path
-            )
-            self.prom.reload_config()
         
         self.logger.info(f"Registered client {req['client_id']} for session {req['session_id']}")
         return {"ok": True, "client_id": req["client_id"]}
@@ -368,17 +278,6 @@ class MonitoringService:
         svc["client_id"] = service_id
         
         self.registry.upsert_service(svc)
-        st = self.state.read(svc["session_id"])
-        
-        if st.get("status") == "RUNNING":
-            workdir = Path(st["workdir"])
-            renderer = ConfigRenderer(workdir)
-            renderer.render(
-                self.registry.list_targets(svc["session_id"]), 
-                st.get("scrape_interval", settings.default_scrape_interval),
-                output_path=self.config_path
-            )
-            self.prom.reload_config()
         
         self.logger.info(f"Registered service {service_id} for session {svc['session_id']}")
         return {"ok": True, "service_id": service_id, "endpoint": endpoint}

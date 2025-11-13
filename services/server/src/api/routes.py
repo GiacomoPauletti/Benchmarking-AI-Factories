@@ -36,7 +36,7 @@ async def create_service(
         examples={
             "simple": {
                 "summary": "Create a basic vLLM service",
-                "value": {"recipe_name": "inference/vllm", "config": {"nodes": 1, "cpus": 2, "memory": "8G", "time": "00:30:00"}}
+                "value": {"recipe_name": "inference/vllm-single-node", "config": {"nodes": 1, "cpus": 2, "memory": "8G", "time": "00:30:00"}}
             }
         }
     ),
@@ -48,7 +48,7 @@ async def create_service(
     The service will be containerized using Apptainer and scheduled on compute nodes.
 
     **Request Body:**
-    - `recipe_name` (required): Path to the recipe (e.g., "inference/vllm", "inference/vllm_dummy")
+    - `recipe_name` (required): Path to the recipe (e.g., "inference/vllm-single-node", "inference/vllm_dummy")
     - `config` (optional): Configuration object with:
         - **SLURM resource requirements** (all optional, override recipe defaults):
             - `nodes`: Number of compute nodes (default: 1)
@@ -69,14 +69,14 @@ async def create_service(
     Simple creation with defaults:
     ```json
     {
-      "recipe_name": "inference/vllm"
+      "recipe_name": "inference/vllm-single-node"
     }
     ```
 
     Custom model:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "environment": {
           "VLLM_MODEL": "gpt2"
@@ -88,7 +88,7 @@ async def create_service(
     Custom model + resources:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "nodes": 1,
         "environment": {
@@ -149,7 +149,7 @@ async def list_services(server_service: ServerService = Depends(get_server_servi
         "id": "3642874",
         "name": "vllm-service",
         "status": "running",
-        "recipe_name": "inference/vllm",
+        "recipe_name": "inference/vllm-single-node",
         "config": {"nodes": 1, "cpus": 4, "memory": "16G"},
         "created_at": "2025-10-14T10:30:00"
       }
@@ -158,6 +158,53 @@ async def list_services(server_service: ServerService = Depends(get_server_servi
     """
     services = server_service.list_running_services()
     return services
+
+
+@router.get("/services/targets")
+async def get_service_targets(server_service: ServerService = Depends(get_server_service)):
+    """Get Prometheus scrape targets for all managed services.
+
+    This endpoint returns a list of Prometheus scrape targets for running services.
+    This allows to dynamically configure Prometheus to monitor all services managed by this server.
+
+    **Returns:**
+    - Content-Type: `application/json`
+    - Body: JSON object compatible with Prometheus file-based service discovery format
+
+    **Example Response:**
+    ```json
+    [
+      {
+        "targets": ["server:8001"],
+        "labels": {
+          "job": "service-3642874",
+          "service_id": "3642874",
+          "recipe_name": "inference/vllm-single-node"
+        }
+      },
+      ...
+    ]
+    ```
+    """
+    try:
+        targets = []
+        for service in server_service.list_running_services():
+            service_id = service["id"]
+            targets.append({
+                "targets": [service_id],
+                "labels": {
+                    "job": f"service-{service_id}",
+                    "service_id": service_id,
+                    "recipe_name": service["recipe_name"],
+                    "status": service["status"],
+                }
+            })
+        return targets
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/services/{service_id}", response_model=ServiceResponse)
@@ -641,7 +688,7 @@ async def list_or_get_recipe(
     - With `path` or `name`: Returns a single matching recipe
 
     **Query Parameters (Optional):**
-    - `path`: Recipe path (e.g., "inference/vllm", "vector-db/qdrant")
+    - `path`: Recipe path (e.g., "inference/vllm-single-node", "vector-db/qdrant")
     - `name`: Recipe display name (e.g., "vLLM Inference Service")
 
     **Returns:**
@@ -662,7 +709,7 @@ async def list_or_get_recipe(
     - `category`: Category (inference, storage, vector-db, etc.)
     - `description`: Human-readable description
     - `version`: Recipe version
-    - `path`: Path identifier (e.g., "inference/vllm")
+    - `path`: Path identifier (e.g., "inference/vllm-single-node")
     """
     recipes = server_service.list_available_recipes()
     
@@ -693,7 +740,7 @@ async def list_vllm_services(server_service: ServerService = Depends(get_server_
     - Object with `vllm_services` array, each service containing:
         - `id`: SLURM job ID (service identifier)
         - `name`: Service name
-        - `recipe_name`: Recipe used (typically "inference/vllm")
+        - `recipe_name`: Recipe used (typically "inference/vllm-single-node")
         - `endpoint`: HTTP endpoint URL (e.g., "http://mel2133:8001")
         - `status`: Current status (building/starting/running)
 
@@ -704,7 +751,7 @@ async def list_vllm_services(server_service: ServerService = Depends(get_server_
         {
           "id": "3642874",
           "name": "vllm-service",
-          "recipe_name": "inference/vllm",
+          "recipe_name": "inference/vllm-single-node",
           "endpoint": "http://mel2133:8001",
           "status": "running"
         }
@@ -788,7 +835,7 @@ async def list_available_vllm_models():
     Then create a service with any compatible model:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "environment": {
           "VLLM_MODEL": "Qwen/Qwen2.5-7B-Instruct"
@@ -933,7 +980,7 @@ async def get_model_info(model_id: str):
     Then use the model ID to create a service:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "environment": {
           "VLLM_MODEL": "Qwen/Qwen2.5-7B-Instruct"
