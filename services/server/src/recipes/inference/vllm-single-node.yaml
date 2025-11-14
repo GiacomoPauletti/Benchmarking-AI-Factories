@@ -19,4 +19,4 @@ resources:
   cpu: "8"
   memory: "64G"
   time_limit: 15
-  gpu: "4"
+  gpu: "1"

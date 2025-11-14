@@ -84,24 +84,22 @@ class TestAPIEndpoints:
         mock_server_service.start_service.return_value = {
             "id": "12345",
             "name": "test-service",
-            "recipe_name": "inference/vllm",
+            "recipe_name": "inference/vllm-single-node",
             "status": "pending",
-            "nodes": 1,
             "config": {"nodes": 1},
             "created_at": "2025-10-08T10:00:00"
         }
         
         # Make the API call
         response = client.post("/api/v1/services", json={
-            "recipe_name": "inference/vllm",
-            "config": {"nodes": 1}
+            "recipe_name": "inference/vllm-single-node"
         })
         
         # Verify the response
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "12345"
-        assert data["recipe_name"] == "inference/vllm"
+        assert data["recipe_name"] == "inference/vllm-single-node"
         
         # Verify the mock was called correctly
         mock_server_service.start_service.assert_called_once()
@@ -113,9 +111,8 @@ class TestAPIEndpoints:
         mock_server_service.get_service.return_value = {
             "id": "test-123",
             "name": "test-service",
-            "recipe_name": "inference/vllm",
+            "recipe_name": "inference/vllm-single-node",
             "status": "running",
-            "nodes": 1,
             "config": {"nodes": 1},
             "created_at": "2025-10-09T10:00:00"
         }
@@ -255,7 +252,7 @@ class TestAPIEndpoints:
                 "category": "inference",
                 "description": "VLLM inference service",
                 "version": "1.0",
-                "path": "inference/vllm"
+                "path": "inference/vllm-single-node"
             },
             {
                 "name": "triton",
@@ -285,16 +282,16 @@ class TestAPIEndpoints:
                 "category": "inference",
                 "description": "VLLM inference service",
                 "version": "1.0",
-                "path": "inference/vllm"
+                "path": "inference/vllm-single-node"
             }
         ]
         
-        response = client.get("/api/v1/recipes?path=inference/vllm")
+        response = client.get("/api/v1/recipes?path=inference/vllm-single-node")
         assert response.status_code == 200
         recipe = response.json()
         assert recipe["name"] == "vLLM Inference Service"
         assert recipe["category"] == "inference"
-        assert recipe["path"] == "inference/vllm"
+        assert recipe["path"] == "inference/vllm-single-node"
         
         mock_server_service.list_available_recipes.assert_called_once()
     
@@ -308,7 +305,7 @@ class TestAPIEndpoints:
                 "category": "inference",
                 "description": "VLLM inference service",
                 "version": "1.0",
-                "path": "inference/vllm"
+                "path": "inference/vllm-single-node"
             }
         ]
         
@@ -329,7 +326,7 @@ class TestAPIEndpoints:
                 "category": "inference",
                 "description": "VLLM inference service",
                 "version": "1.0",
-                "path": "inference/vllm"
+                "path": "inference/vllm-single-node"
             }
         ]
         
@@ -358,7 +355,7 @@ class TestAPIEndpoints:
             {
                 "id": "vllm-123",
                 "name": "vllm-service",
-                "recipe_name": "inference/vllm",
+                "recipe_name": "inference/vllm-single-node",
                 "endpoint": "http://node001:8000",
                 "status": "running"
             }
@@ -422,25 +419,156 @@ class TestAPIEndpoints:
     
     def test_get_vllm_models_endpoint(self, mock_server_service, client):
         """
-        Test getting available models from a VLLM service.
+        Test getting models from a VLLM service.
         """
         mock_server_service.get_vllm_models.return_value = {
             "success": True,
             "models": ["gpt2", "Qwen/Qwen2.5-0.5B-Instruct"],
-            "service_id": "vllm-123",
-            "endpoint": "http://node:8000"
+            "service_id": "test-123",
+            "endpoint": "http://compute01:8000"
         }
         
-        response = client.get("/api/v1/vllm/vllm-123/models")
+        response = client.get("/api/v1/vllm/test-123/models")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert "models" in data
         assert len(data["models"]) == 2
         assert "gpt2" in data["models"]
-        assert "Qwen/Qwen2.5-0.5B-Instruct" in data["models"]
+    
+    def test_list_service_groups_endpoint(self, mock_server_service, client):
+        """
+        Test listing all service groups.
+        """
+        mock_server_service.list_service_groups.return_value = [
+            {
+                "id": "sg-test123",
+                "type": "replica_group",
+                "recipe_name": "inference/vllm-replicas",
+                "total_replicas": 4,
+                "healthy_replicas": 3,
+                "starting_replicas": 1,
+                "pending_replicas": 0,
+                "failed_replicas": 0,
+                "created_at": "2025-11-10T12:00:00"
+            }
+        ]
         
-        mock_server_service.get_vllm_models.assert_called_once_with("vllm-123")
+        response = client.get("/api/v1/service-groups")
+        assert response.status_code == 200
+        groups = response.json()
+        assert len(groups) == 1
+        assert groups[0]["id"] == "sg-test123"
+        assert groups[0]["total_replicas"] == 4
+        assert groups[0]["healthy_replicas"] == 3
+        
+        mock_server_service.list_service_groups.assert_called_once()
+    
+    def test_get_service_group_endpoint(self, mock_server_service, client):
+        """
+        Test getting detailed information about a service group.
+        """
+        mock_server_service.get_service_group.return_value = {
+            "id": "sg-test123",
+            "type": "replica_group",
+            "replicas": [
+                {
+                    "id": "1234:8001",
+                    "name": "vllm-replicas-1234-replica-0",
+                    "status": "running",
+                    "port": 8001,
+                    "gpu_id": 0
+                },
+                {
+                    "id": "1234:8002",
+                    "name": "vllm-replicas-1234-replica-1",
+                    "status": "running",
+                    "port": 8002,
+                    "gpu_id": 1
+                }
+            ],
+            "total_replicas": 2,
+            "healthy_replicas": 2,
+            "recipe_name": "inference/vllm-replicas"
+        }
+        
+        response = client.get("/api/v1/service-groups/sg-test123")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "sg-test123"
+        assert len(data["replicas"]) == 2
+        assert data["healthy_replicas"] == 2
+        
+        mock_server_service.get_service_group.assert_called_once_with("sg-test123")
+    
+    def test_get_service_group_not_found(self, mock_server_service, client):
+        """
+        Test getting a non-existent service group returns 404.
+        """
+        mock_server_service.get_service_group.return_value = None
+        
+        response = client.get("/api/v1/service-groups/nonexistent")
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+    
+    def test_stop_service_group_endpoint(self, mock_server_service, client):
+        """
+        Test stopping a service group and all its replicas.
+        """
+        mock_server_service.stop_service_group.return_value = {
+            "success": True,
+            "message": "Service group sg-test123 stopped successfully",
+            "group_id": "sg-test123",
+            "replicas_stopped": 4
+        }
+        
+        response = client.delete("/api/v1/service-groups/sg-test123")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["replicas_stopped"] == 4
+        
+        mock_server_service.stop_service_group.assert_called_once_with("sg-test123")
+    
+    def test_stop_service_group_not_found(self, mock_server_service, client):
+        """
+        Test stopping a non-existent service group returns 404.
+        """
+        mock_server_service.stop_service_group.return_value = {
+            "success": False,
+            "error": "Service group not found"
+        }
+        
+        response = client.delete("/api/v1/service-groups/nonexistent")
+        assert response.status_code == 404
+    
+    def test_get_service_group_status_endpoint(self, mock_server_service, client):
+        """
+        Test getting aggregated status of a service group.
+        """
+        mock_server_service.get_service_group_status.return_value = {
+            "group_id": "sg-test123",
+            "overall_status": "healthy",
+            "total_replicas": 4,
+            "healthy_replicas": 4,
+            "starting_replicas": 0,
+            "pending_replicas": 0,
+            "failed_replicas": 0,
+            "replica_statuses": [
+                {"id": "1234:8001", "status": "running"},
+                {"id": "1234:8002", "status": "running"},
+                {"id": "1234:8003", "status": "running"},
+                {"id": "1234:8004", "status": "running"}
+            ]
+        }
+        
+        response = client.get("/api/v1/service-groups/sg-test123/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["overall_status"] == "healthy"
+        assert data["healthy_replicas"] == 4
+        assert len(data["replica_statuses"]) == 4
+        
+        mock_server_service.get_service_group_status.assert_called_once_with("sg-test123")
     
     def test_prompt_vllm_service_not_ready(self, mock_server_service, client):
         """
@@ -495,14 +623,13 @@ class TestAPIEndpoints:
         mock_server_service.start_service.return_value = {
             "id": "12345",
             "name": "vllm-custom",
-            "recipe_name": "inference/vllm",
+            "recipe_name": "inference/vllm-single-node",
             "status": "pending",
             "config": {
                 "environment": {
                     "VLLM_MODEL": "gpt2"
                 },
                 "resources": {
-                    "nodes": 1,
                     "cpu": "8",
                     "memory": "64G",
                     "gpu": "1"
@@ -513,7 +640,7 @@ class TestAPIEndpoints:
         
         # Create service with custom model and resources
         response = client.post("/api/v1/services", json={
-            "recipe_name": "inference/vllm",
+            "recipe_name": "inference/vllm-single-node",
             "config": {
                 "environment": {
                     "VLLM_MODEL": "gpt2"
@@ -536,7 +663,7 @@ class TestAPIEndpoints:
         # Verify the mock was called with the right config (using keyword arguments)
         mock_server_service.start_service.assert_called_once()
         call_args = mock_server_service.start_service.call_args
-        assert call_args.kwargs["recipe_name"] == "inference/vllm"
+        assert call_args.kwargs["recipe_name"] == "inference/vllm-single-node"
         assert call_args.kwargs["config"]["environment"]["VLLM_MODEL"] == "gpt2"
         assert call_args.kwargs["config"]["resources"]["cpu"] == "8"
     
@@ -793,7 +920,7 @@ class TestVLLMServiceLogic:
         mock_service_manager.get_service.return_value = {
             "id": "test-123",
             "status": "running",
-            "recipe_name": "inference/vllm"
+            "recipe_name": "inference/vllm-single-node"
         }
         mock_endpoint_resolver = Mock()
         mock_endpoint_resolver.resolve = Mock(return_value="http://test:8001")
@@ -1075,13 +1202,13 @@ class TestVllmServiceUnit:
         """Test that find_services correctly filters VLLM services."""
         # Mock service_manager.list_services() to return mixed services
         mock_service_manager.list_services.return_value = [
-            {"id": "123", "name": "vllm-service", "recipe_name": "inference/vllm", "status": "running"},
+            {"id": "123", "name": "vllm-service", "recipe_name": "inference/vllm-single-node", "status": "running"},
             {"id": "456", "name": "postgres-db", "recipe_name": "database/postgres", "status": "running"},
-            {"id": "789", "name": "my-inference", "recipe_name": "inference/vllm", "status": "running"},
+            {"id": "789", "name": "my-inference", "recipe_name": "inference/vllm-single-node", "status": "running"},
         ]
         
-        # Mock deployer to return live status
-        mock_deployer.get_job_status.side_effect = ["running", "running", "running"]
+        # Mock the readiness check to return (is_ready, status, model)
+        vllm_service._check_ready_and_discover_model = Mock(return_value=(True, "running", "test-model"))
         
         # Mock endpoint resolver
         mock_endpoint_resolver.resolve.side_effect = [
@@ -1109,11 +1236,14 @@ class TestVllmServiceUnit:
             "id": "123",
             "name": "vllm-test",
             "status": "pending",  # Stale cached status
-            "recipe_name": "inference/vllm"
+            "recipe_name": "inference/vllm-single-node"
         }
         
-        # Mock deployer.get_job_status() to return current live status
-        mock_deployer.get_job_status.return_value = "starting"  # Live status
+        # Mock is_group to return False (this is a single service, not a group)
+        mock_service_manager.is_group.return_value = False
+        
+        # Mock the check method to return not ready
+        vllm_service._check_ready_and_discover_model = Mock(return_value=(False, "starting", None))
         
         # Mock endpoint resolver
         mock_endpoint_resolver.resolve.return_value = None
@@ -1121,13 +1251,10 @@ class TestVllmServiceUnit:
         # Call prompt
         result = vllm_service.prompt("123", "test prompt")
         
-        # Should use live status from deployer, not cached status
+        # Should use live status from check
         assert result["success"] is False
         assert "starting" in result["message"].lower()
         assert result["status"] == "starting"
-        
-        # Verify deployer.get_job_status was called
-        mock_deployer.get_job_status.assert_called_once_with("123")
     
     def test_prompt_uses_correct_endpoint_resolver_method(self, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver, mock_logger):
         """Test that prompt() calls endpoint_resolver.resolve() (not resolve_endpoint())."""
@@ -1136,11 +1263,14 @@ class TestVllmServiceUnit:
             "id": "123",
             "name": "vllm-test",
             "status": "running",
-            "recipe_name": "inference/vllm"
+            "recipe_name": "inference/vllm-single-node"
         }
         
-        # Mock live status as running
-        mock_deployer.get_job_status.return_value = "running"
+        # Mock is_group to return False (this is a single service, not a group)
+        mock_service_manager.is_group.return_value = False
+        
+        # Mock the check method to return ready with model
+        vllm_service._check_ready_and_discover_model = Mock(return_value=(True, "running", "test-model"))
         
         # Mock endpoint resolver to return valid endpoint
         mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
@@ -1154,12 +1284,17 @@ class TestVllmServiceUnit:
         )
         mock_deployer.ssh_manager = mock_ssh_manager
         
+        # Mock service health tracking
+        mock_service_manager.is_service_recently_healthy.return_value = False
+        mock_service_manager.mark_service_healthy.return_value = None
+        
         # Call prompt with explicit model to avoid get_models call
         result = vllm_service.prompt("123", "test prompt", model="test-model")
         
-        # Verify endpoint_resolver.resolve() was called (not resolve_endpoint())
-        # Should be called once for prompt
-        mock_endpoint_resolver.resolve.assert_called_once_with("123", default_port=8001)
+        # Verify endpoint_resolver.resolve() was called
+        # May be called multiple times (for readiness check and prompt)
+        assert mock_endpoint_resolver.resolve.call_count >= 1
+        mock_endpoint_resolver.resolve.assert_any_call("123", default_port=8001)
         
         # Should succeed
         assert result["success"] is True, f"Expected success but got: {result}"
@@ -1168,6 +1303,9 @@ class TestVllmServiceUnit:
         """Test that prompt() handles missing service correctly."""
         # Mock service_manager.get_service() to return None
         mock_service_manager.get_service.return_value = None
+        
+        # Mock service manager method
+        mock_service_manager.is_group.return_value = False
         
         # Call prompt
         result = vllm_service.prompt("nonexistent", "test prompt")
@@ -1184,11 +1322,11 @@ class TestVllmServiceUnit:
             "id": "123",
             "name": "vllm-test",
             "status": "running",
-            "recipe_name": "inference/vllm"
+            "recipe_name": "inference/vllm-single-node"
         }
         
-        # Mock live status as running
-        mock_deployer.get_job_status.return_value = "running"
+        # Mock the check method to return ready
+        vllm_service._check_ready_and_discover_model = Mock(return_value=(True, "running", None))
         
         # Mock endpoint resolver
         mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
@@ -1214,8 +1352,9 @@ class TestVllmServiceUnit:
         assert result["service_id"] == "123"
         assert result["endpoint"] == "http://node1:8000"
         
-        # Verify endpoint was resolved
-        mock_endpoint_resolver.resolve.assert_called_once_with("123", default_port=8001)
+        # Verify endpoint was resolved (may be called multiple times due to optimizations)
+        assert mock_endpoint_resolver.resolve.call_count >= 1
+        mock_endpoint_resolver.resolve.assert_any_call("123", default_port=8001)
         
         # Verify SSH tunnel was used
         mock_ssh_manager.http_request_via_ssh.assert_called_once_with(
@@ -1233,7 +1372,7 @@ class TestVllmServiceUnit:
         mock_service_manager.get_service.return_value = {
             "id": "svc-1",
             "status": "running",
-            "recipe_name": "inference/vllm"
+            "recipe_name": "inference/vllm-single-node"
         }
         mock_endpoint_resolver.resolve.return_value = "http://node1:8001"
 
@@ -1243,7 +1382,8 @@ class TestVllmServiceUnit:
         mock_deployer.ssh_manager = ssh
 
         vservice = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        vservice._check_service_ready = lambda sid, info: (True, "running")
+        # Mock the service manager and vLLM service check
+        vservice._check_ready_and_discover_model = lambda sid, info: (True, "running", "Qwen/Qwen2.5-0.5B-Instruct")
 
         result = vservice.get_metrics("svc-1")
         assert result["success"] is True

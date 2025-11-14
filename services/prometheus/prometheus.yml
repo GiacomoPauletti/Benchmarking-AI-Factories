@@ -15,7 +15,39 @@ scrape_configs:
       - targets: ["loki:3100"]
 
   # Scrape application metrics
-  - job_name: "application"
-    metrics_path: "/api/metrics"  # TODO: server metrics endpoint
-    static_configs:
-      - targets: ["server:3000"]  # TODO: server address & port
+  #- job_name: "application"
+  #  metrics_path: "/api/metrics"  # TODO: server metrics endpoint
+  #  static_configs:
+  #    - targets: ["server:8001"]
+
+  - job_name: "services"
+    http_sd_configs:
+      - url: "http://server:8001/api/v1/services/targets"
+        refresh_interval: 15s
+    scrape_interval: 5s
+    # Transform the discovered targets from <service> to host:port and the corresponding URL
+    relabel_configs:
+      - source_labels: [__address__]
+        regex:  '(.*)'
+        replacement: '/api/v1/services/$1/metrics'
+        target_label: __metrics_path__
+      - source_labels: [__address__]
+        regex:  '.*'
+        replacement: 'server:8001'
+        target_label: __address__
+
+  - job_name: "services-self-metrics"
+    http_sd_configs:
+      - url: "http://server:8001/api/v1/services/targets"
+        refresh_interval: 60s
+    scrape_interval: 15s
+    # Transform the discovered targets from <service> to host:port and the corresponding URL
+    relabel_configs:
+      - source_labels: [__address__]
+        regex:  '(.*)'
+        replacement: '/api/v1/metrics/service/$1'
+        target_label: __metrics_path__
+      - source_labels: [__address__]
+        regex:  '.*'
+        replacement: 'server:8001'
+        target_label: __address__

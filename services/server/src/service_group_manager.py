@@ -21,12 +21,16 @@ class ServiceGroupManager:
         # Replica ID -> Group ID mapping
         self.replica_to_group: Dict[str, str] = {}
     
-    def create_group(self, recipe_name: str, num_replicas: int, config: Dict[str, Any] = None) -> str:
-        """Create a new service group.
+    def create_replica_group(self, recipe_name: str, num_nodes: int, 
+                             replicas_per_node: int, total_replicas: int,
+                             config: Dict[str, Any] = None) -> str:
+        """Create a new replica group.
         
         Args:
             recipe_name: The recipe name for this group
-            num_replicas: Number of replicas in the group
+            num_nodes: Number of nodes to allocate
+            replicas_per_node: Number of replicas per node
+            total_replicas: Total number of replicas (num_nodes * replicas_per_node)
             config: Optional configuration for the group
             
         Returns:
@@ -36,42 +40,97 @@ class ServiceGroupManager:
         
         self.groups[group_id] = {
             "id": group_id,
-            "name": f"{recipe_name}-group",  # Add name field for API compatibility
+            "name": f"{recipe_name}-group",
+            "type": "replica_group",
             "recipe_name": recipe_name,
-            "num_replicas": num_replicas,
-            "replicas": [],  # Will be populated as replicas are added
+            "num_nodes": num_nodes,
+            "replicas_per_node": replicas_per_node,
+            "total_replicas": total_replicas,
+            "node_jobs": [],  # List of {job_id, node_index, node, replicas: [...]}
             "config": config or {},
             "created_at": datetime.now().isoformat(),
-            "status": "pending"  # Overall group status
+            "status": "pending"
         }
         
-        self.logger.info(f"Created service group {group_id} with {num_replicas} replicas")
+        self.logger.info(f"Created replica group {group_id}: {num_nodes} nodes × {replicas_per_node} replicas = {total_replicas} total")
         return group_id
     
-    def add_replica(self, group_id: str, replica_id: str, replica_index: int, 
+    def add_replica(self, group_id: str, job_id: str, node_index: int,
+                    replica_index: int, port: int, gpu_id: int,
                     status: str = "pending") -> None:
-        """Add a replica to a group.
+        """Add a replica to a replica group.
         
         Args:
             group_id: The service group ID
-            replica_id: The individual replica service ID (SLURM job ID)
-            replica_index: The index of this replica (0, 1, 2, ...)
-            status: Initial status of the replica
+            job_id: The SLURM job ID for this node
+            node_index: Index of the node (0, 1, 2, ...)
+            replica_index: Global replica index across all nodes
+            port: Port this replica listens on
+            gpu_id: GPU ID within the node
+            status: Initial status
         """
         if group_id not in self.groups:
             raise ValueError(f"Group {group_id} not found")
         
+        group = self.groups[group_id]
+        
+        if group.get("type") != "replica_group":
+            raise ValueError(f"Group {group_id} is not a replica group")
+        
+        # Find or create node_job entry
+        node_job = None
+        for nj in group["node_jobs"]:
+            if nj["job_id"] == job_id:
+                node_job = nj
+                break
+        
+        if not node_job:
+            node_job = {
+                "job_id": job_id,
+                "node_index": node_index,
+                "node": None,  # Will be filled when job starts
+                "replicas": []
+            }
+            group["node_jobs"].append(node_job)
+        
+        # Create composite replica ID: job_id:port
+        replica_id = f"{job_id}:{port}"
+        
+        # Add replica
         replica_info = {
             "id": replica_id,
-            "index": replica_index,
+            "job_id": job_id,
+            "replica_index": replica_index,
+            "port": port,
+            "gpu_id": gpu_id,
             "status": status,
             "added_at": datetime.now().isoformat()
         }
+        node_job["replicas"].append(replica_info)
         
-        self.groups[group_id]["replicas"].append(replica_info)
+        # Map replica_id to group
         self.replica_to_group[replica_id] = group_id
         
-        self.logger.debug(f"Added replica {replica_id} (index {replica_index}) to group {group_id}")
+        self.logger.debug(f"Added replica {replica_id} (GPU {gpu_id}, port {port}) to group {group_id}")
+    
+    def get_all_replicas_flat(self, group_id: str) -> List[Dict[str, Any]]:
+        """Get all replicas in a group as a flat list (works for both group types).
+        
+        Args:
+            group_id: The service group ID
+            
+        Returns:
+            List of replica info dicts
+        """
+        group = self.groups.get(group_id)
+        if not group:
+            return []
+        
+        # All groups use the replica group structure
+        all_replicas = []
+        for node_job in group.get("node_jobs", []):
+            all_replicas.extend(node_job["replicas"])
+        return all_replicas
     
     def get_group(self, group_id: str) -> Optional[Dict[str, Any]]:
         """Get group metadata by ID."""
@@ -89,23 +148,29 @@ class ServiceGroupManager:
         """Update the status of a specific replica.
         
         Args:
-            replica_id: The replica service ID
-            status: The new status
+            replica_id: The replica ID (simple or composite "job_id:port")
+            status: New status
         """
         group_id = self.replica_to_group.get(replica_id)
         if not group_id:
             self.logger.warning(f"Replica {replica_id} not found in any group")
             return
         
-        group = self.groups[group_id]
-        for replica in group["replicas"]:
-            if replica["id"] == replica_id:
-                replica["status"] = status
-                self.logger.debug(f"Updated replica {replica_id} status to {status}")
-                break
+        group = self.groups.get(group_id)
+        if not group:
+            return
         
-        # Update overall group status based on replica statuses
-        self._update_group_status(group_id)
+        # All groups use the replica group structure
+        for node_job in group.get("node_jobs", []):
+            for replica in node_job["replicas"]:
+                if replica["id"] == replica_id:
+                    replica["status"] = status
+                    replica["updated_at"] = datetime.now().isoformat()
+                    self.logger.debug(f"Updated replica {replica_id} status to {status}")
+                    self._update_group_status(group_id)
+                    return
+        
+        self.logger.warning(f"Replica {replica_id} not found in group {group_id}")
     
     def _update_group_status(self, group_id: str) -> None:
         """Update the overall group status based on replica statuses.
@@ -117,7 +182,10 @@ class ServiceGroupManager:
         - If all replicas are 'pending'/'building', group is 'pending'
         """
         group = self.groups[group_id]
-        replica_statuses = [r["status"] for r in group["replicas"]]
+        
+        # Get all replicas as flat list
+        all_replicas = self.get_all_replicas_flat(group_id)
+        replica_statuses = [r["status"] for r in all_replicas]
         
         if not replica_statuses:
             group["status"] = "pending"
@@ -138,22 +206,23 @@ class ServiceGroupManager:
         else:
             group["status"] = "pending"
     
-    def get_healthy_replicas(self, group_id: str) -> List[Dict[str, Any]]:
-        """Get list of healthy (running) replicas in a group.
+    def get_healthy_replicas(self, group_id: str) -> List[str]:
+        """Get list of healthy replica IDs for a group.
         
         Args:
             group_id: The service group ID
             
         Returns:
-            List of replica info dicts that are in 'running' status
+            List of replica IDs with status "running" or "healthy"
         """
-        group = self.groups.get(group_id)
-        if not group:
-            return []
+        all_replicas = self.get_all_replicas_flat(group_id)
         
-        healthy = [r for r in group["replicas"] if r["status"] == "running"]
-        self.logger.debug(f"Group {group_id} has {len(healthy)}/{len(group['replicas'])} healthy replicas")
-        return healthy
+        healthy_replicas = []
+        for replica in all_replicas:
+            if replica.get("status") in ["running", "healthy"]:
+                healthy_replicas.append(replica["id"])
+        
+        return healthy_replicas
     
     def get_all_replica_ids(self, group_id: str) -> List[str]:
         """Get all replica IDs for a group.
@@ -164,11 +233,8 @@ class ServiceGroupManager:
         Returns:
             List of replica service IDs
         """
-        group = self.groups.get(group_id)
-        if not group:
-            return []
-        
-        return [r["id"] for r in group["replicas"]]
+        all_replicas = self.get_all_replicas_flat(group_id)
+        return [r["id"] for r in all_replicas]
     
     def list_groups(self) -> List[Dict[str, Any]]:
         """List all service groups."""
@@ -187,8 +253,8 @@ class ServiceGroupManager:
             return False
         
         # Remove replica mappings
-        group = self.groups[group_id]
-        for replica in group["replicas"]:
+        all_replicas = self.get_all_replicas_flat(group_id)
+        for replica in all_replicas:
             self.replica_to_group.pop(replica["id"], None)
         
         # Remove group

@@ -29,7 +29,7 @@ BuilderRegistry.register('storage', StorageRecipeBuilder)
 # Inference services
 BuilderRegistry.register_recipe('inference/vllm', VllmInferenceBuilder)
 BuilderRegistry.register_recipe('inference/vllm-single-node', VllmInferenceBuilder)
-BuilderRegistry.register_recipe('inference/vllm-multi-node', VllmInferenceBuilder)
+BuilderRegistry.register_recipe('inference/vllm-replicas', VllmInferenceBuilder)
 
 # Vector database services
 BuilderRegistry.register_recipe('vector-db/qdrant', QdrantVectorDbBuilder)

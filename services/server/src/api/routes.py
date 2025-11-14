@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 
 from server_service import ServerService
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
+from api.metrics_proxy import router as metrics_router
 from services.inference.vllm_models_config import (
     get_architecture_info,
     search_hf_models,
@@ -14,6 +15,9 @@ from services.inference.vllm_models_config import (
 )
 
 router = APIRouter()
+
+# Include metrics proxy routes
+router.include_router(metrics_router)
 
 # Singleton instance of ServerService (created once, reused for all requests)
 _server_service_instance = None
@@ -32,7 +36,7 @@ async def create_service(
         examples={
             "simple": {
                 "summary": "Create a basic vLLM service",
-                "value": {"recipe_name": "inference/vllm", "config": {"nodes": 1, "cpus": 2, "memory": "8G", "time": "00:30:00"}}
+                "value": {"recipe_name": "inference/vllm-single-node", "config": {"nodes": 1, "cpus": 2, "memory": "8G", "time": "00:30:00"}}
             }
         }
     ),
@@ -44,7 +48,7 @@ async def create_service(
     The service will be containerized using Apptainer and scheduled on compute nodes.
 
     **Request Body:**
-    - `recipe_name` (required): Path to the recipe (e.g., "inference/vllm", "inference/vllm_dummy")
+    - `recipe_name` (required): Path to the recipe (e.g., "inference/vllm-single-node", "inference/vllm_dummy")
     - `config` (optional): Configuration object with:
         - **SLURM resource requirements** (all optional, override recipe defaults):
             - `nodes`: Number of compute nodes (default: 1)
@@ -65,14 +69,14 @@ async def create_service(
     Simple creation with defaults:
     ```json
     {
-      "recipe_name": "inference/vllm"
+      "recipe_name": "inference/vllm-single-node"
     }
     ```
 
     Custom model:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "environment": {
           "VLLM_MODEL": "gpt2"
@@ -84,7 +88,7 @@ async def create_service(
     Custom model + resources:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "nodes": 1,
         "environment": {
@@ -145,7 +149,7 @@ async def list_services(server_service: ServerService = Depends(get_server_servi
         "id": "3642874",
         "name": "vllm-service",
         "status": "running",
-        "recipe_name": "inference/vllm",
+        "recipe_name": "inference/vllm-single-node",
         "config": {"nodes": 1, "cpus": 4, "memory": "16G"},
         "created_at": "2025-10-14T10:30:00"
       }
@@ -154,6 +158,53 @@ async def list_services(server_service: ServerService = Depends(get_server_servi
     """
     services = server_service.list_running_services()
     return services
+
+
+@router.get("/services/targets")
+async def get_service_targets(server_service: ServerService = Depends(get_server_service)):
+    """Get Prometheus scrape targets for all managed services.
+
+    This endpoint returns a list of Prometheus scrape targets for running services.
+    This allows to dynamically configure Prometheus to monitor all services managed by this server.
+
+    **Returns:**
+    - Content-Type: `application/json`
+    - Body: JSON object compatible with Prometheus file-based service discovery format
+
+    **Example Response:**
+    ```json
+    [
+      {
+        "targets": ["server:8001"],
+        "labels": {
+          "job": "service-3642874",
+          "service_id": "3642874",
+          "recipe_name": "inference/vllm-single-node"
+        }
+      },
+      ...
+    ]
+    ```
+    """
+    try:
+        targets = []
+        for service in server_service.list_running_services():
+            service_id = service["id"]
+            targets.append({
+                "targets": [service_id],
+                "labels": {
+                    "job": f"service-{service_id}",
+                    "service_id": service_id,
+                    "recipe_name": service["recipe_name"],
+                    "status": service["status"],
+                }
+            })
+        return targets
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/services/{service_id}", response_model=ServiceResponse)
@@ -176,6 +227,274 @@ async def get_service(service_id: str, server_service: ServerService = Depends(g
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     return service
+
+
+@router.get("/service-groups")
+async def list_service_groups(server_service: ServerService = Depends(get_server_service)):
+    """List all service groups.
+
+    Returns summary information for all service groups (collections of replicas).
+
+    **Returns:**
+    ```json
+    [
+      {
+        "id": "sg-ba5f6e2462fb",
+        "type": "replica_group",
+        "recipe_name": "inference/vllm-replicas",
+        "total_replicas": 4,
+        "healthy_replicas": 3,
+        "starting_replicas": 1,
+        "pending_replicas": 0,
+        "failed_replicas": 0,
+        "created_at": "2025-11-10T12:00:00"
+      },
+      ...
+    ]
+    ```
+
+    **Example:**
+    - GET `/api/v1/service-groups`
+    """
+    try:
+        groups = server_service.list_service_groups()
+        return groups
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/service-groups/{group_id}")
+async def get_service_group(group_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Get detailed information about a service group and all its replicas.
+
+    Service groups are collections of replica services that share a common group_id.
+    This endpoint aggregates information from all replicas in the group.
+
+    **Path Parameters:**
+    - `group_id`: The service group ID (e.g., "sg-ba5f6e2462fb")
+
+    **Returns:**
+    ```json
+    {
+      "id": "sg-ba5f6e2462fb",
+      "type": "replica_group",
+      "replicas": [
+        {
+          "id": "3713894:8001",
+          "name": "vllm-replicas-3713894-replica-0",
+          "status": "running",
+          "port": 8001,
+          "gpu_id": 0,
+          "replica_index": 0,
+          "job_id": "3713894"
+        },
+        ...
+      ],
+      "total_replicas": 4,
+      "healthy_replicas": 3,
+      "starting_replicas": 1,
+      "failed_replicas": 0,
+      "recipe_name": "inference/vllm-replicas",
+      "base_port": 8001,
+      "node_jobs": [
+        {
+          "job_id": "3713894",
+          "node_index": 0,
+          "replicas": [...]
+        }
+      ]
+    }
+    ```
+
+    **Errors:**
+    - 404: Service group not found (no services with this group_id)
+
+    **Example:**
+    - GET `/api/v1/service-groups/sg-ba5f6e2462fb`
+    """
+    try:
+        group_info = server_service.get_service_group(group_id)
+        if not group_info:
+            raise HTTPException(status_code=404, detail=f"Service group '{group_id}' not found")
+        return group_info
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/service-groups/{group_id}")
+async def stop_service_group(group_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Stop all replicas in a service group.
+
+    This endpoint cancels all SLURM jobs associated with the service group,
+    stopping all replicas at once.
+
+    **Path Parameters:**
+    - `group_id`: The service group ID (e.g., "sg-ba5f6e2462fb")
+
+    **Returns:**
+    ```json
+    {
+      "message": "Service group sg-ba5f6e2462fb stopped successfully",
+      "group_id": "sg-ba5f6e2462fb",
+      "replicas_stopped": 4
+    }
+    ```
+
+    **Errors:**
+    - 404: Service group not found
+    - 500: Failed to stop one or more replicas
+
+    **Example:**
+    - DELETE `/api/v1/service-groups/sg-ba5f6e2462fb`
+
+    **Note:** This operation stops all replicas in the group. Individual replicas
+    cannot be stopped separately - the entire group is managed as a unit.
+    """
+    try:
+        result = server_service.stop_service_group(group_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Service group not found"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/service-groups/{group_id}/status")
+async def get_service_group_status(group_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Get aggregated status of a service group.
+
+    Returns a summary of the group's overall health and replica statuses.
+
+    **Path Parameters:**
+    - `group_id`: The service group ID (e.g., "sg-ba5f6e2462fb")
+
+    **Returns:**
+    ```json
+    {
+      "group_id": "sg-ba5f6e2462fb",
+      "overall_status": "healthy",
+      "total_replicas": 4,
+      "healthy_replicas": 4,
+      "starting_replicas": 0,
+      "pending_replicas": 0,
+      "failed_replicas": 0,
+      "replica_statuses": [
+        {"id": "3713894:8001", "status": "running"},
+        {"id": "3713894:8002", "status": "running"},
+        ...
+      ]
+    }
+    ```
+
+    **Overall Status Values:**
+    - `healthy`: All replicas are running
+    - `partial`: Some replicas are running, others are starting/pending
+    - `starting`: All replicas are starting or pending
+    - `failed`: All replicas have failed
+    - `degraded`: Some replicas have failed, others are running
+
+    **Errors:**
+    - 404: Service group not found
+
+    **Example:**
+    - GET `/api/v1/service-groups/sg-ba5f6e2462fb/status`
+    """
+    try:
+        status_info = server_service.get_service_group_status(group_id)
+        if not status_info:
+            raise HTTPException(status_code=404, detail=f"Service group '{group_id}' not found")
+        return status_info
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/services/{service_id}/metrics")
+async def get_service_metrics(service_id: str, server_service: ServerService = Depends(get_server_service)):
+    """Get Prometheus-compatible metrics from any service (generic endpoint).
+    
+    This is a unified metrics endpoint that automatically routes to the appropriate
+    service-specific metrics endpoint based on the service's recipe type.
+    
+    Supported service types:
+    - vLLM inference services (recipe: "inference/vllm*")
+    - Qdrant vector database (recipe: "vector-db/qdrant")
+    - Other vector databases (recipe: "vector-db/*")
+    
+    **Path Parameters:**
+    - `service_id`: The SLURM job ID of the service
+    
+    **Returns (Success):**
+    - Content-Type: `text/plain; version=0.0.4`
+    - Body: Prometheus text format metrics
+    
+    **Returns (Error):**
+    - Content-Type: `application/json`
+    - Body: JSON error object with details
+    
+    **Examples:**
+    ```bash
+    # Get metrics from a service
+    curl http://localhost:8001/api/v1/services/3642874/metrics
+    ```
+    
+    **Integration with Prometheus:**
+    This endpoint provides a consistent interface for monitoring, regardless of service type.
+    Simply use `/api/v1/services/{service_id}/metrics` for all services.
+    
+    ```yaml
+    scrape_configs:
+      - job_name: 'managed-services'
+        static_configs:
+          - targets: ['server:8001']
+        metrics_path: '/api/v1/services/<service_id>/metrics'
+        scrape_interval: 15s
+    ```
+    
+    **Note:** This endpoint determines the service type from the recipe_name and routes
+    to the appropriate service-specific metrics endpoint (vLLM, Qdrant, etc.).
+    """
+    from fastapi.responses import PlainTextResponse
+    
+    try:
+        # Get service details to determine recipe type
+        service = server_service.get_service(service_id)
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+        
+        recipe_name = service.get("recipe_name", "")
+        
+        # Route to appropriate service-specific metrics endpoint
+        if recipe_name.startswith("inference/vllm"):
+            result = server_service.get_vllm_metrics(service_id)
+        elif recipe_name.startswith("vector-db/qdrant"):
+            result = server_service.get_qdrant_metrics(service_id)
+        else:
+            # Unknown service type
+            raise HTTPException(
+                status_code=400,
+                detail=f"Metrics not available for service type: {recipe_name}"
+            )
+        
+        # If successful, return metrics as plain text
+        if result.get("success"):
+            return PlainTextResponse(
+                content=result.get("metrics", ""),
+                media_type="text/plain; version=0.0.4"
+            )
+        else:
+            # Return error as JSON
+            return result
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/services/{service_id}")
@@ -369,7 +688,7 @@ async def list_or_get_recipe(
     - With `path` or `name`: Returns a single matching recipe
 
     **Query Parameters (Optional):**
-    - `path`: Recipe path (e.g., "inference/vllm", "vector-db/qdrant")
+    - `path`: Recipe path (e.g., "inference/vllm-single-node", "vector-db/qdrant")
     - `name`: Recipe display name (e.g., "vLLM Inference Service")
 
     **Returns:**
@@ -390,7 +709,7 @@ async def list_or_get_recipe(
     - `category`: Category (inference, storage, vector-db, etc.)
     - `description`: Human-readable description
     - `version`: Recipe version
-    - `path`: Path identifier (e.g., "inference/vllm")
+    - `path`: Path identifier (e.g., "inference/vllm-single-node")
     """
     recipes = server_service.list_available_recipes()
     
@@ -421,7 +740,7 @@ async def list_vllm_services(server_service: ServerService = Depends(get_server_
     - Object with `vllm_services` array, each service containing:
         - `id`: SLURM job ID (service identifier)
         - `name`: Service name
-        - `recipe_name`: Recipe used (typically "inference/vllm")
+        - `recipe_name`: Recipe used (typically "inference/vllm-single-node")
         - `endpoint`: HTTP endpoint URL (e.g., "http://mel2133:8001")
         - `status`: Current status (building/starting/running)
 
@@ -432,7 +751,7 @@ async def list_vllm_services(server_service: ServerService = Depends(get_server_
         {
           "id": "3642874",
           "name": "vllm-service",
-          "recipe_name": "inference/vllm",
+          "recipe_name": "inference/vllm-single-node",
           "endpoint": "http://mel2133:8001",
           "status": "running"
         }
@@ -516,7 +835,7 @@ async def list_available_vllm_models():
     Then create a service with any compatible model:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "environment": {
           "VLLM_MODEL": "Qwen/Qwen2.5-7B-Instruct"
@@ -661,7 +980,7 @@ async def get_model_info(model_id: str):
     Then use the model ID to create a service:
     ```json
     {
-      "recipe_name": "inference/vllm",
+      "recipe_name": "inference/vllm-single-node",
       "config": {
         "environment": {
           "VLLM_MODEL": "Qwen/Qwen2.5-7B-Instruct"

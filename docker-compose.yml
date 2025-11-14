@@ -39,6 +39,33 @@ services:
     tty: true
     restart: unless-stopped
 
+  # Prometheus - Metrics storage and scraping
+  prometheus:
+    build:
+      context: ./services/prometheus
+      dockerfile: Dockerfile
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-storage:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-admin-api'        # Enable admin operations
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - ai-factory
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   client:
     build:
       context: ./services/client
@@ -80,6 +107,7 @@ services:
       --port ${CLIENT_SERVICE_PORT:-8002}
       ${CLIENT_SERVICE_CONTAINER_MODE:+--container}
 
+
   monitoring:
     build:
       context: ./services/monitoring
@@ -116,8 +144,6 @@ services:
       server:
         condition: service_started
 
-  # Logs
-
   # Front-end
   grafana:
     build:
@@ -133,31 +159,10 @@ services:
     networks:
       - ai-factory
     depends_on:
-      - grafana-renderer
-      - prometheus
-      - loki
-  
-  grafana-renderer:
-    image: grafana/grafana-image-renderer:3.10.0
-    container_name: grafana-renderer
-    ports:
-      - "8081:8081"
-    restart: unless-stopped
-    networks:
-      - ai-factory
-  
-  prometheus:
-    build:
-      context: ./services/prometheus
-      dockerfile: Dockerfile
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - prometheus-storage:/prometheus
-    networks:
-      - ai-factory
-    restart: unless-stopped
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
 
   loki:
     image: grafana/loki:2.8.0

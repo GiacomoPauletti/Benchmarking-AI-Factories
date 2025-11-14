@@ -44,17 +44,17 @@ class InferenceService(BaseService, ABC):
         pass
 
     @abstractmethod
-    def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str]:
-        """Check if an inference service is ready to accept requests.
+    def _check_ready_and_discover_model(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str, Any]:
+        """Check if an inference service is ready AND discover its model name in one call.
         
-        This method should implement service-specific readiness checks by examining
-        logs for startup indicators.
+        This method should implement service-specific readiness checks and model discovery
+        to eliminate redundant HTTP calls.
         
         Args:
             service_id: The service ID to check
             service_info: The service information dict
             
         Returns:
-            Tuple of (is_ready: bool, status: str)
+            Tuple of (is_ready: bool, status: str, model: Optional[str])
         """
         pass

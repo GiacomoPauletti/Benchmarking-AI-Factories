@@ -496,43 +496,111 @@ class SlurmDeployer:
         """
         return self.cache_manager.get_logs(str(job_id))
     
+    def _fetch_main_job_log(self, job_id: str, recipe_name: str, local_log_dir: Path, remote_log_dir: str) -> str:
+        """Fetch the main SLURM job stdout log.
+        
+        Args:
+            job_id: SLURM job ID
+            recipe_name: Recipe name used in log filename
+            local_log_dir: Local directory for cached logs
+            remote_log_dir: Remote directory containing logs
+            
+        Returns:
+            Formatted log content or error message
+        """
+        stdout_local = local_log_dir / f"{recipe_name}_{job_id}.out"
+        stdout_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.out"
+        
+        # Fetch only the last 200 lines of stdout using tail for faster retrieval
+        self._fetch_remote_log_file_tail(stdout_remote, stdout_local, lines=200)
+        
+        if stdout_local.exists():
+            try:
+                content = stdout_local.read_text()
+                return f"=== SLURM STDOUT (last 200 lines) ({stdout_local.name}) ===\n{content}"
+            except Exception as e:
+                return f"=== SLURM STDOUT ===\nError reading {stdout_local.name}: {e}"
+        else:
+            return f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)"
+    
+    def _fetch_replica_logs(self, job_id: str, local_log_dir: Path, remote_log_dir: str) -> List[str]:
+        """Fetch replica logs for distributed/multi-replica jobs.
+        
+        Searches for log files matching pattern: *_{job_id}_replica_*.log
+        This supports any service type (vllm, qdrant, etc.) that creates replica logs.
+        
+        Args:
+            job_id: SLURM job ID
+            local_log_dir: Local directory for cached logs
+            remote_log_dir: Remote directory containing logs
+            
+        Returns:
+            List of formatted replica log sections
+        """
+        replica_logs = []
+        
+        try:
+            # General pattern: *_{job_id}_replica_*.log
+            # This matches: vllm_3713871_replica_0.log, qdrant_3713871_replica_1.log, etc.
+            replica_pattern = f"*_{job_id}_replica_*.log"
+            remote_replica_pattern = f"{remote_log_dir}/{replica_pattern}"
+            
+            # Use SSH to list replica log files
+            success, ls_output, stderr = self.ssh_manager.execute_remote_command(
+                f"ls {remote_replica_pattern} 2>/dev/null || true"
+            )
+            
+            if success and ls_output:
+                replica_files = [f.strip() for f in ls_output.split('\n') if f.strip()]
+                
+                if replica_files:
+                    replica_logs.append(f"\n=== REPLICA LOGS ({len(replica_files)} replicas) ===")
+                    
+                    for remote_replica_log in sorted(replica_files):
+                        replica_filename = remote_replica_log.split('/')[-1]
+                        local_replica_log = local_log_dir / replica_filename
+                        
+                        # Fetch last 100 lines of each replica log
+                        self._fetch_remote_log_file_tail(remote_replica_log, local_replica_log, lines=100)
+                        
+                        if local_replica_log.exists():
+                            try:
+                                content = local_replica_log.read_text()
+                                replica_logs.append(f"\n--- {replica_filename} (last 100 lines) ---\n{content}")
+                            except Exception as e:
+                                replica_logs.append(f"\n--- {replica_filename} ---\nError reading: {e}")
+        
+        except Exception as e:
+            self.logger.debug(f"No replica logs found for job {job_id}: {e}")
+        
+        return replica_logs
+    
     def _fetch_job_logs_uncached(self, job_id: str) -> str:
         """Get logs from SLURM job, fetching from remote if needed.
         
         Optimized to fetch only the last 200 lines using tail for faster retrieval.
-        Only fetches stdout since stderr rarely contains readiness indicators.
+        Automatically discovers and includes replica logs for distributed jobs.
         """
         try:
-            # Use local path for cached logs
+            # Setup local and remote log directories
             local_log_dir = self.local_base_path / "logs"
             local_log_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Use remote path for the actual log location on MeluXina (as string)
             remote_log_dir = f"{self.remote_base_path}/logs"
 
-            # Get job details to find the recipe name (which is used in SLURM log filenames)
+            # Get job details to find the recipe name
             job_details = self.get_job_details(job_id)
             recipe_name = job_details.get('name', 'unknown') if job_details else 'unknown'
             
-            # SLURM creates log files as: {recipe_name}_{job_id}.out
-            # (using the 'name' field from job submission, which is the recipe name)
-            stdout_local = local_log_dir / f"{recipe_name}_{job_id}.out"
-            stdout_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.out"
-            
+            # Collect all log sections
             logs = []
             
-            # Fetch only the last 200 lines of stdout using tail for faster retrieval
-            # (readiness indicators are typically near the end of logs)
-            self._fetch_remote_log_file_tail(stdout_remote, stdout_local, lines=200)
+            # Fetch main SLURM stdout log
+            main_log = self._fetch_main_job_log(job_id, recipe_name, local_log_dir, remote_log_dir)
+            logs.append(main_log)
             
-            if stdout_local.exists():
-                try:
-                    content = stdout_local.read_text()
-                    logs.append(f"=== SLURM STDOUT (last 200 lines) ({stdout_local.name}) ===\n{content}")
-                except Exception as e:
-                    logs.append(f"=== SLURM STDOUT ===\nError reading {stdout_local.name}: {e}")
-            else:
-                logs.append(f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)")
+            # Fetch replica logs if they exist
+            replica_logs = self._fetch_replica_logs(job_id, local_log_dir, remote_log_dir)
+            logs.extend(replica_logs)
             
             return "\n\n".join(logs)
             
@@ -704,6 +772,20 @@ class SlurmDeployer:
         # Note: SLURM REST API v0.0.40 is strict about types - use strings for most fields
         log_dir_path = str(Path(self.remote_base_path) / "logs")
         
+        # Calculate ntasks and gpus_per_task for srun sub-scheduling (vLLM replicas)
+        gpu_per_replica = recipe.get("gpu_per_replica")
+        total_gpus = resources.get("gpu")
+        
+        if gpu_per_replica and total_gpus:
+            # vLLM replica mode: calculate number of tasks needed
+            replicas_per_node = int(total_gpus) // int(gpu_per_replica)
+            ntasks = replicas_per_node
+            gpus_per_task = int(gpu_per_replica)
+        else:
+            # Standard mode: single task
+            ntasks = 1
+            gpus_per_task = int(total_gpus) if total_gpus else 0
+        
         job_desc = {
             "account": self.account,
             "qos": "short",
@@ -714,13 +796,18 @@ class SlurmDeployer:
             "current_working_directory": log_dir_path,  # Required by SLURM
             "name": recipe['name'],
             "nodes": str(resources.get("nodes", 1)),  # Must be string
+            "tasks": int(ntasks),  # Number of srun tasks (replicas)
             "cpus_per_task": int(resources.get("cpu", 4)), 
             "memory_per_cpu": resources.get("memory", "8G"),  
             "partition": "gpu" if resources.get("gpu") else "cpu",
+            "gres": f"gpu:{gpus_per_task}" if gpus_per_task > 0 else None,  # Use gres instead of tres_per_task
             "standard_output": f"{log_dir_path}/{recipe['name']}_%j.out",
             "standard_error": f"{log_dir_path}/{recipe['name']}_%j.err",
             "environment": self._format_environment(merged_env)  # Array of KEY=VALUE with merged environment
-        }        # The official API expects the job description under 'job' key with script
+        }
+        
+        # Remove None values from job_desc
+        job_desc = {k: v for k, v in job_desc.items() if v is not None}        # The official API expects the job description under 'job' key with script
         
         # Create local logs directory for any local logging needs
         local_log_dir = self.local_base_path / "logs"
@@ -792,11 +879,22 @@ class SlurmDeployer:
         env_section = builder.build_environment_section(environment)
         build_block = builder.build_container_build_block(paths)
         
-        # Check if recipe supports distributed execution
-        distributed_cfg = recipe.get('distributed') if isinstance(recipe, dict) else None
+        # Create merged config that includes recipe fields + user config
+        # This is passed to builders instead of separate distributed_cfg
+        merged_config = {}
         
-        if distributed_cfg and builder.supports_distributed():
-            run_block = builder.build_distributed_run_block(paths, resources, recipe, distributed_cfg)
+        # Copy relevant fields from recipe (like gpu_per_replica, base_port)
+        for key in ['gpu_per_replica', 'base_port', 'nproc_per_node', 'master_port', 
+                    'model', 'max_model_len', 'gpu_memory_utilization']:
+            if key in recipe:
+                merged_config[key] = recipe[key]
+        
+        # Override with user config values
+        merged_config.update(config)
+        
+        # Check if recipe/config specifies replica group execution
+        if merged_config and builder.supports_distributed():
+            run_block = builder.build_replica_group_run_block(paths, resources, recipe, merged_config)
         else:
             run_block = builder.build_run_block(paths, resources, recipe)
 

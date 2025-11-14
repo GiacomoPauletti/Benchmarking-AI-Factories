@@ -1,0 +1,13 @@
+MAIN:
+- test end-to-end workflow. 
+- Understand why Server metrics dont show.
+
+Monitor Benchmarks:
+- We need to be able to visualize what is happening DURING the benchmark
+- We need the scenarios to be heavy. Hundreds of clients, tens of services
+- Compare a few or a thousands of clients 
+- CPU/GPU usage
+- RAM usage
+- Disk I/O
+- GPU memory
+- Requests per second
