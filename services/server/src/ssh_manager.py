@@ -22,14 +22,16 @@ class SSHManager:
     - Auto-fetching SLURM JWT tokens
     """
     
-    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None, ssh_key_path: str = None):
+    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None):
         """Initialize SSH manager with connection details.
+        
+        Authentication is handled via SSH agent forwarding (SSH_AUTH_SOCK).
+        No raw SSH keys are exposed to the container.
         
         Args:
             ssh_host: SSH hostname (e.g., 'login.lxp.lu')
             ssh_user: Username for SSH connection
             ssh_port: SSH port (default: 22, MeluXina uses 8822)
-            ssh_key_path: Path to SSH private key (optional)
         """
         self.logger = logging.getLogger(__name__)
         
@@ -37,25 +39,31 @@ class SSHManager:
         self.ssh_host = ssh_host or os.getenv('SSH_HOST')
         self.ssh_user = ssh_user or os.getenv('SSH_USER')
         self.ssh_port = ssh_port or int(os.getenv('SSH_PORT', '22'))
-        self.ssh_key_path = ssh_key_path or os.getenv('SSH_KEY_PATH')
         
         if not self.ssh_user:
             raise ValueError("SSH_USER must be set. Check your .env.local file.")
         if not self.ssh_host:
             raise ValueError("SSH_HOST must be set. Check your .env.local file.")
         
+        # Verify SSH agent is available
+        ssh_auth_sock = os.getenv('SSH_AUTH_SOCK')
+        if not ssh_auth_sock:
+            self.logger.warning("SSH_AUTH_SOCK not set. SSH agent forwarding may not work.")
+        
         # Build SSH target and base command
         self.ssh_target = f"{self.ssh_user}@{self.ssh_host}"
         
-        # Build base SSH command with port and optional key
+        # Build base SSH command with port (authentication via SSH agent)
         self.ssh_base_cmd = ["ssh"]
         if self.ssh_port != 22:
             self.ssh_base_cmd.extend(["-p", str(self.ssh_port)])
-        if self.ssh_key_path:
-            expanded_key = os.path.expanduser(self.ssh_key_path)
-            self.ssh_base_cmd.extend(["-i", expanded_key])
         
-        self.logger.info(f"SSH Manager initialized for {self.ssh_target}:{self.ssh_port}")
+        # Disable host key checking for container environments
+        # In production, consider mounting known_hosts or using accept-new
+        self.ssh_base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
+        self.ssh_base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
+        
+        self.logger.info(f"SSH Manager initialized for {self.ssh_target}:{self.ssh_port} (using SSH agent)")
     
     def get_slurm_token(self) -> str:
         """Fetch a fresh SLURM JWT token from MeluXina.
@@ -139,11 +147,15 @@ class SSHManager:
             
             self.logger.debug(f"Creating SSH tunnel: {' '.join(ssh_command)}")
             
+            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+            env = os.environ.copy()
+            
             result = subprocess.run(
                 ssh_command,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=env
             )
             
             if result.returncode != 0:
@@ -186,6 +198,7 @@ class SSHManager:
         """Fetch a file from the remote MeluXina filesystem via SSH.
         
         Uses SSH to cat the remote file and save it locally.
+        Optimized to reduce retry attempts for faster log fetching.
         
         Args:
             remote_path: Absolute path to the file on MeluXina
@@ -194,37 +207,67 @@ class SSHManager:
         Returns:
             True if file was successfully fetched, False otherwise
         """
-        try:
-            # Build SSH command with proper port and key
-            cmd = self.ssh_base_cmd + [
-                self.ssh_target,
-                f"cat {remote_path}"
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode == 0 and result.stdout:
-                # Ensure local directory exists
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-                # Write the fetched content
-                local_path.write_text(result.stdout)
-                self.logger.debug(f"Fetched remote file: {remote_path} -> {local_path}")
-                return True
+        import time
+
+        # Reduced retry attempts for faster log fetching (was 3, now 1)
+        max_attempts = 1
+        attempt = 0
+        per_attempt_timeout = 20  # Reduced from 30 to 20
+
+        while attempt < max_attempts:
+            attempt += 1
+            # First check that the file exists and is non-empty
+            exists = False
+            non_empty = False
+            try:
+                exists, _, _ = self.execute_remote_command(f"test -f {remote_path}", timeout=5)
+                if exists:
+                    non_empty, _, _ = self.execute_remote_command(f"test -s {remote_path}", timeout=5)
+            except Exception:
+                exists = False
+                non_empty = False
+
+            if not exists:
+                self.logger.debug(f"Remote file does not exist yet (attempt {attempt}/{max_attempts}): {remote_path}")
+            elif not non_empty:
+                self.logger.debug(f"Remote file exists but is empty (attempt {attempt}/{max_attempts}): {remote_path}")
             else:
-                self.logger.debug(f"Remote file not found or empty: {remote_path}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout fetching remote file: {remote_path}")
-            return False
-        except Exception as e:
-            self.logger.warning(f"Error fetching remote file {remote_path}: {e}")
-            return False
+                # Safe to fetch
+                try:
+                    cmd = self.ssh_base_cmd + [self.ssh_target, f"cat {remote_path}"]
+                    
+                    # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+                    env = os.environ.copy()
+                    
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=per_attempt_timeout,
+                        env=env
+                    )
+
+                    if result.returncode == 0 and result.stdout:
+                        local_path.parent.mkdir(parents=True, exist_ok=True)
+                        local_path.write_text(result.stdout)
+                        self.logger.debug(f"Fetched remote file: {remote_path} -> {local_path}")
+                        return True
+                    else:
+                        self.logger.debug(f"Failed to cat remote file (attempt {attempt}): {remote_path} -- rc={result.returncode}")
+
+                except subprocess.TimeoutExpired:
+                    self.logger.warning(f"Timeout fetching remote file (attempt {attempt}): {remote_path}")
+                except Exception as e:
+                    self.logger.warning(f"Error fetching remote file {remote_path} (attempt {attempt}): {e}")
+
+            # Backoff before retrying (though we typically only have 1 attempt now)
+            if attempt < max_attempts:
+                sleep_seconds = 2
+                self.logger.debug(f"Waiting {sleep_seconds}s before retrying fetch of {remote_path}")
+                time.sleep(sleep_seconds)
+
+        self.logger.debug(f"Could not fetch remote file after {max_attempts} attempt(s): {remote_path}")
+        return False
     
     def sync_directory_to_remote(self, local_dir: Path, remote_dir: str, 
                                  exclude_patterns: list = None) -> bool:
@@ -245,14 +288,16 @@ class SSHManager:
         try:
             # Ensure remote directory exists using proper SSH command
             mkdir_cmd = self.ssh_base_cmd + [self.ssh_target, f"mkdir -p {remote_dir}"]
-            subprocess.run(mkdir_cmd, check=True, capture_output=True, timeout=10)
             
-            # Build SSH command for rsync
+            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+            env = os.environ.copy()
+            
+            subprocess.run(mkdir_cmd, check=True, capture_output=True, timeout=10, env=env)
+            
+            # Build SSH command for rsync (no -i flag needed with SSH agent)
             rsync_ssh_cmd = "ssh"
             if self.ssh_port != 22:
                 rsync_ssh_cmd += f" -p {self.ssh_port}"
-            if self.ssh_key_path:
-                rsync_ssh_cmd += f" -i {os.path.expanduser(self.ssh_key_path)}"
             
             # Build rsync command
             rsync_cmd = ["rsync", "-az", "--delete", "-e", rsync_ssh_cmd]
@@ -272,7 +317,8 @@ class SSHManager:
                 rsync_cmd, 
                 capture_output=True, 
                 text=True, 
-                timeout=60
+                timeout=60,
+                env=env
             )
             
             if result.returncode == 0:
@@ -302,11 +348,15 @@ class SSHManager:
         try:
             cmd = self.ssh_base_cmd + [self.ssh_target, command]
             
+            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
+            env = os.environ.copy()
+            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=env
             )
             
             success = result.returncode == 0
@@ -353,10 +403,32 @@ class SSHManager:
         Returns:
             True if successful, False otherwise
         """
-        success, _, stderr = self.execute_remote_command(f"mkdir -p {remote_path}", timeout=10)
-        if not success:
-            self.logger.warning(f"Failed to create remote directory {remote_path}: {stderr}")
-        return success
+        # Run mkdir with retries because remote FS operations can be slow
+        import time
+
+        max_attempts = 3
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            success, _, stderr = self.execute_remote_command(f"mkdir -p {remote_path}", timeout=30)
+            if success:
+                # Double-check directory exists
+                exists = self.check_remote_dir_exists(remote_path)
+                if exists:
+                    self.logger.debug(f"Remote directory ready: {remote_path} (attempt {attempt})")
+                    return True
+                else:
+                    self.logger.debug(f"mkdir returned but dir not visible yet: {remote_path} (attempt {attempt})")
+            else:
+                self.logger.warning(f"Failed to create remote directory {remote_path} (attempt {attempt}): {stderr}")
+
+            if attempt < max_attempts:
+                sleep_seconds = 2 ** attempt
+                self.logger.debug(f"Waiting {sleep_seconds}s before retrying mkdir for {remote_path}")
+                time.sleep(sleep_seconds)
+
+        self.logger.warning(f"Exhausted attempts creating remote directory: {remote_path}")
+        return False
     
     def http_request_via_ssh(self, remote_host: str, remote_port: int, method: str, path: str, 
                              headers: dict = None, json_data: dict = None, timeout: int = 30) -> Tuple[bool, int, str]:
@@ -412,7 +484,10 @@ class SSHManager:
             success, stdout, stderr = self.execute_remote_command(curl_cmd, timeout=timeout + 5)
             
             if not success:
-                self.logger.warning(f"HTTP request via SSH failed: {stderr}")
+                self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}")
+                self.logger.warning(f"  Command: {curl_cmd}")
+                self.logger.warning(f"  Stderr: {stderr}")
+                self.logger.warning(f"  Stdout: {stdout}")
                 return False, 0, stderr
             
             # Parse response - curl writes status code after HTTP_STATUS:
@@ -421,10 +496,14 @@ class SSHManager:
                 body = parts[0].strip()
                 try:
                     status_code = int(parts[1].strip())
+                    self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes)")
                 except ValueError:
+                    self.logger.warning(f"Failed to parse status code from: {parts[1]}")
                     status_code = 0
                     body = stdout
             else:
+                self.logger.warning(f"No HTTP_STATUS in response from {remote_host}:{remote_port}{path}")
+                self.logger.debug(f"Raw stdout: {stdout[:200]}")
                 body = stdout
                 status_code = 200 if success else 0
             

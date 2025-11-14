@@ -1,19 +1,12 @@
-# Server feature development workflow:
-git checkout feature/server-dev
-git checkout -b feature/server/new-feature-name
-git add .
-git commit -m "Add new server feature"
-git push origin feature/server/new-feature-name
-gh pr create --title "Add new server feature" --body "Description" --base feature/server-dev
-
-
 #### SETUP ####
 
-#### RUN SERVER LOCALLY ####
-# Option 1: Use launcher script 
-~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/launch_local.sh
+#### RUN DOCUMENTATION LOCALLY ####
+# Serve MkDocs documentation with live reload (http://127.0.0.1:8000)
+cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
+mkdocs serve
 
-# Option 2: Direct docker compose (from project root)
+#### RUN SERVER LOCALLY ####
+# docker compose (from project root)
 cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
 docker compose up server
 
@@ -25,11 +18,24 @@ docker compose up server
 cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
 ./services/server/run-tests.sh
 
-# Or manually run specific tests
-docker compose exec server pip install pytest pytest-mock
-docker compose exec server python -m pytest tests/test_api.py -v          # Unit tests only
-docker compose exec server python -m pytest tests/test_integration.py -v  # Integration tests
-docker compose exec server python -m pytest tests/ -v                     # All tests
+docker compose -f  docker-compose.test.yml up
+
+#### CLEAN UP ####
+# Clear logs folder (ignores files that can't be removed)
+sudo rm -f ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories/services/server/logs/* 2>/dev/null || true
+
+# Alternative: Clear from anywhere
+cd ~/Documents/Career_Academics/EUMaster4HPC/Courses/Semester_3/challenge/Benchmarking-AI-Factories
+rm -f services/server/logs/* 2>/dev/null || true
+
+# Clean up Qdrant data directories on MeluXina (removes ALL vector-db data)
+ssh u103056@login.lxp.lu "rm -rf /project/home/p200981/u103056/Benchmarking-AI-Factories/services/server/qdrant_data*"
+
+# Clean up specific Qdrant instance data (replace JOB_ID with actual job ID)
+ssh u103056@login.lxp.lu "rm -rf /project/home/p200981/u103056/Benchmarking-AI-Factories/services/server/qdrant_data_JOB_ID"
+
+# Remove orphaned lock files (if Qdrant crashed)
+ssh u103056@login.lxp.lu "find /project/home/p200981/u103056/Benchmarking-AI-Factories/services/server/qdrant_data* -name 'LOCK' -delete"
 
 #### API TESTING (Local Server) ####
 # Server runs on http://localhost:8001
@@ -52,73 +58,59 @@ create inference/vllm
 vllm list
 
 # Check which models are loaded in a service
-vllm models 3652057
+vllm models 3691724
+
+# Query which models vLLM can use / supported architectures
+# Get architecture info and example model IDs
+vllm available-models
+
+# Search HuggingFace for models compatible with vLLM (server will indicate compatibility)
+
+# Search for qwen models (sorted by downloads, max 20):
+vllm search-models qwen
+
+# Search for qwen models with explicit limit:
+vllm search-models qwen "" 20
+
+# Search for Llama architecture models only:
+vllm search-models "" LlamaForCausalLM 20
+
+# Search qwen models with Qwen2ForCausalLM architecture:
+vllm search-models qwen Qwen2ForCausalLM 10
+
+# Get detailed info about a specific model (compatible check, size, tags):
+vllm model-info meta-llama/Llama-2-7b-chat-hf
 
 # Send prompts 
-prompt 3652098 'Tell me a joke about programming'
+prompt 3691748 'Tell me a joke about programming'
 
-#### API CURL EXAMPLES ####
-# Create vLLM with custom model AND custom resources
-curl -X POST http://localhost:8001/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recipe_name": "inference/vllm",
-    "config": {
-      "environment": {
-        "VLLM_MODEL": "gpt2"
-      },
-      "resources": {
-        "nodes": 1,
-        "cpu": "8",
-        "memory": "64G",
-        "time_limit": 120,
-        "gpu": "1"
-      }
-    }
-  }'
+# Create vecdb qdrant service
+create vector-db/qdrant
 
-# Create vLLM service with CUSTOM model (using API, with ALL options explicitly set)
-curl -X POST http://localhost:8001/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recipe_name": "inference/vllm",
-    "config": {
-      "environment": {
-        "VLLM_MODEL": "gpt2",
-        "VLLM_HOST": "0.0.0.0",
-        "VLLM_PORT": "8001",
-        "VLLM_MAX_MODEL_LEN": "2048",
-        "VLLM_TENSOR_PARALLEL_SIZE": "1",
-        "VLLM_GPU_MEMORY_UTILIZATION": "0.9",
-        "CUDA_VISIBLE_DEVICES": "0"
-      },
-      "resources": {
-        "nodes": 1,
-        "cpu": "2",
-        "memory": "32G",
-        "time_limit": 15,
-        "gpu": "1"
-      }
-    }
-  }'
+# List all vecdb services
+vectordb list
 
-# Create CPU-only vLLM (no GPU)
-curl -X POST http://localhost:8001/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "recipe_name": "inference/vllm",
-    "config": {
-      "environment": {
-        "VLLM_MODEL": "gpt2"
-      },
-      "resources": {
-        "nodes": 1,
-        "cpu": "4",
-        "memory": "16G",
-        "gpu": null
-      }
-    }
-  }'
+# List collections in a vector-db service
+vectordb collections 3664650
+
+# Get detailed info about a collection
+vectordb info 3664650 my_documents
+
+# Create a new collection (384-dim vectors with Cosine similarity)
+vectordb create 3664650 my_documents 3 Cosine
+
+# Create collection with Euclidean distance
+vectordb create 3664650 embeddings 30 Euclid
+
+# Insert/update points (vectors with payloads) into a collection
+vectordb upsert 3664650 my_documents '[{"id":1,"vector":[0.1,0.2,0.3],"payload":{"text":"hello"}}]'
+
+# Search for similar vectors
+vectordb search 3664650 my_documents '[0.15,0.25,0.35]' 5
+vectordb search 3664650 my_documents '[4.15,-0.25,7.35]' 5
+
+# Delete a collection
+vectordb delete 3664650 my_documents
 
 
 # You can now specify any model when creating the service:

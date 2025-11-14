@@ -1,0 +1,25 @@
+name: vllm-data-parallel
+category: inference
+description: "vLLM data-parallel deployment with multiple single-node replicas for high throughput"
+version: "1.0.0"
+image: "vllm.sif"
+container_def: "vllm.def"
+ports:
+  - 8001
+environment:
+  VLLM_HOST: "0.0.0.0"
+  VLLM_PORT: "8001"
+  VLLM_MODEL: "Qwen/Qwen2.5-0.5B-Instruct"
+  VLLM_WORKDIR: "/workspace"
+  VLLM_LOGGING_LEVEL: "INFO"
+  VLLM_TENSOR_PARALLEL: "4"  # Use all 4 GPUs per node
+resources: # Per replica
+  nodes: "1"  
+  cpu: "8"
+  memory: "64G"
+  time_limit: 15
+  gpu: "4"  
+# Data parallelism: run multiple independent replicas
+# Each replica gets its own node with 4 GPUs
+# Requests are load-balanced across healthy replicas
+replicas: 2  # Default number of replicas (can be overridden in config)

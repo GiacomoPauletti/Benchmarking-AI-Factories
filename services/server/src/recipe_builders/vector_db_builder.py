@@ -1,0 +1,119 @@
+"""Builder for vector database recipes (Qdrant, Chroma, Weaviate, etc.).
+
+Handles container orchestration for vector database services with persistent storage.
+
+This is a generic base builder for vector databases. Service-specific builders
+can override methods to customize behavior (e.g., QdrantVectorDbBuilder).
+"""
+
+from typing import Dict, Any
+from .base import RecipeScriptBuilder, ScriptPaths
+
+
+class VectorDbRecipeBuilder(RecipeScriptBuilder):
+    """Generic script builder for vector database recipes.
+    
+    Provides sensible defaults for vector database services. Can be subclassed
+    for service-specific customization (e.g., Qdrant, Chroma, Weaviate).
+    """
+    
+    def __init__(self, remote_base_path: str):
+        """Initialize the vector database builder.
+        
+        Args:
+            remote_base_path: Base path on remote filesystem for persistent storage
+        """
+        self.remote_base_path = remote_base_path
+    
+    def build_environment_section(self, recipe_env: Dict[str, str]) -> str:
+        """Build environment variable exports for vector database containers."""
+        env_vars = []
+        
+        # Export recipe-specific environment variables
+        for key, value in (recipe_env or {}).items():
+            # Don't quote values that contain shell variables
+            if '${' in value or '$(' in value:
+                env_vars.append(f'export {key}="{value}"')
+            else:
+                env_vars.append(f"export {key}='{value}'")
+        
+        # Add APPTAINERENV_ prefixed versions for Apptainer to pick up
+        for key, value in (recipe_env or {}).items():
+            if '${' in value or '$(' in value:
+                env_vars.append(f'export APPTAINERENV_{key}="{value}"')
+            else:
+                env_vars.append(f"export APPTAINERENV_{key}='{value}'")
+        
+        return "\n".join(env_vars) if env_vars else "# No environment variables"
+    
+    def build_container_build_block(self, paths: ScriptPaths) -> str:
+        """Build the container image build/check block."""
+        return f"""
+# Build container if needed
+if [ ! -f {paths.sif_path} ]; then
+    echo 'Building Apptainer image: {paths.sif_path}'
+    
+    # Set up user-writable directories to avoid permission issues
+    export APPTAINER_TMPDIR=/tmp/apptainer-$USER-$$
+    export APPTAINER_CACHEDIR=/tmp/apptainer-cache-$USER
+    export HOME=/tmp/fake-home-$USER
+    
+    mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME/.apptainer
+    
+    # Create empty docker config to bypass authentication
+    echo '{{}}' > $HOME/.apptainer/docker-config.json
+    
+    # Build container
+    apptainer build --disable-cache --no-https {paths.sif_path} {paths.def_path}
+    build_result=$?
+    
+    # Clean up
+    rm -rf $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME
+    
+    if [ $build_result -ne 0 ]; then
+        echo "ERROR: Failed to build container (exit code: $build_result)"
+        exit 1
+    fi
+    
+    echo "Container build successful!"
+fi
+"""
+    
+    def build_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
+                       recipe: Dict[str, Any]) -> str:
+        """Build single-node container run block for vector database (generic).
+        
+        This provides a generic implementation. Override this method in subclasses
+        for service-specific behavior (e.g., Qdrant's storage paths, Chroma's
+        persistence configuration, etc.).
+        """
+        project_ws = paths.remote_base_path
+        
+        # Generic data directory for vector DB persistence
+        data_dir = f"{project_ws}/vector_db_data"
+        
+        return f"""
+echo "Starting vector database container..."
+echo "Binding project workspace: {project_ws} -> /workspace"
+echo "Binding data directory: {data_dir} -> /data"
+
+# Create workspace and data directories if they don't exist
+mkdir -p {project_ws}
+mkdir -p {data_dir}
+
+# Debug: Print environment variables
+echo "Environment variables for container:"
+env | grep -E '^QDRANT_|^CHROMA_|^WEAVIATE_|^MILVUS_' || echo "No vector DB vars found"
+
+apptainer run --bind {paths.log_dir}:/app/logs,{project_ws}:/workspace,{data_dir}:/data {paths.sif_path} 2>&1
+container_exit_code=$?
+
+echo "Container exited with code: $container_exit_code"
+if [ $container_exit_code -ne 0 ]; then
+    echo "ERROR: Container failed to run properly"
+fi
+"""
+    
+    def supports_distributed(self) -> bool:
+        """Vector databases typically don't support distributed execution in this context."""
+        return False

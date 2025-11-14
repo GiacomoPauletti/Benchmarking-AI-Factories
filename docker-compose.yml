@@ -7,14 +7,17 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      # Mount source code for hot-reload during development
+      # Mount source code for hot-reload during development. 
+      # TODO: Remove in production
       - ./services/server/src:/app/src
       - ./services/server/tests:/app/tests
       - ./services/server/pytest.ini:/app/pytest.ini
       - ./services/server/logs:/app/logs
       - ./services/server/huggingface_cache:/app/huggingface_cache
-      # Mount SSH keys for MeluXina access
-      - ~/.ssh:/tmp/host-ssh:ro
+      # Mount server endpoint file so client can find it
+      - ./services/server/.server-endpoint:/app/.server-endpoint
+      # Mount SSH agent socket for secure authentication (no raw keys exposed)
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
       # SSH Configuration for MeluXina
       - SSH_HOST=${SSH_HOST}
@@ -22,6 +25,7 @@ services:
       - SSH_USER=${SSH_USER}
       - SSH_KEY_PATH=${SSH_KEY_PATH}
       - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
       # Application Configuration
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -29,7 +33,8 @@ services:
     # Load additional service-specific variables
     env_file:
       - .env
-    network_mode: host
+    networks: 
+      - ai-factory
     stdin_open: true
     tty: true
     restart: unless-stopped
@@ -43,12 +48,12 @@ services:
       - "8002:8002"
     volumes:
       # Mount source code for hot-reload during development
+      # TODO: Remove in production
       - ./services/client/src:/app/src
       - ./services/client/tests:/app/tests
-      - ./services/client/scripts:/app/scripts
       - ./services/client/logs:/app/logs
-      # Mount SSH keys for MeluXina access
-      - ~/.ssh:/tmp/host-ssh:ro
+      # Mount SSH agent socket for secure authentication (no raw keys exposed)
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
       # SSH Configuration for MeluXina
       - SSH_HOST=${SSH_HOST}
@@ -56,6 +61,7 @@ services:
       - SSH_USER=${SSH_USER}
       - SSH_KEY_PATH=${SSH_KEY_PATH}
       - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
       # Application Configuration
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -73,20 +79,96 @@ services:
       --host ${CLIENT_SERVICE_HOST:-0.0.0.0}
       --port ${CLIENT_SERVICE_PORT:-8002}
       ${CLIENT_SERVICE_CONTAINER_MODE:+--container}
+
+  monitoring:
+    build:
+      context: ./services/monitoring
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-monitoring
+    ports:
+      - "8002:8002"
+    volumes:
+      # Mount source code for hot-reload during development
+      - ./services/monitoring/src:/app/src
+      - ./services/monitoring/tests:/app/tests
+      - ./services/monitoring/logs:/app/logs
+    environment:
+      # Prometheus settings
+      - MONITORING_PROMETHEUS_URL=http://prometheus:9090
+      
+      # Server API (for metrics proxy)
+      - MONITORING_SERVER_API_URL=http://server:8001
+      
+      # Application Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - APP_LOG_DIR=/app/logs
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    networks: 
+      - ai-factory
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      server:
+        condition: service_started
+
+  # Logs
+
+  # Front-end
+  grafana:
+    build:
+      context: ./services/grafana
+      dockerfile: Dockerfile
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    restart: unless-stopped
+    networks:
+      - ai-factory
+    depends_on:
+      - grafana-renderer
+      - prometheus
+      - loki
   
-  # monitoring:
-  #   build:
-  #     context: ./services/monitoring
-  #     dockerfile: Dockerfile
-  #   container_name: benchmarking-ai-monitoring
-  #   ...
+  grafana-renderer:
+    image: grafana/grafana-image-renderer:3.10.0
+    container_name: grafana-renderer
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - ai-factory
   
-  # logs:
-  #   build:
-  #     context: ./services/logs
-  #     dockerfile: Dockerfile
-  #   container_name: benchmarking-ai-logs
-  #   ...
+  prometheus:
+    build:
+      context: ./services/prometheus
+      dockerfile: Dockerfile
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-storage:/prometheus
+    networks:
+      - ai-factory
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:2.8.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-storage:/loki
+    networks:
+      - ai-factory
+    restart: unless-stopped
 
   # Documentation service
   docs:
@@ -105,3 +187,14 @@ services:
     working_dir: /
     command: mkdocs serve --dev-addr=0.0.0.0:8000
     restart: unless-stopped
+
+networks:
+  ai-factory:
+
+volumes:
+  prometheus-storage:
+    driver: local
+    name: prometheus-storage
+  loki-storage:
+    driver: local
+    name: loki-storage

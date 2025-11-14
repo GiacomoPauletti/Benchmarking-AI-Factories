@@ -1,0 +1,19 @@
+apiVersion: 1
+datasources:
+  - id: 3
+    uid: "af28rrswju6m8c"
+    orgId: 1
+    name: "backend"
+    type: "yesoreyeram-infinity-datasource"
+    url: "http://server:8001"
+    basicAuth: false
+    basicAuthUser: ""
+    isDefault: false
+    jsonData:
+      customHealthCheckEnabled: true
+      customHealthCheckUrl: "/health"
+      global_queries: []
+      pdcInjected: false
+      refData: []
+    readOnly: false
+    apiVersion: ""

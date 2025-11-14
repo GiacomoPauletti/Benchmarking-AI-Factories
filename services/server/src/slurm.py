@@ -9,10 +9,12 @@ import json
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from utils import parse_time_limit
 from datetime import datetime
 from ssh_manager import SSHManager
+from recipe_builders import BuilderRegistry, ScriptPaths
+from job_cache_manager import JobCacheManager
 
 
 class SlurmDeployer:
@@ -25,6 +27,9 @@ class SlurmDeployer:
     def __init__(self, account: str = "p200981"):
         self.logger = logging.getLogger(__name__)
         self.account = account
+        
+        # Initialize job cache manager
+        self.cache_manager = JobCacheManager(cache_ttl=25, update_interval=6)
         
         # Initialize SSH manager for all remote operations
         self.ssh_manager = SSHManager()
@@ -100,6 +105,21 @@ class SlurmDeployer:
                 self._state_map = {}
         except Exception:
             self._state_map = {}
+        
+        # Set up cache manager callbacks and start background updates
+        self.cache_manager.set_fetch_callbacks(
+            fetch_status=self._fetch_status_uncached,
+            fetch_logs=self._fetch_job_logs_uncached,
+            fetch_details=self._fetch_job_details_uncached
+        )
+        self.cache_manager.start_background_updates()
+    
+    def __del__(self):
+        """Clean up background threads on deletion."""
+        try:
+            self.cache_manager.stop_background_updates()
+        except Exception:
+            pass
     
     def submit_job(self, recipe_name: str, config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Submit a job to SLURM cluster using recipe configuration via REST API.
@@ -111,6 +131,11 @@ class SlurmDeployer:
         # (SLURM needs this directory to exist BEFORE job starts)
         remote_log_dir = f"{self.remote_base_path}/logs"
         self.ssh_manager.create_remote_directory(remote_log_dir)
+        
+        # Ensure persistent HuggingFace cache directory exists
+        # This allows model weights to persist across jobs and be shared across nodes
+        remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
+        self.ssh_manager.create_remote_directory(remote_hf_cache)
         
         # Load recipe
         recipe_path = self._find_recipe(recipe_name)
@@ -147,6 +172,19 @@ class SlurmDeployer:
         if job_id == 0:
             raise RuntimeError(f"SLURM job submission failed: received job_id=0. Response: {result}")
         
+        # Track this job for background updates IMMEDIATELY
+        self.cache_manager.track_job(str(job_id))
+        
+        # Pre-warm the cache by fetching initial status and details
+        # This ensures the cache is hot when the first prompt arrives
+        try:
+            initial_status = self.get_job_status(str(job_id))
+            self.get_job_details(str(job_id))
+            self.logger.debug(f"Pre-warmed cache for new job {job_id} (status: {initial_status})")
+        except Exception as e:
+            self.logger.warning(f"Failed to pre-warm cache for job {job_id}: {e}")
+            # Not critical - background updates will handle it
+        
         return {
             "id": str(job_id),  # Use SLURM job ID directly as service ID
             "name": f"{recipe['name']}-{job_id}",
@@ -164,12 +202,36 @@ class SlurmDeployer:
                 headers=self.headers
             )
             response.raise_for_status()
+            
+            # Stop tracking this job
+            self.cache_manager.untrack_job(str(job_id))
+            
             return True
         except:
             return False
     
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get statistics about the caching system for debugging."""
+        return self.cache_manager.get_stats()
+    
     def get_job_status(self, job_id: str) -> str:
-        """Get the status of a SLURM job by job ID via REST API, always checking logs for more detailed status if running."""
+        """Get the status of a SLURM job by job ID via REST API.
+        
+        Uses cached status if available and fresh, otherwise fetches and caches.
+        
+        Args:
+            job_id: The SLURM job ID
+            
+        Returns:
+            Slurm Status string: 'pending', 'running', 'completed', 'failed', etc.
+        """
+        return self.cache_manager.get_status(str(job_id))
+    
+    def _fetch_status_uncached(self, job_id: str) -> str:
+        """Fetch status from SLURM API without using cache.
+        
+        This is used as a callback by the cache manager.
+        """
         try:
             response = requests.get(
                 f"{self.base_url}/job/{job_id}",
@@ -188,54 +250,83 @@ class SlurmDeployer:
                         status = job_state.lower()
                     else:
                         status = str(job_state).lower()
-                    basic_status = self._normalize_slurm_state(status)
-                    if basic_status != 'running':
-                        return basic_status
-                    # If running, check logs for more detail
-                    try:
-                        return self._get_detailed_status_from_logs(job_id)
-                    except Exception as e:
-                        self.logger.error(f"Error parsing logs for detailed status of job {job_id}: {e}")
-                        return 'running'
+                    return self._normalize_slurm_state(status)
+            
+            # Job not found - mark as completed
             return "completed"
+            
         except Exception as e:
-            raise RuntimeError(f"Failed to get job status from SLURM API: {str(e)}")
+            self.logger.warning(f"Failed to fetch status for job {job_id}: {e}")
+            return "unknown"
     
-    def _get_detailed_status_from_logs(self, job_id: str) -> str:
+    def get_detailed_status_from_logs(self, job_id: str, ready_indicators: List[str] = None, 
+                                       starting_indicators: List[str] = None) -> str:
         """Parse job logs to determine detailed status for running jobs.
         
-        Returns one of: 'building', 'starting', 'running', 'completed'
+        This is a helper method that services can use to implement their own
+        service-specific readiness detection.
+        
+        Args:
+            job_id: The SLURM job ID
+            ready_indicators: List of strings that indicate service is fully ready
+            starting_indicators: List of strings that indicate service is starting
+            
+        Returns:
+            One of: 'building', 'starting', 'running', 'completed'
         """
+        job_id = str(job_id)
+        
+        # Ensure this job is being tracked for background updates
+        self.cache_manager.track_job(job_id)
+        
+        # Default indicators for backward compatibility (vLLM-specific)
+        if ready_indicators is None:
+            ready_indicators = ['Application startup complete', 'Uvicorn running on']
+        if starting_indicators is None:
+            starting_indicators = ['Starting container', 'Running vLLM container', 'Starting vLLM']
+        
         logs = self.get_job_logs(job_id)
         
         # Check if log files don't exist yet or are empty
-        # This typically means the job just started running
         if 'File not found' in logs and logs.count('File not found') >= 2:
-            # Both stdout and stderr don't exist yet
             return 'starting'
         
         # Check if container exited
         if 'Container exited' in logs:
+            # Job completed - stop tracking it
+            self.cache_manager.untrack_job(job_id)
             return 'completed'
         
         # Check for building phase
         if 'Building Apptainer image' in logs or 'apptainer build' in logs.lower():
             if 'Container build successful' in logs or 'Starting container' in logs:
-                # Build finished, move to next check
-                pass
+                pass  # Build finished, continue checking
             else:
                 return 'building'
         
-        # Check if application is fully ready
-        if 'Application startup complete' in logs or 'Uvicorn running on' in logs:
+        # Check if application is fully ready (using provided indicators)
+        found_ready = False
+        for indicator in ready_indicators:
+            if indicator in logs:
+                found_ready = True
+                break
+        
+        if found_ready:
             return 'running'
         
-        # Check for starting phase (container started but app not ready yet)
-        if 'Starting container' in logs or 'Running vLLM container' in logs or 'Starting vLLM' in logs:
-            return 'starting'
+        # Debug: Log what we're actually seeing if no ready indicators match
+        self.logger.debug(f"Job {job_id}: No ready indicators found. Checking starting indicators...")
+        self.logger.debug(f"Ready indicators checked: {ready_indicators}")
+        # Show a sample of the logs (last 500 chars)
+        log_sample = logs[-500:] if len(logs) > 500 else logs
+        self.logger.debug(f"Log sample (last 500 chars): {log_sample}")
         
-        # Default to starting for very new jobs, not running
-        # This handles the case where logs exist but don't have clear indicators yet
+        # Check for starting phase (using provided indicators)
+        for indicator in starting_indicators:
+            if indicator in logs:
+                return 'starting'
+        
+        # Default to starting for jobs without clear indicators
         return 'starting'
     
     def list_jobs(self, user_filter: str = None) -> list:
@@ -339,9 +430,78 @@ class SlurmDeployer:
             True if file was successfully fetched, False otherwise
         """
         return self.ssh_manager.fetch_remote_file(remote_path, local_path)
+    
+    def _fetch_remote_log_file_tail(self, remote_path: str, local_path: Path, lines: int = 200) -> bool:
+        """Fetch only the last N lines of a log file from remote using tail.
+        
+        This is much faster than fetching the entire file, especially for large logs.
+        
+        Args:
+            remote_path: Absolute path to the log file on MeluXina
+            local_path: Local path where the file should be saved
+            lines: Number of lines to fetch from the end of the file
+            
+        Returns:
+            True if file was successfully fetched, False otherwise
+        """
+        import subprocess
+        
+        try:
+            # Check if file exists on remote
+            exists, _, _ = self.ssh_manager.execute_remote_command(
+                f"test -f {remote_path}", 
+                timeout=5
+            )
+            
+            if not exists:
+                self.logger.debug(f"Remote file does not exist: {remote_path}")
+                return False
+            
+            # Use tail to fetch only the last N lines
+            cmd = self.ssh_manager.ssh_base_cmd + [
+                self.ssh_manager.ssh_target, 
+                f"tail -n {lines} {remote_path}"
+            ]
+            
+            env = os.environ.copy()
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,  # Shorter timeout since we're fetching less data
+                env=env
+            )
+            
+            if result.returncode == 0:
+                # Save the output to local file
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text(result.stdout)
+                self.logger.debug(f"Successfully fetched last {lines} lines from {remote_path}")
+                return True
+            else:
+                self.logger.warning(f"Failed to fetch tail of {remote_path}: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"Timeout fetching tail of remote file: {remote_path}")
+            return False
+        except Exception as e:
+            self.logger.warning(f"Error fetching tail of remote file {remote_path}: {e}")
+            return False
 
     def get_job_logs(self, job_id: str) -> str:
-        """Get logs from SLURM job, fetching from remote if needed."""
+        """Get logs from SLURM job.
+        
+        Uses cached logs if available and fresh, otherwise fetches from remote.
+        """
+        return self.cache_manager.get_logs(str(job_id))
+    
+    def _fetch_job_logs_uncached(self, job_id: str) -> str:
+        """Get logs from SLURM job, fetching from remote if needed.
+        
+        Optimized to fetch only the last 200 lines using tail for faster retrieval.
+        Only fetches stdout since stderr rarely contains readiness indicators.
+        """
         try:
             # Use local path for cached logs
             local_log_dir = self.local_base_path / "logs"
@@ -357,39 +517,22 @@ class SlurmDeployer:
             # SLURM creates log files as: {recipe_name}_{job_id}.out
             # (using the 'name' field from job submission, which is the recipe name)
             stdout_local = local_log_dir / f"{recipe_name}_{job_id}.out"
-            stderr_local = local_log_dir / f"{recipe_name}_{job_id}.err"
-            
             stdout_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.out"
-            stderr_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.err"
             
             logs = []
             
-            # Always re-fetch logs from remote to get latest content
-            # (logs are continuously being written while job runs)
-            self.logger.info(f"Fetching latest stdout for job {job_id} from MeluXina...")
-            self._fetch_remote_log_file(stdout_remote, stdout_local)
+            # Fetch only the last 200 lines of stdout using tail for faster retrieval
+            # (readiness indicators are typically near the end of logs)
+            self._fetch_remote_log_file_tail(stdout_remote, stdout_local, lines=200)
             
             if stdout_local.exists():
                 try:
                     content = stdout_local.read_text()
-                    logs.append(f"=== SLURM STDOUT ({stdout_local.name}) ===\n{content}")
+                    logs.append(f"=== SLURM STDOUT (last 200 lines) ({stdout_local.name}) ===\n{content}")
                 except Exception as e:
                     logs.append(f"=== SLURM STDOUT ===\nError reading {stdout_local.name}: {e}")
             else:
                 logs.append(f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)")
-            
-            # Always re-fetch stderr from remote to get latest content
-            self.logger.info(f"Fetching latest stderr for job {job_id} from MeluXina...")
-            self._fetch_remote_log_file(stderr_remote, stderr_local)
-            
-            if stderr_local.exists():
-                try:
-                    content = stderr_local.read_text()
-                    logs.append(f"=== SLURM STDERR ({stderr_local.name}) ===\n{content}")
-                except Exception as e:
-                    logs.append(f"=== SLURM STDERR ===\nError reading {stderr_local.name}: {e}")
-            else:
-                logs.append(f"=== SLURM STDERR ===\nLog not yet available (job may not have started)")
             
             return "\n\n".join(logs)
             
@@ -397,6 +540,13 @@ class SlurmDeployer:
             return f"Error retrieving logs for job {job_id}: {str(e)}"
     
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
+        """Get detailed information about a SLURM job including allocated nodes.
+        
+        Uses cached details if available and fresh, otherwise fetches from SLURM API.
+        """
+        return self.cache_manager.get_details(str(job_id))
+    
+    def _fetch_job_details_uncached(self, job_id: str) -> Dict[str, Any]:
         """Get detailed information about a SLURM job including allocated nodes via REST API."""
         try:
             response = requests.get(
@@ -468,30 +618,37 @@ class SlurmDeployer:
             raise RuntimeError(f"Failed to get job details: {str(e)}")
     
     def _parse_node_list(self, node_list: str) -> List[str]:
-        """Parse SLURM node list format (e.g., 'mel2001,mel2002' or 'mel[2001-2003]')."""
+        """Parse SLURM node list format (e.g., 'mel2001,mel2002' or 'mel[2001-2003]' or 'mel[2001,2002]')."""
         if not node_list:
             return []
         
         nodes = []
         
-        # Handle comma-separated nodes
-        for part in node_list.split(','):
-            part = part.strip()
+        # Check if the entire string uses bracket notation (e.g., "mel[2001,2002]" or "mel[2001-2003]")
+        # Must handle this BEFORE splitting on commas
+        if '[' in node_list and ']' in node_list:
+            # Find the bracket section
+            bracket_start = node_list.index('[')
+            bracket_end = node_list.index(']')
+            prefix = node_list[:bracket_start]
+            range_part = node_list[bracket_start+1:bracket_end]
             
-            # Handle range format like mel[2001-2003]
-            if '[' in part and ']' in part:
-                prefix = part.split('[')[0]
-                range_part = part.split('[')[1].split(']')[0]
-                
-                if '-' in range_part:
-                    start, end = map(int, range_part.split('-'))
-                    for i in range(start, end + 1):
-                        nodes.append(f"{prefix}{i:04d}")
-                else:
-                    nodes.append(f"{prefix}{range_part}")
+            # Check if it's a range (e.g., "2001-2003") or comma-separated list (e.g., "2001,2002")
+            if '-' in range_part and ',' not in range_part:
+                # Range format: mel[2001-2003]
+                start, end = map(int, range_part.split('-'))
+                for i in range(start, end + 1):
+                    nodes.append(f"{prefix}{i}")
             else:
-                # Simple node name
-                nodes.append(part)
+                # Comma-separated list inside brackets: mel[2001,2002,2003]
+                for num in range_part.split(','):
+                    nodes.append(f"{prefix}{num.strip()}")
+        else:
+            # Handle simple comma-separated nodes without brackets
+            for part in node_list.split(','):
+                part = part.strip()
+                if part:
+                    nodes.append(part)
         
         return nodes
     
@@ -516,8 +673,19 @@ class SlurmDeployer:
         """Create SLURM job payload according to official API schema."""
         # Merge resources: recipe defaults + config overrides
         resources = recipe.get("resources", {}).copy()
+        self.logger.debug(f"Recipe resources before merge: {resources}")
+        self.logger.debug(f"Config for merge: {config}")
+        
         if "resources" in config:
             resources.update(config["resources"])
+        
+        # Also handle top-level resource specifications (for backward compatibility)
+        # Top-level keys like 'nodes', 'cpu', 'memory', 'gpu', 'time_limit' can override resources
+        for key in ['nodes', 'cpu', 'memory', 'gpu', 'time_limit']:
+            if key in config:
+                resources[key] = config[key]
+        
+        self.logger.debug(f"Final merged resources: {resources}")
         
         # Determine time_limit (in minutes) from merged resources using utility
         time_limit_minutes = parse_time_limit(resources.get("time_limit"))
@@ -526,6 +694,10 @@ class SlurmDeployer:
         merged_env = recipe.get("environment", {}).copy()
         if "environment" in config:
             merged_env.update(config["environment"])
+        
+        # For replicas: set VLLM_PORT from replica_port config if present
+        if "replica_port" in config:
+            merged_env["VLLM_PORT"] = str(config["replica_port"])
 
         # Build the job description according to v0.0.40 schema
         # Use REMOTE path for SLURM job execution on MeluXina
@@ -554,8 +726,8 @@ class SlurmDeployer:
         local_log_dir = self.local_base_path / "logs"
         local_log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate the full script
-        full_script = self._create_script(recipe, recipe_path, merged_env, resources)
+        # Generate the full script (pass full config for replica support)
+        full_script = self._create_script(recipe, recipe_path, merged_env, resources, config)
         
         # Debug: Log script length
         self.logger.debug(f"Generated script length: {len(full_script)} bytes")
@@ -565,28 +737,68 @@ class SlurmDeployer:
             "job": job_desc
         }
     
-    def _create_script(self, recipe: Dict[str, Any], recipe_path: Path, merged_env: Dict[str, str] = None, merged_resources: Dict[str, Any] = None) -> str:
-        """Generate the SLURM job script by composing smaller parts."""
+    def _create_script(self, recipe: Dict[str, Any], recipe_path: Path, merged_env: Dict[str, str] = None, merged_resources: Dict[str, Any] = None, config: Dict[str, Any] = None) -> str:
+        """Generate the SLURM job script using recipe builders.
+        
+        Args:
+            recipe: Recipe configuration
+            recipe_path: Path to recipe file
+            merged_env: Merged environment variables
+            merged_resources: Merged resource configuration
+            config: Full user config (for replica-specific settings like replica_port)
+        """
         # Use merged resources or fall back to recipe resources
         resources = merged_resources if merged_resources is not None else recipe.get("resources", {})
 
         # Use merged environment or fall back to recipe environment
         environment = merged_env if merged_env is not None else recipe.get("environment", {})
+        
+        # Default to empty config if not provided
+        config = config or {}
 
         # Resolve paths and names
-        # Use REMOTE path for paths that will be used on MeluXina
         category = recipe_path.parent.name
+        recipe_name = recipe.get('name', '')
         recipes_path = Path(self.remote_base_path) / "src" / "recipes"
-        container_def = recipe.get("container_def", f"{recipe['name']}.def")
-        image_name = recipe.get("image", f"{recipe['name']}.sif")
-        def_path, sif_path = self._resolve_container_paths(recipes_path, category, container_def, image_name)
-
-        # Build environment and sections
-        env_section = self._build_env_section(environment)
+        container_def = recipe.get("container_def", f"{recipe_name}.def")
+        image_name = recipe.get("image", f"{recipe_name}.sif")
+        def_path = str(recipes_path / category / container_def)
+        sif_path = str(recipes_path / category / image_name)
         log_dir = str(Path(self.remote_base_path) / "logs")
-
-        build_block = self._build_build_block(sif_path, def_path)
-        run_block = self._build_run_block(sif_path, log_dir, resources)
+        
+        # Create paths object for builders
+        paths = ScriptPaths(
+            def_path=def_path,
+            sif_path=sif_path,
+            log_dir=log_dir,
+            remote_base_path=self.remote_base_path
+        )
+        
+        # Get the appropriate builder for this recipe
+        # First try recipe-specific builder, then fall back to category builder
+        try:
+            builder = BuilderRegistry.create_builder(
+                category, 
+                recipe_name=recipe_name,
+                remote_base_path=self.remote_base_path
+            )
+            self.logger.debug(f"Using builder {builder.__class__.__name__} for recipe {category}/{recipe_name}")
+        except ValueError as e:
+            self.logger.warning(f"No builder registered for '{category}/{recipe_name}', using inference builder as fallback")
+            # Fallback to inference builder for unknown categories
+            builder = BuilderRegistry.create_builder('inference', remote_base_path=self.remote_base_path)
+        
+        # Build script sections using the builder
+        env_section = builder.build_environment_section(environment)
+        build_block = builder.build_container_build_block(paths)
+        
+        # Check if recipe supports distributed execution
+        distributed_cfg = recipe.get('distributed') if isinstance(recipe, dict) else None
+        
+        if distributed_cfg and builder.supports_distributed():
+            run_block = builder.build_distributed_run_block(paths, resources, recipe, distributed_cfg)
+        else:
+            run_block = builder.build_run_block(paths, resources, recipe)
 
         script = f"""#!/bin/bash -l
 
@@ -605,6 +817,8 @@ echo "Working directory: $(pwd)"
 echo "Log directory: {log_dir}"
 echo "Container def: {def_path}"
 echo "Container sif: {sif_path}"
+echo "Recipe category: {category}"
+echo "Builder: {builder.__class__.__name__}"
 echo "==========================="
 
 {build_block}
@@ -618,97 +832,6 @@ exit $container_exit_code
 """
         return script
 
-    def _resolve_container_paths(self, recipes_path: Path, category: str, container_def: str, image_name: str):
-        """Return absolute paths for container def and sif file."""
-        def_path = str(recipes_path / category / container_def)
-        sif_path = str(recipes_path / category / image_name)
-        return def_path, sif_path
-
-    def _build_env_section(self, recipe_env: Dict[str, str]) -> str:
-        """Construct the environment export section for the script."""
-        env_vars = []
-        
-        # Export recipe-specific environment variables
-        for key, value in (recipe_env or {}).items():
-            env_vars.append(f"export {key}='{value}'")
-
-        # Add APPTAINERENV_ prefixed versions for Apptainer to pick up
-        # Apptainer automatically imports APPTAINERENV_* variables
-        for key, value in (recipe_env or {}).items():
-            env_vars.append(f"export APPTAINERENV_{key}='{value}'")
-
-        if 'VLLM_WORKDIR' not in (recipe_env or {}):
-            env_vars.append("export VLLM_WORKDIR='/workspace' || true")
-            env_vars.append("export APPTAINERENV_VLLM_WORKDIR='/workspace' || true")
-        if 'HF_HOME' not in (recipe_env or {}):
-            env_vars.append("export HF_HOME='/workspace/huggingface_cache' || true")
-            env_vars.append("export APPTAINERENV_HF_HOME='/workspace/huggingface_cache' || true")
-        if 'VLLM_LOGGING_LEVEL' not in (recipe_env or {}):
-            env_vars.append("export VLLM_LOGGING_LEVEL='INFO' || true")
-            env_vars.append("export APPTAINERENV_VLLM_LOGGING_LEVEL='INFO' || true")
-
-        return "\n".join(env_vars) if env_vars else "# No environment variables"
-
-    def _build_build_block(self, sif_path: str, def_path: str) -> str:
-        """Return the bash block that ensures the SIF image exists (and builds it if not)."""
-        return f"""
-# Build container if needed
-if [ ! -f {sif_path} ]; then
-    echo 'Building Apptainer image: {sif_path}'
-    
-    # Set up user-writable directories to avoid permission issues
-    export APPTAINER_TMPDIR=/tmp/apptainer-$USER-$$
-    export APPTAINER_CACHEDIR=/tmp/apptainer-cache-$USER
-    export HOME=/tmp/fake-home-$USER
-    
-    mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME/.apptainer
-    
-    # Create empty docker config to bypass authentication
-    echo '{{}}' > $HOME/.apptainer/docker-config.json
-    
-    # Build container
-    apptainer build --disable-cache --no-https {sif_path} {def_path}
-    build_result=$?
-    
-    # Clean up
-    rm -rf $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME
-    
-    if [ $build_result -ne 0 ]; then
-        echo "ERROR: Failed to build container (exit code: $build_result)"
-        exit 1
-    fi
-    
-    echo "Container build successful!"
-fi
-"""
-
-    def _build_run_block(self, sif_path: str, log_dir: str, resources: Dict[str, Any]) -> str:
-        """Return the bash block that runs the container with proper binds and flags."""
-        # Project workspace binding (use REMOTE path on MeluXina)
-        project_ws = str(self.remote_base_path)
-        nv_flag = "--nv" if resources.get('gpu') else ""
-        return f"""
-echo "Starting container..."
-echo "Running vLLM container (no network binding, unprivileged user)..."
-echo "Binding project workspace: {project_ws} -> /workspace"
-
-# Determine apptainer flags (e.g. use --nv when GPUs are requested)
-APPTAINER_FLAGS="{nv_flag}"
-echo "Apptainer flags: $APPTAINER_FLAGS"
-
-# Debug: Print environment variables that should be passed to container
-echo "Environment variables for container:"
-env | grep -E '^VLLM_|^HF_|^CUDA_' || echo "No VLLM/HF/CUDA vars found"
-
-apptainer run $APPTAINER_FLAGS --bind {log_dir}:/app/logs,{project_ws}:/workspace {sif_path} 2>&1
-container_exit_code=$?
-
-echo "Container exited with code: $container_exit_code"
-if [ $container_exit_code -ne 0 ]; then
-    echo "ERROR: Container failed to run properly"
-fi
-"""
-    
     def _format_environment(self, env_dict: Dict[str, str]) -> List[str]:
         """Format environment variables as array of KEY=VALUE strings"""
         env_list = [
@@ -717,5 +840,3 @@ fi
         for key, value in env_dict.items():
             env_list.append(f"{key}={value}")
         return env_list
-    
-    

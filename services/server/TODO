@@ -1,17 +1,20 @@
 DOCS:
-- Document Server better (remove outsdated docs).
-- Create diagram showcasing CI (testing) pipeline. Add this to the docs.
-OTHER:
-- Test multi-node vllm.
+
+MAIN:
+- Create tests for new group/replicas feature based on vllm-data-parallel example. 
+- Add suport for replicas within same node
+
+Optional:
+- Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.
+- Create proper CI pipeline with actions: 
+    - build: docker image with python code, etc.. is built. 
+    - test: docker image is passed into test environment. Runs and must pass specific tests.
 - Create HF auth mechanism.
-- Create vec-db mechanism. Separate vllm and vec-db logic from slurm deployer logic?
-- Pull.
+
 
 Things to Benchmark:
 vllm:
 - tokens/sec
 
 vector-db: 
-- recall
-- latency to retrieve chunks of text or vectors
 - example datasets from huggingface

@@ -33,12 +33,52 @@ cp .env.example .env
 
 Required environment variables:
 - `SSH_HOST` - MeluXina hostname
-- `SSH_PORT` - SSH port (typically 22)
+- `SSH_PORT` - SSH port (typically 8822)
 - `SSH_USER` - Your MeluXina username
-- `SSH_KEY_PATH` - Path to your SSH private key
 - `REMOTE_BASE_PATH` - Working directory on MeluXina
 
-### 3. Start the Microservice
+Example:
+```bash
+SSH_HOST=login.lxp.lu              # MeluXina login node
+SSH_PORT=8822                       # MeluXina SSH port
+SSH_USER=u123456                    # Your MeluXina username
+REMOTE_BASE_PATH=/project/home/p200981/u123456/path/to/temp/generated/files
+```
+
+### 3. Configure SSH Agent
+
+The framework uses **SSH agent forwarding** for secure authentication without exposing private keys to containers.
+
+!!! info "SSH Agent Security"
+    SSH agent forwarding is more secure than mounting raw SSH keys because:
+    
+    - Private keys never enter the container filesystem
+    - Authentication happens via the agent on your host machine
+    - Supports multiple keys and respects your `~/.ssh/config`
+    - Follows the principle of least privilege
+
+**Ensure your SSH agent is running:**
+
+```bash
+# Check if SSH agent is running
+echo $SSH_AUTH_SOCK
+
+# If empty, start the agent (usually automatic on desktop environments)
+eval "$(ssh-agent -s)"
+
+# Add your MeluXina SSH key to the agent
+ssh-add ~/.ssh/id_ed25519  # Or your key file
+
+# Verify key is loaded
+ssh-add -l
+```
+
+!!! tip "Desktop Environments"
+    Most Linux desktop environments (GNOME, KDE, etc.) automatically start an SSH agent. You typically only need to run `ssh-add` once after login.
+
+The Docker containers will use the `SSH_AUTH_SOCK` environment variable to communicate with your host's SSH agent.
+
+### 4. Start the Microservice
 
 TODO: Later, this will be replaced by the actual app using the microservices.
 
@@ -56,3 +96,6 @@ docker compose up -d <microservice to launch>
 - [Monitoring API Documentation](../api/monitoring.md) - Explore the Monitoring API endpoints
 
 ---
+
+Note: the repository uses `docker compose` for local development and testing. For realistic benchmarking and production deployments these services should run on a Kubernetes (K8s) cluster instead. The docker-compose setup is intended for local testing only.
+
