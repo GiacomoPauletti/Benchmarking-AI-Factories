@@ -18,25 +18,19 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements first for better layer caching
-COPY requirements.txt .
-COPY src/requirements.txt ./src/
+COPY src/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -r src/requirements.txt
 
 # Copy source code
 COPY src/ ./src/
-COPY scripts/ ./scripts/
 
 # Set Python path
 ENV PYTHONPATH=/app/src
 
 # Create logs directory
 RUN mkdir -p /app/logs
-
-# Make scripts executable
-RUN chmod +x scripts/*.sh
 
 # Expose port for client service API
 EXPOSE 8002

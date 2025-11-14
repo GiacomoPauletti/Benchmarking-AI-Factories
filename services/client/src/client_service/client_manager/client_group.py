@@ -15,7 +15,7 @@ class ClientGroupStatus(Enum):
 
 
 class ClientGroup:
-    def __init__(self, benchmark_id: int, num_clients: int, server_addr: str, time_limit: int = 5, use_container: bool = False): 
+    def __init__(self, benchmark_id: int, num_clients: int, server_addr: str, time_limit: int = 5, account: str = "p200981", use_container: bool = False): 
         self._benchmark_id = benchmark_id
         self._num_clients = num_clients
         self._server_addr = server_addr
@@ -23,22 +23,26 @@ class ClientGroup:
         self._created_at = time_module.time()
         self._use_container = use_container
         self._logger = logging.getLogger(f"client_service.client_group.{benchmark_id}")
-        self._ssh_manager = SSHManager.get_instance()
+        self._ssh_manager = SSHManager()
         self._status = ClientGroupStatus.PENDING
         
         # Get signal file path for polling
         import os
-        remote_base_path = os.environ.get('REMOTE_BASE_PATH', '/home/users/u103213/Benchmarking-AI-Factories')
+        remote_base_path = os.environ.get('REMOTE_BASE_PATH', f'/project/home/{account}/ai-factory')
         self._signal_file_path = f"{remote_base_path}/{benchmark_id}_addr.txt"
         
         # Create and use dispatcher to start the slurm job
-        dispatcher = SlurmClientDispatcher(server_addr, use_container=use_container)
+        self._dispatcher = SlurmClientDispatcher(server_addr, account=account, use_container=use_container)
         try:
-            dispatcher.dispatch(num_clients, benchmark_id, time_limit)
+            self._dispatcher.dispatch(num_clients, benchmark_id, time_limit)
             self._logger.info(f"Dispatched Slurm job for benchmark {benchmark_id}")
         except Exception as e:
             self._logger.error(f"Failed to dispatch Slurm job for benchmark {benchmark_id}: {e}")
             raise
+
+    def get_dispatcher(self) -> SlurmClientDispatcher:
+        """Get the SLURM dispatcher for this group"""
+        return self._dispatcher
 
     def get_client_address(self) -> Optional[str]:
         """Get the registered client process address"""

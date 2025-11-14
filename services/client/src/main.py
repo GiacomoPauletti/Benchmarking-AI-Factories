@@ -9,10 +9,7 @@ import uvicorn
 import logging
 import socket
 
-from client_service.api.frontend_router import frontend_router
-from client_service.api.monitor_router import monitor_router
-from client_service.deployment.slurm_config import SlurmConfig
-from client_service.deployment.client_dispatcher import SlurmClientDispatcher
+from client_service.api.routes import router
 from client_service.client_manager.client_manager import ClientManager
 
 # =================================== LOGGING CONFIG ====================================
@@ -31,13 +28,19 @@ logging.getLogger("uvicorn").setLevel(logging.INFO)
 
 app = FastAPI(
     title="AI Factory Client Service",
-    description="Spawns clients for testing Server Service",
+    description="Orchestrates client groups for benchmarking AI services on HPC clusters. Supports SLURM job submission, metrics collection via Prometheus, and dynamic service discovery.",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "System", "description": "Health checks and system status"},
+        {"name": "Client Groups", "description": "Create and manage client groups for benchmarks"},
+        {"name": "Execution", "description": "Trigger benchmark execution"},
+        {"name": "Monitoring", "description": "Prometheus metrics and targets"},
+        {"name": "Logs", "description": "Sync and manage SLURM job logs"}
+    ]
 )
-app.include_router(frontend_router, prefix="/api/v1")
-app.include_router(monitor_router, prefix="/api/v1")
+app.include_router(router, prefix="/api/v1")
 
 
 
@@ -51,10 +54,10 @@ if __name__ == "__main__":
                        help="Host to bind to (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8002, 
                        help="Port to bind to (default: 8002)")
-    parser.add_argument("--slurm-config", 
-                       help="Path to SLURM configuration file")
     parser.add_argument("--container", action="store_true",
                        help="Enable container mode for client execution")
+    parser.add_argument("--account", default="p200981",
+                       help="SLURM account for job submission (default: p200981)")
     
     args = parser.parse_args()
     
@@ -63,26 +66,19 @@ if __name__ == "__main__":
     host = args.host
     port = args.port
     use_container = args.container
-    slurm_config_path = args.slurm_config
+    account = args.account
     
     if use_container:
         logging.info("Container mode enabled for client execution")
     
-    # Load Slurm configuration
-    if slurm_config_path:
-        # Use provided config file
-        SlurmClientDispatcher.slurm_config = SlurmConfig.load_from_file(slurm_config_path)
-        logging.info(f"Loaded Slurm config from file: {slurm_config_path}")
-    else:
-        # Use auto-detected configuration
-        SlurmClientDispatcher.slurm_config = SlurmConfig.tmp_load_default()
-        logging.info("Using auto-detected Slurm configuration")
+    logging.info(f"Using SLURM account: {account}")
 
     # Initialize client manager
     client_manager = ClientManager()
     client_manager.configure(
         server_addr=server_addr, 
-        use_container=use_container
+        use_container=use_container,
+        account=account
     )
 
     logging.info(f"Starting Client Service on {host}:{port}")

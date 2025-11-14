@@ -1,13 +1,19 @@
 [tool.pytest.ini_options]
 markers = [
-    "integration: marks tests as integration tests (run with real MeluXina connection)",
-    "unit: marks tests as unit tests (fast, isolated tests)"
+    "integration: marks tests as integration tests (may require external dependencies)",
+    "unit: marks tests as unit tests (fast, isolated tests)",
+    "slow: marks tests as slow-running (stress tests, load tests, etc.)"
 ]
 
 testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py", "tests.py"]
+python_files = ["test_*.py"]
 python_classes = ["Test*"]  
 python_functions = ["test_*"]
 
-# Add verbose output for integration tests
-addopts = ["-v", "--tb=short"]
+# Verbose output and short tracebacks
+addopts = ["-v", "--tb=short", "--strict-markers"]
+
+# Show warnings
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

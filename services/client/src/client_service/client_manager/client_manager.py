@@ -13,6 +13,7 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 class ClientManagerResponseStatus:
     OK = 0
     ERROR = 1
+    ALREADY_EXISTS = 2
 
 
 class CMResponse:
@@ -64,32 +65,35 @@ class ClientManager:
         self._server_addr = "http://localhost:8002"
         self._client_service_addr = "http://localhost:8001"
         self._use_container = False  # Default to native execution
+        self._account = "p200981"  # Default SLURM account
         self._initialized = True
     
-    def configure(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None, use_container: Optional[bool] = None):
-        """Configure server and client service addresses and container mode after initialization"""
+    def configure(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None, use_container: Optional[bool] = None, account: Optional[str] = None):
+        """Configure server and client service addresses, container mode, and SLURM account after initialization"""
         if server_addr:
             self._server_addr = server_addr
         if client_service_addr:
             self._client_service_addr = client_service_addr
         if use_container is not None:
             self._use_container = use_container
+        if account:
+            self._account = account
 
     def add_client_group(self, benchmark_id: int, num_clients: int, time_limit: int = 5) -> int:
         """
         Create a new client group for `benchmark_id` expecting `num_clients`.
-        Returns ClientManagerResponseStatus.OK, or ERROR if the group already exists.
+        Returns ClientManagerResponseStatus.OK, ALREADY_EXISTS, or ERROR.
         """
         with self._lock:
             if benchmark_id in self._client_groups:
                 self._logger.debug(f"Group {benchmark_id} already exists")
-                return ClientManagerResponseStatus.ERROR
+                return ClientManagerResponseStatus.ALREADY_EXISTS
             
             try:
                 # Create ClientGroup - it handles the dispatching internally
-                client_group = ClientGroup(benchmark_id, num_clients, self._server_addr, time_limit, self._use_container)
+                client_group = ClientGroup(benchmark_id, num_clients, self._server_addr, time_limit, self._account, self._use_container)
                 self._client_groups[benchmark_id] = client_group
-                self._logger.info(f"Added client group {benchmark_id}: expecting {num_clients} with time limit {time_limit}, container mode: {self._use_container}")
+                self._logger.info(f"Added client group {benchmark_id}: expecting {num_clients} with time limit {time_limit}, account: {self._account}, container mode: {self._use_container}")
                 return ClientManagerResponseStatus.OK
             except Exception as e:
                 self._logger.error(f"Failed to create client group {benchmark_id}: {e}")
@@ -144,4 +148,50 @@ class ClientManager:
             results.append({"client_process": client_addr, "error": str(e)})
 
         return results
+
+    def sync_logs(self, benchmark_id: Optional[int] = None, local_logs_dir: str = "./logs") -> Dict[str, Any]:
+        """Sync SLURM logs from remote MeluXina to local directory.
+        
+        Args:
+            benchmark_id: If specified, sync logs for specific benchmark. If None, sync all logs.
+            local_logs_dir: Local directory to sync logs to
+            
+        Returns:
+            Dictionary with sync results
+        """
+        with self._lock:
+            if benchmark_id is not None:
+                # Sync logs for specific benchmark
+                group = self._client_groups.get(benchmark_id)
+                if group is None:
+                    return {"error": f"Benchmark {benchmark_id} not found", "success": False}
+                
+                dispatcher = group.get_dispatcher()
+                pattern = f"client-{benchmark_id}-*.out"
+                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
+                
+                return {
+                    "benchmark_id": benchmark_id,
+                    "success": success,
+                    "message": message,
+                    "local_path": local_logs_dir
+                }
+            else:
+                # Sync all logs - use any dispatcher (they all point to same remote)
+                if not self._client_groups:
+                    return {"error": "No client groups available", "success": False}
+                
+                # Get any dispatcher
+                any_group = next(iter(self._client_groups.values()))
+                dispatcher = any_group.get_dispatcher()
+                pattern = "client-*.out"
+                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
+                
+                return {
+                    "benchmark_id": "all",
+                    "success": success,
+                    "message": message,
+                    "local_path": local_logs_dir,
+                    "groups": list(self._client_groups.keys())
+                }
 
