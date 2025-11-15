@@ -2,6 +2,10 @@
 API Request and Response Schemas for Client Service
 
 Pydantic models for request validation and response formatting.
+
+NOTE: This service manages client groups - it does NOT orchestrate benchmarks.
+A separate benchmark orchestrator service will use this client service to create
+and manage client groups as needed for benchmark runs.
 """
 
 from pydantic import BaseModel, Field
@@ -11,18 +15,66 @@ from typing import Optional, List, Dict, Any, Union
 # ==================== Request Schemas ====================
 
 class CreateClientGroupRequest(BaseModel):
-    """Request to create a new client group."""
+    """Request to create a new client group for load testing."""
+    
+    # Load generation parameters
+    target_url: str = Field(
+        ...,
+        description="vLLM endpoint URL to test (e.g., http://server:8000)",
+        example="http://localhost:8000"
+    )
     num_clients: int = Field(
         ...,
         gt=0,
         description="Number of concurrent clients to spawn",
+        example=10
+    )
+    requests_per_second: float = Field(
+        default=10.0,
+        gt=0,
+        description="Target requests per second across all clients",
+        example=10.0
+    )
+    duration_seconds: int = Field(
+        default=60,
+        gt=0,
+        description="Load test duration in seconds",
+        example=60
+    )
+    prompts: List[str] = Field(
+        default=["Tell me a story about AI."],
+        min_length=1,
+        description="List of prompts to randomly select from during testing",
+        example=["What is machine learning?", "Explain neural networks."]
+    )
+    
+    # vLLM API parameters
+    max_tokens: int = Field(
+        default=100,
+        gt=0,
+        le=4096,
+        description="Maximum tokens to generate per request",
         example=100
     )
+    temperature: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=2.0,
+        description="Sampling temperature for generation",
+        example=0.7
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model name (if None, uses server default)",
+        example="meta-llama/Llama-2-7b-hf"
+    )
+    
+    # SLURM parameters
     time_limit: int = Field(
-        default=5,
+        default=30,
         gt=0,
         le=1440,
-        description="Time limit for SLURM job in minutes (max: 24 hours)",
+        description="SLURM job time limit in minutes (should be > duration_seconds/60)",
         example=30
     )
 
@@ -30,16 +82,23 @@ class CreateClientGroupRequest(BaseModel):
         json_schema_extra = {
             "examples": [
                 {
-                    "num_clients": 10,
-                    "time_limit": 5
+                    "target_url": "http://localhost:8000",
+                    "num_clients": 5,
+                    "requests_per_second": 5.0,
+                    "duration_seconds": 60,
+                    "prompts": ["What is AI?", "Explain deep learning."],
+                    "max_tokens": 50,
+                    "time_limit": 10
                 },
                 {
+                    "target_url": "http://vllm-service:8000",
                     "num_clients": 100,
-                    "time_limit": 30
-                },
-                {
-                    "num_clients": 1000,
-                    "time_limit": 60
+                    "requests_per_second": 100.0,
+                    "duration_seconds": 300,
+                    "prompts": ["Tell me a story.", "Write a poem."],
+                    "max_tokens": 200,
+                    "temperature": 0.9,
+                    "time_limit": 15
                 }
             ]
         }
@@ -78,34 +137,34 @@ class ClientGroupInfo(BaseModel):
 class ClientGroupResponse(BaseModel):
     """Response after creating or updating a client group."""
     status: str = Field(..., description="Operation status", example="created")
-    benchmark_id: int = Field(..., description="Unique identifier for the benchmark")
+    group_id: int = Field(..., description="Unique identifier for the client group")
     num_clients: Optional[int] = Field(None, description="Number of clients in the group")
     message: Optional[str] = Field(None, description="Additional information")
 
 
 class ClientGroupListResponse(BaseModel):
     """Response listing all client groups."""
-    groups: List[int] = Field(..., description="List of active benchmark IDs")
+    groups: List[int] = Field(..., description="List of active group IDs")
     count: int = Field(..., description="Total number of active groups")
 
 
 class ClientGroupInfoResponse(BaseModel):
     """Response with detailed client group information."""
-    benchmark_id: int = Field(..., description="Benchmark identifier")
+    group_id: int = Field(..., description="Client group identifier")
     info: ClientGroupInfo = Field(..., description="Detailed group information")
 
 
 class RunClientGroupResponse(BaseModel):
     """Response after triggering a client group to run."""
     status: str = Field(..., description="Operation status", example="dispatched")
-    benchmark_id: int = Field(..., description="Benchmark identifier")
+    group_id: int = Field(..., description="Client group identifier")
     results: List[Dict[str, Any]] = Field(..., description="Results from client processes")
 
 
 class ObserverRegistrationResponse(BaseModel):
     """Response after registering an observer."""
     status: str = Field(..., description="Registration status", example="registered")
-    benchmark_id: int = Field(..., description="Benchmark identifier")
+    group_id: int = Field(..., description="Client group identifier")
     observer: str = Field(..., description="Observer endpoint", example="192.168.1.100:9090")
 
 
@@ -133,5 +192,5 @@ class LogSyncResponse(BaseModel):
     success: bool = Field(..., description="Whether sync was successful", example=True)
     message: str = Field(..., description="Status message", example="Logs synced successfully")
     local_path: str = Field(..., description="Local directory where logs were synced", example="./logs")
-    benchmark_id: Union[int, str] = Field(..., description="Benchmark ID or 'all'", example=12345)
+    group_id: Union[int, str] = Field(..., description="Group ID or 'all'", example=12345)
     groups: Optional[List[int]] = Field(None, description="List of synced groups (when syncing all)", example=[12345, 12346])

@@ -35,14 +35,42 @@ def wait_for_server(server_url: str, max_wait: int = 30) -> bool:
     return False
 
 
+def wait_for_client(client_url: str, max_wait: int = 30) -> bool:
+    """
+    Wait for client to be ready by polling the health endpoint.
+    
+    Args:
+        client_url: Base URL of the client service (e.g., "http://localhost:8002")
+        max_wait: Maximum time to wait in seconds
+        
+    Returns:
+        True if client service is ready, False otherwise
+    """
+    print(f"Waiting for client service at {client_url}...")
+    start = time.time()
+    
+    while time.time() - start < max_wait:
+        try:
+            response = requests.get(f"{client_url}/health", timeout=2)
+            if response.status_code == 200:
+                print("Client service is ready!")
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(2)
+    
+    print("Client not available")
+    return False
+
+
 def wait_for_service_ready(
     server_url: str, 
     service_id: str, 
     max_wait: int = 300,
     poll_interval: int = 5
-) -> bool:
+) -> Optional[str]:
     """
-    Wait for service to be ready by polling the status endpoint.
+    Wait for service to be ready and return its endpoint.
     
     Args:
         server_url: Base URL of the server (e.g., "http://localhost:8001")
@@ -51,7 +79,7 @@ def wait_for_service_ready(
         poll_interval: How often to check status in seconds (default: 5)
         
     Returns:
-        True if service is ready, False otherwise
+        Service endpoint URL if ready, None otherwise
     """
     print(f"Waiting for service {service_id} to be ready...")
     print(f"  Max wait: {max_wait}s | Poll interval: {poll_interval}s")
@@ -84,18 +112,33 @@ def wait_for_service_ready(
                 # Service is ready when status is "running"
                 if current_status == "running":
                     print(f"[+] Service is ready! (took {elapsed:.1f}s, {attempts} checks)")
-                    return True
+                    
+                    # Get the endpoint from vllm/services
+                    try:
+                        vllm_response = requests.get(f"{api_base}/vllm/services", timeout=10)
+                        if vllm_response.status_code == 200:
+                            vllm_services = vllm_response.json().get("vllm_services", [])
+                            for svc in vllm_services:
+                                if svc["id"] == service_id:
+                                    endpoint = svc["endpoint"]
+                                    print(f"[+] Endpoint: {endpoint}")
+                                    return endpoint
+                        print(f"[-] Warning: Could not find endpoint for service {service_id}")
+                    except requests.exceptions.RequestException as e:
+                        print(f"[-] Error fetching endpoint: {e}")
+                    
+                    return None
                 
                 # Service failed
                 if current_status in ["failed", "cancelled", "timeout"]:
                     print(f"[-] Service failed with status: {current_status}")
-                    return False
+                    return None
         except requests.exceptions.RequestException:
             pass
-        time.sleep(1)
+        time.sleep(poll_interval)
     
     print(f"[-] Service did not become ready within {max_wait}s")
-    return False
+    return None
 
 
 def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: int = 1, 
@@ -150,3 +193,19 @@ def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: in
     
     print(f"\n[-] Timeout waiting for service group after {timeout}s")
     return False
+
+def cleanup_service(service_id: str):
+    """Stop the vLLM service to free resources."""
+    print("\n" + "=" * 80)
+    print("STEP 5: Cleaning Up")
+    print("=" * 80)
+    
+    try:
+        response = requests.post(
+            f"{SERVER_API}/services/{service_id}/status",
+            json={"status": "cancelled"}
+        )
+        response.raise_for_status()
+        print(f"✓ Service {service_id} stopped successfully")
+    except requests.RequestException as e:
+        print(f"✗ Failed to stop service: {e}")

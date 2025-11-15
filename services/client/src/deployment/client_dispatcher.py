@@ -4,30 +4,30 @@ import os
 import logging
 from pathlib import Path
 
-from client_service.ssh_manager import SSHManager
+from ssh_manager import SSHManager
 
 # Use the logger configured by main.py instead of basic config
 logger = logging.getLogger(__name__)
 
 class AbstractClientDispatcher:
-    def dispatch(self, num_clients: int, benchmark_id: int, time: int = 5):
+    def dispatch(self, group_id: int, time_limit: int):
         pass
 
 class SlurmClientDispatcher(AbstractClientDispatcher):
     """
     SLURM client dispatcher for MeluXina HPC cluster.
-    Simplified to match server's SlurmDeployer architecture.
+    Deploys load generator jobs to test vLLM services.
     """
 
-    def __init__(self, server_addr: str, account: str = "p200981", use_container: bool = False):
+    def __init__(self, load_config: dict, account: str = "p200981", use_container: bool = False):
         """Initialize SLURM client dispatcher.
         
         Args:
-            server_addr: Address of the server to connect clients to
+            load_config: Dictionary with load test configuration
             account: SLURM account for job submission (default: p200981)
             use_container: Whether to use containerized client execution
         """
-        self._server_addr = server_addr
+        self._load_config = load_config
         self._use_container = use_container
         self._account = account
         
@@ -54,9 +54,9 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         
         self._remote_logs_dir = str(Path(self._remote_base_path) / "logs")
         
-        # Setup SSH tunnel for SLURM REST API on port 6821 (server uses 6820)
-        logger.info(f"Setting up SLURM REST API tunnel via SSH to {self._ssh_manager.ssh_target}")
-        self._rest_api_port = self._ssh_manager.setup_slurm_rest_tunnel(local_port=6821)
+        # Use shared SSH tunnel for SLURM REST API (created at service startup on port 6821)
+        # Server uses 6820, client uses 6821 to avoid conflicts
+        self._rest_api_port = 6821
         self._base_url = f"http://localhost:{self._rest_api_port}/slurm/v0.0.40"
         
         logger.info(f"SLURM REST API available at: {self._base_url}")
@@ -143,23 +143,21 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
 
 
 
-    def dispatch(self, num_clients: int, benchmark_id: int, time: int = 5):
+    def dispatch(self, group_id: int, time_limit: int):
         """
-        Dispatch `num_clients` clients using SLURM to connect to server for `benchmark_id`.
+        Dispatch load generator job using SLURM.
         Runs via SSH from local client_service to MeluXina.
         
         Args:
-            num_clients: Number of client processes to launch
-            benchmark_id: Benchmark ID to associate with the clients
-            time: Time limit for the SLURM job in minutes
+            group_id: Group ID to associate with the job
+            time_limit: Time limit for the SLURM job in minutes
         """
-        logger.debug(f"Dispatching {num_clients} clients via SLURM for benchmark {benchmark_id}.")
+        logger.info(f"Dispatching load generator for group {group_id}")
+        logger.info(f"Config: {json.dumps(self._load_config, indent=2)}")
         
-        # Build script command based on container mode
-        container_flag = " --container" if self._use_container else ""
-        
-        # Simple test command - writes to remote base path logs directory
-        script_command = f"echo 'Client group {benchmark_id} started with {num_clients} clients at '$(date)"
+        # Build the load generator command
+        # The load generator will be run as a Python module on the compute node
+        load_gen_cmd = self._build_load_generator_command(group_id)
         
         # Prepare job configuration matching server pattern and MeluXina requirements
         # Per https://docs.lxp.lu/web_services/slurmrestd/: these fields are mandatory:
@@ -168,21 +166,38 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             'account': self._account,
             'qos': 'short', 
             'time_limit': {
-                'number': time,
+                'number': time_limit,
                 'set': True
             },
-            'name': f'ai-factory-clients-{benchmark_id}',
+            'name': f'ai-factory-loadgen-{group_id}',
             'partition': 'cpu',
             'nodes': '1',
             'tasks': 1,
-            'cpus_per_task': 4,
+            'cpus_per_task': self._load_config.get('num_clients', 10),  # One CPU per client for parallelism
             'current_working_directory': self._remote_logs_dir,
-            'standard_output': f'{self._remote_logs_dir}/client-{benchmark_id}-%j.out',
-            'standard_error': f'{self._remote_logs_dir}/client-{benchmark_id}-%j.err',
+            'standard_output': f'{self._remote_logs_dir}/loadgen-{group_id}-%j.out',
+            'standard_error': f'{self._remote_logs_dir}/loadgen-{group_id}-%j.err',
             'environment': [f'USER={self._username}'],  # Mandatory per MeluXina docs
         }
         
-        script_content = f"""#!/bin/bash -l\n{script_command}\n"""
+        script_content = f"""#!/bin/bash -l
+# Load Generator Job for Group {group_id}
+module load Python/3.11.3-GCCcore-12.3.0  # Load Python module on MeluXina
+
+echo "Starting load test at $(date)"
+echo "Configuration:"
+echo "  Target: {self._load_config['target_url']}"
+echo "  Clients: {self._load_config['num_clients']}"
+echo "  RPS: {self._load_config['requests_per_second']}"
+echo "  Duration: {self._load_config['duration_seconds']}s"
+echo ""
+
+# Run the load generator
+{load_gen_cmd}
+
+echo ""
+echo "Load test completed at $(date)"
+"""
         
         # Submit job via SSH
         success, response_data = self._submit_slurm_job_via_ssh(
@@ -191,12 +206,147 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         )
 
         if success:
-            logger.info("Job submitted successfully via SSH!")
+            logger.info("Load generator job submitted successfully!")
             logger.debug(json.dumps(response_data, indent=2))
         else:
-            logger.error(f"Job submission failed via SSH: {response_data}")
+            logger.error(f"Job submission failed: {response_data}")
 
         print(json.dumps(response_data, indent=2))
+    
+    def _build_load_generator_command(self, group_id: int) -> str:
+        """Build the command to run the load generator on the compute node."""
+        # First, we need to copy the load_generator.py to the remote
+        # For now, we'll embed it inline or assume it's in the repo
+        
+        # Build Python command with inline script
+        prompts_json = json.dumps(self._load_config['prompts'])
+        
+        cmd = f"""python3 << 'LOAD_GENERATOR_EOF'
+import asyncio
+import aiohttp
+import time
+import json
+import random
+from dataclasses import dataclass, asdict
+
+# Embedded load generator (simplified version)
+@dataclass
+class RequestMetrics:
+    timestamp: float
+    latency_ms: float
+    status_code: int
+    success: bool
+    error: str = None
+
+async def send_request(session, url, prompt, config):
+    start = time.time()
+    try:
+        payload = {{
+            "prompt": prompt,
+            "max_tokens": config["max_tokens"],
+            "temperature": config.get("temperature", 0.7)
+        }}
+        if config.get("model"):
+            payload["model"] = config["model"]
+            
+        async with session.post(f"{{url}}/v1/completions", json=payload, timeout=60) as resp:
+            latency = (time.time() - start) * 1000
+            if resp.status == 200:
+                await resp.json()
+                return RequestMetrics(start, latency, resp.status, True)
+            else:
+                text = await resp.text()
+                return RequestMetrics(start, latency, resp.status, False, text[:100])
+    except Exception as e:
+        latency = (time.time() - start) * 1000
+        return RequestMetrics(start, latency, 0, False, str(e))
+
+async def worker(worker_id, session, config, end_time, results, semaphore):
+    prompts = config["prompts"]
+    url = config["target_url"]
+    while time.time() < end_time:
+        async with semaphore:
+            prompt = random.choice(prompts)
+            metric = await send_request(session, url, prompt, config)
+            results.append(metric)
+            if len(results) % 50 == 0:
+                print(f"Sent {{len(results)}} requests", flush=True)
+
+async def rate_limiter_task(semaphore, rps, end_time):
+    interval = 1.0 / rps
+    while time.time() < end_time:
+        semaphore.release()
+        await asyncio.sleep(interval)
+
+async def run_load_test():
+    config = {{
+        "target_url": "{self._load_config['target_url']}",
+        "num_clients": {self._load_config['num_clients']},
+        "requests_per_second": {self._load_config['requests_per_second']},
+        "duration_seconds": {self._load_config['duration_seconds']},
+        "prompts": {prompts_json},
+        "max_tokens": {self._load_config.get('max_tokens', 100)},
+        "temperature": {self._load_config.get('temperature', 0.7)},
+        "model": {json.dumps(self._load_config.get('model'))}
+    }}
+    
+    print(f"Starting load test with {{config['num_clients']}} clients")
+    print(f"Target RPS: {{config['requests_per_second']}}")
+    
+    start_time = time.time()
+    end_time = start_time + config["duration_seconds"]
+    results = []
+    semaphore = asyncio.Semaphore(0)
+    
+    connector = aiohttp.TCPConnector(limit=config["num_clients"])
+    async with aiohttp.ClientSession(connector=connector) as session:
+        rate_task = asyncio.create_task(rate_limiter_task(semaphore, config["requests_per_second"], end_time))
+        workers = [
+            asyncio.create_task(worker(i, session, config, end_time, results, semaphore))
+            for i in range(config["num_clients"])
+        ]
+        await asyncio.gather(*workers, return_exceptions=True)
+        rate_task.cancel()
+        try:
+            await rate_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Calculate results
+    total = len(results)
+    successful = sum(1 for r in results if r.success)
+    latencies = sorted([r.latency_ms for r in results])
+    
+    print("\\n" + "="*80)
+    print("LOAD TEST RESULTS")
+    print("="*80)
+    print(f"Total Requests: {{total}}")
+    print(f"Successful: {{successful}}")
+    print(f"Failed: {{total - successful}}")
+    if latencies:
+        print(f"Avg Latency: {{sum(latencies)/len(latencies):.2f}}ms")
+        print(f"P50 Latency: {{latencies[len(latencies)//2]:.2f}}ms")
+        print(f"P95 Latency: {{latencies[int(len(latencies)*0.95)]:.2f}}ms")
+        print(f"P99 Latency: {{latencies[int(len(latencies)*0.99)]:.2f}}ms")
+    print(f"Actual RPS: {{total/(time.time()-start_time):.2f}}")
+    print("="*80)
+    
+    # Save detailed results
+    results_file = "{self._remote_logs_dir}/loadgen-results-{group_id}.json"
+    with open(results_file, 'w') as f:
+        json.dump({{
+            "total_requests": total,
+            "successful": successful,
+            "failed": total - successful,
+            "latencies": latencies,
+            "config": config
+        }}, f, indent=2)
+    print(f"Results saved to: {{results_file}}")
+
+asyncio.run(run_load_test())
+LOAD_GENERATOR_EOF
+"""
+        return cmd
 
     def _submit_slurm_job_via_ssh(self, script_content: str, job_config: dict, 
                                   slurm_rest_host: str = "slurmrestd.meluxina.lxp.lu",

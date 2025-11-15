@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, List
 import requests
 import socket
 
-from client_service.client_manager.client_group import ClientGroup, ClientGroupStatus
+from client_manager.client_group import ClientGroup, ClientGroupStatus
 
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
@@ -24,9 +24,8 @@ class CMResponse:
 
 class ClientManager:
     """
-    Manages client groups (one group per benchmark_id). Uses self._client_groups
-    (mapping benchmark_id -> dict) to store group metadata and a single registered
-    client process address for that group. 
+    Manages client groups. Each group has a unique group_id and can contain
+    multiple client processes managed via SLURM.
     """
     _instance = None
 
@@ -53,14 +52,14 @@ class ClientManager:
         return cls._instance
 
     def __init__(self) -> None:
-        # mapping: benchmark_id -> ClientGroup
+        # mapping: group_id -> ClientGroup
         # Protect re-initialization in singleton pattern
         if hasattr(self, "_initialized") and self._initialized:
             return
 
         self._client_groups: Dict[int, ClientGroup] = {}
         self._lock = threading.Lock()
-        self._logger = logging.getLogger("client_service.client_manager")
+        self._logger = logging.getLogger("client_manager")
         # Default addresses - can be configured via environment or config file
         self._server_addr = "http://localhost:8002"
         self._client_service_addr = "http://localhost:8001"
@@ -79,62 +78,76 @@ class ClientManager:
         if account:
             self._account = account
 
-    def add_client_group(self, benchmark_id: int, num_clients: int, time_limit: int = 5) -> int:
+    def add_client_group(self, group_id: int, load_config: dict) -> int:
         """
-        Create a new client group for `benchmark_id` expecting `num_clients`.
+        Create a new client group with `group_id` for load testing.
+        
+        Args:
+            group_id: Unique identifier for the group
+            load_config: Dictionary with load test configuration (target_url, num_clients, rps, etc.)
+            
         Returns ClientManagerResponseStatus.OK, ALREADY_EXISTS, or ERROR.
         """
         with self._lock:
-            if benchmark_id in self._client_groups:
-                self._logger.debug(f"Group {benchmark_id} already exists")
+            if group_id in self._client_groups:
+                self._logger.debug(f"Group {group_id} already exists")
                 return ClientManagerResponseStatus.ALREADY_EXISTS
             
             try:
                 # Create ClientGroup - it handles the dispatching internally
-                client_group = ClientGroup(benchmark_id, num_clients, self._server_addr, time_limit, self._account, self._use_container)
-                self._client_groups[benchmark_id] = client_group
-                self._logger.info(f"Added client group {benchmark_id}: expecting {num_clients} with time limit {time_limit}, account: {self._account}, container mode: {self._use_container}")
+                client_group = ClientGroup(
+                    group_id=group_id,
+                    load_config=load_config,
+                    account=self._account,
+                    use_container=self._use_container
+                )
+                self._client_groups[group_id] = client_group
+                self._logger.info(
+                    f"Added client group {group_id}: {load_config['num_clients']} clients, "
+                    f"{load_config['requests_per_second']} RPS, "
+                    f"targeting {load_config['target_url']}"
+                )
                 return ClientManagerResponseStatus.OK
             except Exception as e:
-                self._logger.error(f"Failed to create client group {benchmark_id}: {e}")
+                self._logger.error(f"Failed to create client group {group_id}: {e}")
                 return ClientManagerResponseStatus.ERROR
 
-    def remove_client_group(self, benchmark_id: int) -> None:
+    def remove_client_group(self, group_id: int) -> None:
         """Remove the group if present."""
         with self._lock:
-            if benchmark_id in self._client_groups:
-                del self._client_groups[benchmark_id]
-                self._logger.info(f"Removed client group {benchmark_id}")
+            if group_id in self._client_groups:
+                del self._client_groups[group_id]
+                self._logger.info(f"Removed client group {group_id}")
 
     def list_groups(self) -> List[int]:
         """Return the list of registered group ids."""
         with self._lock:
             return list(self._client_groups.keys())
 
-    def get_group_info(self, benchmark_id: int) -> Optional[Dict[str, Any]]:
+    def get_group_info(self, group_id: int) -> Optional[Dict[str, Any]]:
         """Return a copy of group information or None if it does not exist."""
         with self._lock:
-            group = self._client_groups.get(benchmark_id)
+            group = self._client_groups.get(group_id)
             if group is None:
                 return None
             return group.get_info()
 
-    def run_client_group(self, benchmark_id: int, timeout: float = 5.0) -> List[Dict[str, Any]]:
+    def run_client_group(self, group_id: int, timeout: float = 5.0) -> List[Dict[str, Any]]:
         """
         Forward a POST /run request to the registered client process of the group.
         The single process may spawn multiple internal clients; we request up to num_clients
         to be started by that process. Returns a list with a single entry (or error).
         """
         with self._lock:
-            group = self._client_groups.get(benchmark_id)
+            group = self._client_groups.get(group_id)
             if group is None:
-                return [{"error": "unknown benchmark_id", "benchmark_id": benchmark_id}]
+                return [{"error": "unknown group_id", "group_id": group_id}]
             client_addr = group.get_client_address()
 
         results: List[Dict[str, Any]] = []
         if group.get_status() != ClientGroupStatus.RUNNING:
-            self._logger.warning(f"Client group {benchmark_id} is not in RUNNING state")
-            results.append({"error": "client group not running", "benchmark_id": benchmark_id})
+            self._logger.warning(f"Client group {group_id} is not in RUNNING state")
+            results.append({"error": "client group not running", "group_id": group_id})
             return results
 
         client_addr = group.get_client_address()
@@ -149,29 +162,29 @@ class ClientManager:
 
         return results
 
-    def sync_logs(self, benchmark_id: Optional[int] = None, local_logs_dir: str = "./logs") -> Dict[str, Any]:
+    def sync_logs(self, group_id: Optional[int] = None, local_logs_dir: str = "./logs") -> Dict[str, Any]:
         """Sync SLURM logs from remote MeluXina to local directory.
         
         Args:
-            benchmark_id: If specified, sync logs for specific benchmark. If None, sync all logs.
+            group_id: If specified, sync logs for specific group. If None, sync all logs.
             local_logs_dir: Local directory to sync logs to
             
         Returns:
             Dictionary with sync results
         """
         with self._lock:
-            if benchmark_id is not None:
-                # Sync logs for specific benchmark
-                group = self._client_groups.get(benchmark_id)
+            if group_id is not None:
+                # Sync logs for specific group
+                group = self._client_groups.get(group_id)
                 if group is None:
-                    return {"error": f"Benchmark {benchmark_id} not found", "success": False}
+                    return {"error": f"Group {group_id} not found", "success": False}
                 
                 dispatcher = group.get_dispatcher()
-                pattern = f"client-{benchmark_id}-*.out"
+                pattern = f"client-{group_id}-*.out"
                 success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
                 
                 return {
-                    "benchmark_id": benchmark_id,
+                    "group_id": group_id,
                     "success": success,
                     "message": message,
                     "local_path": local_logs_dir
@@ -188,7 +201,7 @@ class ClientManager:
                 success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
                 
                 return {
-                    "benchmark_id": "all",
+                    "group_id": "all",
                     "success": success,
                     "message": message,
                     "local_path": local_logs_dir,

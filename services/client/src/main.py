@@ -9,8 +9,9 @@ import uvicorn
 import logging
 import socket
 
-from client_service.api.routes import router
-from client_service.client_manager.client_manager import ClientManager
+from api.routes import router
+from client_manager.client_manager import ClientManager
+from ssh_manager import SSHManager
 
 # =================================== LOGGING CONFIG ====================================
 # Always log to console (stdout) with debug level
@@ -28,14 +29,14 @@ logging.getLogger("uvicorn").setLevel(logging.INFO)
 
 app = FastAPI(
     title="AI Factory Client Service",
-    description="Orchestrates client groups for benchmarking AI services on HPC clusters. Supports SLURM job submission, metrics collection via Prometheus, and dynamic service discovery.",
+    description="Manages client groups on HPC clusters via SLURM. Provides job submission, metrics collection via Prometheus, and log management. Client groups can be used by benchmark orchestrators or other services.",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_tags=[
         {"name": "System", "description": "Health checks and system status"},
-        {"name": "Client Groups", "description": "Create and manage client groups for benchmarks"},
-        {"name": "Execution", "description": "Trigger benchmark execution"},
+        {"name": "Client Groups", "description": "Create and manage client groups"},
+        {"name": "Execution", "description": "Trigger client group execution"},
         {"name": "Monitoring", "description": "Prometheus metrics and targets"},
         {"name": "Logs", "description": "Sync and manage SLURM job logs"}
     ]
@@ -73,13 +74,23 @@ if __name__ == "__main__":
     
     logging.info(f"Using SLURM account: {account}")
 
-    # Initialize client manager
+        # Initialize client manager
     client_manager = ClientManager()
     client_manager.configure(
         server_addr=server_addr, 
         use_container=use_container,
         account=account
     )
+
+    # Setup SSH tunnel for SLURM REST API (shared across all client groups)
+    logging.info("Setting up SSH tunnel for SLURM REST API...")
+    try:
+        ssh_manager = SSHManager()
+        tunnel_port = ssh_manager.setup_slurm_rest_tunnel(local_port=6821)
+        logging.info(f"SSH tunnel established on localhost:{tunnel_port}")
+    except Exception as e:
+        logging.error(f"Failed to setup SSH tunnel: {e}")
+        logging.warning("Service will start but client group creation may fail without tunnel")
 
     logging.info(f"Starting Client Service on {host}:{port}")
     logging.info(f"Server address: {server_addr}")

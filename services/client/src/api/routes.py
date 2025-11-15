@@ -2,6 +2,19 @@
 Client Service API Routes
 
 Unified API endpoints for managing client groups and monitoring.
+
+The service provides endpoints to:
+- Create/delete client groups
+- Query group status  
+- Trigger group execution
+- Sync SLURM logs
+- Expose Prometheus metrics
+
+A separate benchmark orchestrator service should use this client service
+(along with the server service) to coordinate benchmark runs.
+
+For backward compatibility, URL paths use `/client-groups/{group_id}` where
+group_id is a unique integer identifier for the client group.
 """
 
 from fastapi import APIRouter, HTTPException, status, Depends, Body
@@ -10,8 +23,8 @@ from typing import Dict, Any, List
 import logging
 import time
 
-from client_service.client_manager.client_manager import ClientManager, ClientManagerResponseStatus
-from client_service.api.schemas import (
+from client_manager.client_manager import ClientManager, ClientManagerResponseStatus
+from api.schemas import (
     CreateClientGroupRequest,
     RegisterObserverRequest,
     ClientGroupResponse,
@@ -74,112 +87,147 @@ async def health_check():
 # ==================== Client Group Management ====================
 
 @router.post(
-    "/client-groups/{benchmark_id}",
+    "/client-groups",
     response_model=ClientGroupResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new client group",
     tags=["Client Groups"],
     responses={
-        201: {"description": "Client group created successfully"},
-        409: {"description": "Client group already exists", "model": ErrorResponse}
+        201: {"description": "Client group created successfully"}
     }
 )
 async def create_client_group(
-    benchmark_id: int,
     payload: CreateClientGroupRequest = Body(
         ...,
         examples={
             "small": {
                 "summary": "Small test group",
-                "description": "Create a group with 10 clients for 5 minutes",
-                "value": {"num_clients": 10, "time_limit": 5}
+                "description": "Low-rate load test with 2 clients",
+                "value": {
+                    "target_url": "http://mel2133:8001",
+                    "num_clients": 2,
+                    "requests_per_second": 0.5,
+                    "duration_seconds": 60,
+                    "prompts": ["What is AI?", "Explain machine learning."],
+                    "max_tokens": 50,
+                    "time_limit": 10
+                }
             },
             "medium": {
-                "summary": "Medium benchmark group",
-                "description": "Create a group with 100 clients for 30 minutes",
-                "value": {"num_clients": 100, "time_limit": 30}
+                "summary": "Medium load test",
+                "description": "Moderate load with 10 clients",
+                "value": {
+                    "target_url": "http://mel2133:8001",
+                    "num_clients": 10,
+                    "requests_per_second": 10.0,
+                    "duration_seconds": 300,
+                    "prompts": ["Tell me a story.", "Write a poem.", "Explain quantum computing."],
+                    "max_tokens": 100,
+                    "time_limit": 15
+                }
             },
             "large": {
-                "summary": "Large stress test group",
-                "description": "Create a group with 1000 clients for 60 minutes",
-                "value": {"num_clients": 1000, "time_limit": 60}
+                "summary": "Large stress test",
+                "description": "High load with 100 clients",
+                "value": {
+                    "target_url": "http://mel2133:8001",
+                    "num_clients": 100,
+                    "requests_per_second": 100.0,
+                    "duration_seconds": 600,
+                    "prompts": ["What is AI?", "Explain machine learning.", "Tell me about neural networks."],
+                    "max_tokens": 200,
+                    "time_limit": 20
+                }
             }
         }
     ),
     client_manager: ClientManager = Depends(get_client_manager)
 ):
-    """Create a new client group for benchmark testing.
+    """Create a new client group for load testing.
     
     A client group represents a SLURM job that will spawn multiple concurrent clients
-    to send requests to the AI services. Each client runs independently and can be
-    monitored via Prometheus metrics.
-    
-    **Path Parameters:**
-    - `benchmark_id`: Unique identifier for this benchmark run (must be unique)
+    to send requests to AI inference services. The service automatically generates a unique
+    group ID and returns it in the response.
     
     **Request Body:**
-    - `num_clients`: Number of concurrent clients to spawn (1-10000)
-    - `time_limit`: SLURM job time limit in minutes (default: 5, max: 1440)
+    - `target_url`: vLLM endpoint URL (e.g., "http://mel2133:8001")
+    - `num_clients`: Number of concurrent clients (1-10000)
+    - `requests_per_second`: Target RPS across all clients (e.g., 10.0)
+    - `duration_seconds`: Load test duration (e.g., 60)
+    - `prompts`: List of prompts to randomly select from
+    - `max_tokens`: Maximum tokens per request (default: 100)
+    - `temperature`: Sampling temperature (default: 0.7)
+    - `model`: Model name (optional, uses server default)
+    - `time_limit`: SLURM job time limit in minutes (default: 30)
     
     **Returns (Success):**
     ```json
     {
       "status": "created",
-      "benchmark_id": 12345,
-      "num_clients": 100,
-      "message": "Client group created and SLURM job submitted"
-    }
-    ```
-    
-    **Returns (Error - Already Exists):**
-    ```json
-    {
-      "detail": "Client group with this benchmark_id already exists",
-      "status_code": 409
+      "group_id": 12345,
+      "num_clients": 10,
+      "message": "Load generator job submitted targeting http://mel2133:8001"
     }
     ```
     
     **Example:**
     ```bash
-    curl -X POST "http://localhost:8002/api/v1/client-groups/12345" \\
+    curl -X POST "http://localhost:8002/api/v1/client-groups" \\
       -H "Content-Type: application/json" \\
-      -d '{"num_clients": 100, "time_limit": 30}'
+      -d '{
+        "target_url": "http://mel2133:8001",
+        "num_clients": 5,
+        "requests_per_second": 2.0,
+        "duration_seconds": 60,
+        "prompts": ["What is AI?", "Explain machine learning."],
+        "max_tokens": 50,
+        "time_limit": 10
+      }'
     ```
     
     **Workflow:**
-    1. Client Service validates the request
-    2. Creates a ClientGroup object
-    3. Submits a SLURM job to HPC cluster
-    4. SLURM job starts client processes on compute nodes
-    5. Client processes register back with Client Service
-    6. Returns immediately (job submitted asynchronously)
+    1. Client Service generates a unique group ID
+    2. Validates the request
+    3. Creates a ClientGroup object with load test configuration
+    4. Submits a SLURM job to HPC cluster
+    5. SLURM job runs load generator on compute node
+    6. Load generator sends requests to target vLLM endpoint
+    7. Results are saved to logs directory
+    8. Returns immediately with the group ID (job runs asynchronously)
     
-    **Note:** The client processes will take time to start. Use the `/client-groups/{benchmark_id}`
-    endpoint to check the status and get the client process address.
+    **Note:** The load test runs asynchronously. Use `GET /client-groups/{group_id}`
+    to check status and retrieve results after completion.
     """
-    logger.debug(f"Creating client group {benchmark_id} with {payload.num_clients} clients, time_limit={payload.time_limit}")
+    # Generate unique group ID
+    import time
+    group_id = int(time.time() * 1000) % 1000000  # Millisecond timestamp mod 1M
     
-    res = client_manager.add_client_group(benchmark_id, payload.num_clients, payload.time_limit)
+    logger.debug(f"Creating client group {group_id} for load testing {payload.target_url}")
+    
+    # Convert payload to dict for storage
+    load_config = payload.dict()
+    
+    res = client_manager.add_client_group(group_id, load_config)
     
     if res == ClientManagerResponseStatus.ALREADY_EXISTS:
-        logger.debug(f"Client group {benchmark_id} already exists")
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Client group with this benchmark_id already exists"
-        )
-    elif res == ClientManagerResponseStatus.ERROR:
-        logger.error(f"Failed to create client group {benchmark_id}")
+        # Unlikely with timestamp-based ID, but handle it
+        logger.warning(f"Client group {group_id} already exists, regenerating ID")
+        group_id = (group_id + 1) % 1000000
+        res = client_manager.add_client_group(group_id, load_config)
+    
+    if res == ClientManagerResponseStatus.ERROR:
+        logger.error(f"Failed to create client group {group_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create client group. Check SSH connectivity and SLURM configuration."
         )
     
-    logger.info(f"Created client group {benchmark_id} with {payload.num_clients} clients")
+    logger.info(f"Created client group {group_id}: {payload.num_clients} clients @ {payload.requests_per_second} RPS")
     return {
         "status": "created",
-        "benchmark_id": benchmark_id,
+        "group_id": group_id,
         "num_clients": payload.num_clients,
-        "message": "Client group created and SLURM job submitted"
+        "message": f"Load generator job submitted targeting {payload.target_url}"
     }
 
 
@@ -215,7 +263,7 @@ async def list_client_groups(client_manager: ClientManager = Depends(get_client_
 
 
 @router.get(
-    "/client-groups/{benchmark_id}",
+    "/client-groups/{group_id}",
     response_model=ClientGroupInfoResponse,
     summary="Get client group information",
     tags=["Client Groups"],
@@ -225,7 +273,7 @@ async def list_client_groups(client_manager: ClientManager = Depends(get_client_
     }
 )
 async def get_client_group_info(
-    benchmark_id: int,
+    group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
     """Get detailed information about a specific client group.
@@ -233,12 +281,12 @@ async def get_client_group_info(
     Returns the number of clients, registration status, and client process address.
     
     **Path Parameters:**
-    - `benchmark_id`: Unique identifier for the benchmark
+    - `group_id`: Unique identifier for the client group
     
     **Returns (Success):**
     ```json
     {
-      "benchmark_id": 12345,
+      "group_id": 12345,
       "info": {
         "num_clients": 100,
         "client_address": "http://mel2079:8000",
@@ -266,41 +314,41 @@ async def get_client_group_info(
     - `running`: Client process registered and ready to accept commands
     - `stopped`: Client group has been terminated
     """
-    info = client_manager.get_group_info(benchmark_id)
+    info = client_manager.get_group_info(group_id)
     
     if info is None:
-        logger.debug(f"Client group {benchmark_id} not found")
+        logger.debug(f"Client group {group_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Client group not found"
         )
     
     return {
-        "benchmark_id": benchmark_id,
+        "group_id": group_id,
         "info": info
     }
 
 
 @router.delete(
-    "/client-groups/{benchmark_id}",
+    "/client-groups/{group_id}",
     status_code=status.HTTP_200_OK,
     summary="Delete a client group",
     tags=["Client Groups"]
 )
 async def delete_client_group(
-    benchmark_id: int,
+    group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
     """Remove a client group and stop its associated SLURM job.
     
     **Path Parameters:**
-    - `benchmark_id`: Unique identifier for the benchmark
+    - `group_id`: Unique identifier for the client group
     
     **Returns:**
     ```json
     {
       "status": "deleted",
-      "benchmark_id": 12345
+      "group_id": 12345
     }
     ```
     
@@ -312,31 +360,31 @@ async def delete_client_group(
     **Note:** This only removes the group from the Client Service's tracking.
     The SLURM job will continue running until its time limit or manual cancellation.
     """
-    logger.debug(f"Deleting client group {benchmark_id}")
-    client_manager.remove_client_group(benchmark_id)
-    logger.info(f"Deleted client group {benchmark_id}")
+    logger.debug(f"Deleting client group {group_id}")
+    client_manager.remove_client_group(group_id)
+    logger.info(f"Deleted client group {group_id}")
     
     return {
         "status": "deleted",
-        "benchmark_id": benchmark_id
+        "group_id": group_id
     }
 
 
 # ==================== Client Group Execution ====================
 
 @router.post(
-    "/client-groups/{benchmark_id}/run",
+    "/client-groups/{group_id}/run",
     response_model=RunClientGroupResponse,
-    summary="Trigger client group to start benchmark",
+    summary="Trigger client group to start load test",
     tags=["Execution"],
     responses={
-        200: {"description": "Benchmark run triggered successfully"},
+        200: {"description": "Load test triggered successfully"},
         404: {"description": "Client group not found or not ready", "model": ErrorResponse},
         500: {"description": "Internal error during execution", "model": ErrorResponse}
     }
 )
 async def run_client_group(
-    benchmark_id: int,
+    group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
     """Trigger a registered client group to start sending requests.
@@ -346,13 +394,13 @@ async def run_client_group(
     to the configured AI services.
     
     **Path Parameters:**
-    - `benchmark_id`: Unique identifier for the benchmark
+    - `group_id`: Unique identifier for the client group
     
     **Returns (Success):**
     ```json
     {
       "status": "dispatched",
-      "benchmark_id": 12345,
+      "group_id": 12345,
       "results": [
         {
           "client_process": "http://mel2079:8000",
@@ -384,29 +432,29 @@ async def run_client_group(
     5. Metrics are collected and exposed via Prometheus
     
     **Note:** The client process must be in "running" status (registered) before
-    this endpoint will work. Check status with `GET /client-groups/{benchmark_id}`.
+    this endpoint will work. Check status with `GET /client-groups/{group_id}`.
     """
-    logger.debug(f"Run request for benchmark {benchmark_id}")
+    logger.debug(f"Run request for client group {group_id}")
     
     try:
-        results = client_manager.run_client_group(benchmark_id)
+        results = client_manager.run_client_group(group_id)
     except ValueError as e:
-        logger.warning(f"Run failed for unknown benchmark {benchmark_id}")
+        logger.warning(f"Run failed for unknown client group {group_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e)
         )
     except Exception as e:
-        logger.exception(f"Unexpected error while running client group {benchmark_id}")
+        logger.exception(f"Unexpected error while running client group {group_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
     
-    logger.info(f"Dispatched run to benchmark {benchmark_id}: {len(results)} client(s) responded")
+    logger.info(f"Dispatched run to client group {group_id}: {len(results)} client(s) responded")
     return {
         "status": "dispatched",
-        "benchmark_id": benchmark_id,
+        "group_id": group_id,
         "results": results
     }
 
@@ -423,7 +471,7 @@ async def get_client_group_targets(client_manager: ClientManager = Depends(get_c
     """Get Prometheus scrape targets for all managed client groups.
     
     This endpoint returns a list of Prometheus scrape targets for running client processes.
-    Use this to dynamically configure Prometheus to monitor all active benchmarks.
+    Use this to dynamically configure Prometheus to monitor all active client groups.
     
     **Returns:**
     ```json
@@ -432,7 +480,7 @@ async def get_client_group_targets(client_manager: ClientManager = Depends(get_c
         "targets": ["mel2079:8000"],
         "labels": {
           "job": "client-group-12345",
-          "benchmark_id": "12345",
+          "group_id": "12345",
           "num_clients": "100",
           "status": "running"
         }
@@ -441,7 +489,7 @@ async def get_client_group_targets(client_manager: ClientManager = Depends(get_c
         "targets": ["mel2080:8000"],
         "labels": {
           "job": "client-group-12346",
-          "benchmark_id": "12346",
+          "group_id": "12346",
           "num_clients": "50",
           "status": "running"
         }
@@ -474,8 +522,8 @@ async def get_client_group_targets(client_manager: ClientManager = Depends(get_c
     """
     targets = []
     
-    for benchmark_id in client_manager.list_groups():
-        info = client_manager.get_group_info(benchmark_id)
+    for group_id in client_manager.list_groups():
+        info = client_manager.get_group_info(group_id)
         if info and info.get("client_address"):
             # Extract host:port from http://host:port format
             client_addr = info["client_address"]
@@ -487,8 +535,8 @@ async def get_client_group_targets(client_manager: ClientManager = Depends(get_c
             targets.append({
                 "targets": [client_addr],
                 "labels": {
-                    "job": f"client-group-{benchmark_id}",
-                    "benchmark_id": str(benchmark_id),
+                    "job": f"client-group-{group_id}",
+                    "group_id": str(group_id),
                     "num_clients": str(info.get("num_clients", "unknown")),
                     "status": info.get("status", "unknown")
                 }
@@ -498,7 +546,7 @@ async def get_client_group_targets(client_manager: ClientManager = Depends(get_c
 
 
 @router.get(
-    "/client-groups/{benchmark_id}/metrics",
+    "/client-groups/{group_id}/metrics",
     summary="Get Prometheus metrics from a client group",
     tags=["Monitoring"],
     responses={
@@ -510,7 +558,7 @@ async def get_client_group_targets(client_manager: ClientManager = Depends(get_c
     }
 )
 async def get_client_group_metrics(
-    benchmark_id: int,
+    group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
     """Get Prometheus-compatible metrics from a specific client group.
@@ -519,7 +567,7 @@ async def get_client_group_metrics(
     Client processes expose metrics about requests sent, latencies, errors, and more.
     
     **Path Parameters:**
-    - `benchmark_id`: Unique identifier for the benchmark
+    - `group_id`: Unique identifier for the client group
     
     **Available Metrics (typical):**
     - `client_requests_total` - Total number of requests sent
@@ -537,7 +585,7 @@ async def get_client_group_metrics(
     ```
     # HELP client_requests_total Total requests sent by clients
     # TYPE client_requests_total counter
-    client_requests_total{benchmark_id="12345"} 1500.0
+    client_requests_total{group_id="12345"} 1500.0
     # HELP client_latency_seconds Request latency distribution
     # TYPE client_latency_seconds histogram
     client_latency_seconds_bucket{le="0.1"} 800
@@ -578,7 +626,7 @@ async def get_client_group_metrics(
     """
     import requests
     
-    info = client_manager.get_group_info(benchmark_id)
+    info = client_manager.get_group_info(group_id)
     
     if not info:
         raise HTTPException(
@@ -619,7 +667,7 @@ async def get_client_group_metrics(
 # ==================== Log Management ====================
 
 @router.post(
-    "/client-groups/{benchmark_id}/logs/sync",
+    "/client-groups/{group_id}/logs/sync",
     response_model=LogSyncResponse,
     summary="Sync SLURM logs from remote to local",
     tags=["Logs"],
@@ -628,17 +676,17 @@ async def get_client_group_metrics(
         404: {"description": "Client group not found", "model": ErrorResponse}
     }
 )
-async def sync_benchmark_logs(
-    benchmark_id: int,
+async def sync_group_logs(
+    group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
-    """Sync SLURM job logs from MeluXina to local directory for a specific benchmark.
+    """Sync SLURM job logs from MeluXina to local directory for a specific client group.
     
     This endpoint uses rsync over SSH to download log files from the remote HPC cluster
     to the local `./logs` directory.
     
     **Path Parameters:**
-    - `benchmark_id`: Unique identifier for the benchmark
+    - `group_id`: Unique identifier for the client group
     
     **Returns (Success):**
     ```json
@@ -646,7 +694,7 @@ async def sync_benchmark_logs(
       "success": true,
       "message": "Logs synced successfully",
       "local_path": "./logs",
-      "benchmark_id": 12345
+      "group_id": 12345
     }
     ```
     
@@ -656,15 +704,15 @@ async def sync_benchmark_logs(
     ```
     
     **Log Files:**
-    - Pattern: `client-{benchmark_id}-{job_id}.out`
-    - Pattern: `client-{benchmark_id}-{job_id}.err`
+    - Pattern: `loadgen-{group_id}-{job_id}.out`
+    - Pattern: `loadgen-{group_id}-{job_id}.err`
     - Location: `./logs/` directory
     
     **Note:** Requires rsync to be installed and SSH access to MeluXina configured.
     """
-    logger.info(f"Syncing logs for benchmark {benchmark_id}")
+    logger.info(f"Syncing logs for client group {group_id}")
     
-    result = client_manager.sync_logs(benchmark_id=benchmark_id)
+    result = client_manager.sync_logs(benchmark_id=group_id)
     
     if "error" in result:
         raise HTTPException(
@@ -723,82 +771,3 @@ async def sync_all_logs(client_manager: ClientManager = Depends(get_client_manag
         )
     
     return result
-
-
-# ==================== Legacy Observer Endpoint (Deprecated) ====================
-
-@router.post(
-    "/client-groups/{benchmark_id}/observer",
-    response_model=ObserverRegistrationResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a metrics observer (DEPRECATED - Use Prometheus)",
-    tags=["Monitoring"],
-    deprecated=True
-)
-async def add_observer(
-    benchmark_id: int,
-    payload: RegisterObserverRequest,
-    client_manager: ClientManager = Depends(get_client_manager)
-):
-    """Register a monitor/observer for a client group.
-    
-    **DEPRECATED:** This endpoint is deprecated. Use Prometheus with the
-    `/client-groups/targets` and `/client-groups/{benchmark_id}/metrics` endpoints instead.
-    
-    Prometheus provides better:
-    - Time-series storage
-    - Query capabilities (PromQL)
-    - Visualization (Grafana)
-    - Alerting
-    
-    **Migration Path:**
-    1. Configure Prometheus to scrape `/client-groups/{benchmark_id}/metrics`
-    2. Use `/client-groups/targets` for service discovery
-    3. Visualize metrics in Grafana
-    4. Set up alerts in Prometheus/Alertmanager
-    """
-    import requests
-    
-    # Find the registered client process for this benchmark
-    with client_manager._lock:
-        group = client_manager._client_groups.get(benchmark_id)
-        if group is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Benchmark id not found"
-            )
-        client_addr = group.get_client_address()
-
-    if client_addr is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No client process registered for this benchmark"
-        )
-
-    # Forward the observer registration to the client group's REST API
-    url = f"{client_addr.rstrip('/')}/observer"
-    json_payload = {
-        "ip_address": payload.ip_address,
-        "port": payload.port,
-        "update_preferences": payload.update_preferences or {}
-    }
-    
-    try:
-        r = requests.post(url, json=json_payload, timeout=5.0)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to contact client process: {e}"
-        )
-
-    if r.status_code not in (200, 201):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Client process returned {r.status_code}: {r.text}"
-        )
-
-    return {
-        "status": "registered",
-        "benchmark_id": benchmark_id,
-        "observer": f"{payload.ip_address}:{payload.port}"
-    }
