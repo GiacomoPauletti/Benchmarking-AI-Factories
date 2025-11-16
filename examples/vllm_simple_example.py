@@ -51,7 +51,7 @@ def main():
         print(f"Service created with ID: {service_id}")
         
         # Step 3: Wait for service to be ready
-        if not wait_for_service_ready(server_url, service_id):
+        if not wait_for_service_ready(server_url, service_id, max_wait=3000):
             return
         
         # Step 4: Prepare and send a prompt

@@ -63,13 +63,28 @@ class SlurmDeployer:
         # Get remote base path from env (required)
         self.remote_base_path = os.getenv('REMOTE_BASE_PATH')
         if not self.remote_base_path:
-            # REMOTE_BASE_PATH is required for remote operations; fail fast
+            # REMOTE_BASE_PATH is required for remote operations; fail back
             raise RuntimeError(
                 "REMOTE_BASE_PATH environment variable is required but not set. "
                 "Please set REMOTE_BASE_PATH to the remote base path on MeluXina."
             )
         else:
             self.logger.info(f"Using REMOTE_BASE_PATH: {self.remote_base_path}")
+            
+        # Expand tilde to absolute path for SLURM job specs (SLURM REST API doesn't expand ~)
+        if self.remote_base_path.startswith('~'):
+            # Get the home directory from SSH
+            success, stdout, stderr = self.ssh_manager.execute_remote_command("echo $HOME", timeout=10)
+            if success and stdout.strip():
+                home_dir = stdout.strip()
+                self.remote_base_path_absolute = self.remote_base_path.replace('~', home_dir, 1)
+                self.logger.info(f"Expanded remote path for SLURM: {self.remote_base_path_absolute}")
+            else:
+                # Fallback: use the tilde path and hope SLURM handles it
+                self.logger.warning("Could not expand ~ in REMOTE_BASE_PATH, using as-is")
+                self.remote_base_path_absolute = self.remote_base_path
+        else:
+            self.remote_base_path_absolute = self.remote_base_path
         
         # Ensure remote directories exist
         try:
@@ -768,9 +783,9 @@ class SlurmDeployer:
             merged_env["VLLM_PORT"] = str(config["replica_port"])
 
         # Build the job description according to v0.0.40 schema
-        # Use REMOTE path for SLURM job execution on MeluXina
+        # Use absolute REMOTE path for SLURM job execution (SLURM REST API doesn't expand ~)
         # Note: SLURM REST API v0.0.40 is strict about types - use strings for most fields
-        log_dir_path = str(Path(self.remote_base_path) / "logs")
+        log_dir_path = str(Path(self.remote_base_path_absolute) / "logs")
         
         # Calculate ntasks and gpus_per_task for srun sub-scheduling (vLLM replicas)
         gpu_per_replica = recipe.get("gpu_per_replica")
@@ -844,21 +859,22 @@ class SlurmDeployer:
         config = config or {}
 
         # Resolve paths and names
+        # Use absolute path for all remote operations (no ~)
         category = recipe_path.parent.name
         recipe_name = recipe.get('name', '')
-        recipes_path = Path(self.remote_base_path) / "src" / "recipes"
+        recipes_path = Path(self.remote_base_path_absolute) / "src" / "recipes"
         container_def = recipe.get("container_def", f"{recipe_name}.def")
         image_name = recipe.get("image", f"{recipe_name}.sif")
         def_path = str(recipes_path / category / container_def)
         sif_path = str(recipes_path / category / image_name)
-        log_dir = str(Path(self.remote_base_path) / "logs")
+        log_dir = str(Path(self.remote_base_path_absolute) / "logs")
         
         # Create paths object for builders
         paths = ScriptPaths(
             def_path=def_path,
             sif_path=sif_path,
             log_dir=log_dir,
-            remote_base_path=self.remote_base_path
+            remote_base_path=self.remote_base_path_absolute
         )
         
         # Get the appropriate builder for this recipe
@@ -867,13 +883,13 @@ class SlurmDeployer:
             builder = BuilderRegistry.create_builder(
                 category, 
                 recipe_name=recipe_name,
-                remote_base_path=self.remote_base_path
+                remote_base_path=self.remote_base_path_absolute
             )
             self.logger.debug(f"Using builder {builder.__class__.__name__} for recipe {category}/{recipe_name}")
         except ValueError as e:
             self.logger.warning(f"No builder registered for '{category}/{recipe_name}', using inference builder as fallback")
             # Fallback to inference builder for unknown categories
-            builder = BuilderRegistry.create_builder('inference', remote_base_path=self.remote_base_path)
+            builder = BuilderRegistry.create_builder('inference', remote_base_path=self.remote_base_path_absolute)
         
         # Build script sections using the builder
         env_section = builder.build_environment_section(environment)
