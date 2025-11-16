@@ -12,7 +12,7 @@ This script demonstrates the basic workflow:
 import requests
 import time
 import os
-from utils.utils import wait_for_server, wait_for_service_ready
+from utils.server_utils import wait_for_server, wait_for_service_ready
 
 
 def main():

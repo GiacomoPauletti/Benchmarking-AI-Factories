@@ -17,13 +17,13 @@ import requests
 import time
 import json
 from typing import Optional, Dict, Any
-from utils.utils import wait_for_server, wait_for_client, wait_for_service_ready
+from utils.server_utils import wait_for_server, wait_for_client, wait_for_service_ready
 
 # API endpoints
 SERVER_API = "http://localhost:8001/api/v1"
-SERVER_BASE = "http://localhost:8001/api/v1"
-CLIENT_API = "http://localhost:8002/api/v1"
-CLIENT_BASE = "http://localhost:8002/api/v1"
+SERVER_BASE = "http://localhost:8001"
+CLIENT_API = "http://localhost:8003/api/v1"
+CLIENT_BASE = "http://localhost:8003"
 
 def create_vllm_service() -> str:
     """Create a vLLM inference service and return its service_id."""

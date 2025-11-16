@@ -22,7 +22,7 @@ import time
 import os
 from threading import Thread
 from queue import Queue
-from utils.utils import wait_for_server, wait_for_service_group_ready
+from utils.server_utils import wait_for_server, wait_for_service_group_ready
 
 
 def send_prompt(thread_id, server_url, service_id, prompt, results_queue):

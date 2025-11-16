@@ -33,7 +33,7 @@ ENV PYTHONPATH=/app/src
 RUN mkdir -p /app/logs
 
 # Expose port for client service API
-EXPOSE 8002
+EXPOSE 8003
 
 # Default command - can be overridden in docker-compose
-CMD ["python", "-m", "main", "--host", "0.0.0.0", "--port", "8002"]
+CMD ["python", "-m", "main", "--host", "0.0.0.0", "--port", "8003"]

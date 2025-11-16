@@ -57,31 +57,31 @@ def get_client_manager() -> ClientManager:
 
 # ==================== Health & Status Endpoints ====================
 
-@router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="Health check endpoint",
-    tags=["System"]
-)
-async def health_check():
-    """Check the health status of the Client Service.
+# @router.get(
+#     "/health",
+#     response_model=HealthResponse,
+#     summary="Health check endpoint",
+#     tags=["System"]
+# )
+# async def health_check():
+#     """Check the health status of the Client Service.
     
-    Returns service health, version, and uptime information.
+#     Returns service health, version, and uptime information.
     
-    **Returns:**
-    ```json
-    {
-      "status": "healthy",
-      "version": "1.0.0",
-      "uptime": 3600.5
-    }
-    ```
-    """
-    return {
-        "status": "healthy",
-        "version": "1.0.0",
-        "uptime": time.time() - _start_time
-    }
+#     **Returns:**
+#     ```json
+#     {
+#       "status": "healthy",
+#       "version": "1.0.0",
+#       "uptime": 3600.5
+#     }
+#     ```
+#     """
+#     return {
+#         "status": "healthy",
+#         "version": "1.0.0",
+#         "uptime": time.time() - _start_time
+#     }
 
 
 # ==================== Client Group Management ====================
