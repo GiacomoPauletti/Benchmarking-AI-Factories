@@ -256,9 +256,9 @@ class SSHManager:
         Returns:
             True if sync successful, False otherwise
         """
-        if not local_dir.exists():
-            self.logger.warning(f"Local directory not found: {local_dir}")
-            return False
+        # if not local_dir.exists():
+        #     self.logger.warning(f"Local directory not found: {local_dir}")
+        #     return False
         
         try:
             # Ensure remote directory exists using proper SSH command
