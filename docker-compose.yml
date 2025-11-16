@@ -72,7 +72,7 @@ services:
       dockerfile: Dockerfile
     container_name: benchmarking-ai-client
     ports:
-      - "8002:8002"
+      - "8003:8003"
     volumes:
       # Mount source code for hot-reload during development
       # TODO: Remove in production
@@ -102,10 +102,10 @@ services:
     restart: unless-stopped
     command: >
       python -m main
-      ${CLIENT_SERVICE_SERVER_ADDR:-http://localhost:8002}
-      --host ${CLIENT_SERVICE_HOST:-0.0.0.0}
-      --port ${CLIENT_SERVICE_PORT:-8002}
-      ${CLIENT_SERVICE_CONTAINER_MODE:+--container}
+      http://localhost:8001
+      --host 0.0.0.0
+      --port 8003
+      --container
 
 
   monitoring:

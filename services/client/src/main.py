@@ -41,6 +41,11 @@ app = FastAPI(
         {"name": "Logs", "description": "Sync and manage SLURM job logs"}
     ]
 )
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy"}
+
 app.include_router(router, prefix="/api/v1")
 
 
@@ -65,6 +70,7 @@ if __name__ == "__main__":
     # Extract values
     server_addr = args.server_addr
     host = args.host
+    logging.debug(f"args.port: {args.port}")
     port = args.port
     use_container = args.container
     account = args.account
