@@ -17,7 +17,7 @@ import requests
 import time
 import json
 from typing import Optional, Dict, Any
-from utils.server_utils import wait_for_server, wait_for_client, wait_for_service_ready
+from utils.utils import wait_for_server, wait_for_client, wait_for_service_ready
 
 # API endpoints
 SERVER_API = "http://localhost:8001/api/v1"
