@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import logging
+import subprocess
 from pathlib import Path
 
 from ssh_manager import SSHManager
@@ -82,6 +83,59 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             # Don't fail - directories might already exist or permissions might be OK
 
 
+    def _ensure_loadgen_container(self):
+        """Ensure the load generator Apptainer container is built on the remote system.
+        
+        This method checks if the container exists, and if not, uploads the definition
+        file and builds it. Container is cached after first build.
+        """
+        container_dir = f"{self._remote_base_path}/containers"
+        container_def_path = f"{container_dir}/loadgen.def"
+        container_sif_path = f"{container_dir}/loadgen.sif"
+        
+        # Check if container already exists
+        check_cmd = f"test -f {container_sif_path} && echo 'exists' || echo 'missing'"
+        success, stdout, stderr = self._ssh_manager.execute_remote_command(check_cmd, timeout=5)
+        
+        if success and 'exists' in stdout:
+            logger.info(f"Load generator container already exists: {container_sif_path}")
+            return
+        
+        logger.info("Building load generator container (first time setup, ~30-60s)...")
+        
+        # Create container directory
+        mkdir_cmd = f"mkdir -p {container_dir}"
+        self._ssh_manager.execute_remote_command(mkdir_cmd, timeout=10)
+        
+        # Read local container definition
+        local_def_path = Path(__file__).parent.parent.parent / "container" / "loadgen.def"
+        
+        if not local_def_path.exists():
+            raise FileNotFoundError(f"Container definition not found: {local_def_path}")
+        
+        with open(local_def_path, 'r') as f:
+            def_content = f.read()
+        
+        # Upload definition file
+        logger.info(f"Uploading container definition to {container_def_path}")
+        upload_cmd = f"cat > {container_def_path} << 'CONTAINER_DEF_EOF'\n{def_content}\nCONTAINER_DEF_EOF"
+        success, stdout, stderr = self._ssh_manager.execute_remote_command(upload_cmd, timeout=10)
+        
+        if not success:
+            raise RuntimeError(f"Failed to upload container definition: {stderr}")
+        
+        # Build container using Apptainer
+        logger.info("Building Apptainer container (this may take 30-60 seconds)...")
+        build_cmd = f"cd {container_dir} && apptainer build {container_sif_path} {container_def_path}"
+        success, stdout, stderr = self._ssh_manager.execute_remote_command(build_cmd, timeout=180)
+        
+        if success:
+            logger.info(f"Container built successfully: {container_sif_path}")
+        else:
+            logger.error(f"Container build failed: {stderr}")
+            raise RuntimeError(f"Failed to build load generator container: {stderr}")
+
+
     def sync_logs_from_remote(self, local_logs_dir: str = "./logs", pattern: str = "slurm-*.out"):
         """Sync SLURM logs from remote MeluXina to local directory.
         
@@ -155,6 +209,9 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         logger.info(f"Dispatching load generator for group {group_id}")
         logger.info(f"Config: {json.dumps(self._load_config, indent=2)}")
         
+        # Ensure container is built before dispatching jobs
+        self._ensure_loadgen_container()
+        
         # Build the load generator command
         # The load generator will be run as a Python module on the compute node
         load_gen_cmd = self._build_load_generator_command(group_id)
@@ -180,9 +237,11 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             'environment': [f'USER={self._username}'],  # Mandatory per MeluXina docs
         }
         
+        # Path to container and definition files
+        container_path = f"{self._remote_base_path}/containers/loadgen.sif"
+        
         script_content = f"""#!/bin/bash -l
 # Load Generator Job for Group {group_id}
-module load Python/3.11.3-GCCcore-12.3.0  # Load Python module on MeluXina
 
 echo "Starting load test at $(date)"
 echo "Configuration:"
@@ -190,10 +249,11 @@ echo "  Target: {self._load_config['target_url']}"
 echo "  Clients: {self._load_config['num_clients']}"
 echo "  RPS: {self._load_config['requests_per_second']}"
 echo "  Duration: {self._load_config['duration_seconds']}s"
+echo "  Container: {container_path}"
 echo ""
 
-# Run the load generator
-{load_gen_cmd}
+# Run the load generator using Apptainer container
+apptainer exec {container_path} {load_gen_cmd}
 
 echo ""
 echo "Load test completed at $(date)"
