@@ -76,7 +76,7 @@ class SSHManager:
             RuntimeError: If token fetch fails
         """
         self.logger.info("Fetching SLURM JWT token from MeluXina...")
-        success, stdout, stderr = self.execute_remote_command("scontrol token", timeout=10)
+        success, stdout, stderr = self.execute_remote_command("scontrol token", timeout=120)
         
         if not success:
             raise RuntimeError(f"Failed to fetch SLURM token: {stderr}")
@@ -155,7 +155,7 @@ class SSHManager:
                 ssh_command,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=120,
                 env=env
             )
             
@@ -256,9 +256,9 @@ class SSHManager:
         Returns:
             True if sync successful, False otherwise
         """
-        if not local_dir.exists():
-            self.logger.warning(f"Local directory not found: {local_dir}")
-            return False
+        # if not local_dir.exists():
+        #     self.logger.warning(f"Local directory not found: {local_dir}")
+        #     return False
         
         try:
             # Ensure remote directory exists using proper SSH command
@@ -273,6 +273,8 @@ class SSHManager:
             rsync_ssh_cmd = "ssh"
             if self.ssh_port != 22:
                 rsync_ssh_cmd += f" -p {self.ssh_port}"
+            
+            rsync_ssh_cmd += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
             
             # Build rsync command
             rsync_cmd = ["rsync", "-az", "--delete", "-e", rsync_ssh_cmd]
@@ -292,7 +294,7 @@ class SSHManager:
                 rsync_cmd, 
                 capture_output=True, 
                 text=True, 
-                timeout=60,
+                timeout=100,
                 env=env
             )
             
@@ -304,10 +306,10 @@ class SSHManager:
                 return False
                 
         except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout syncing directory: {local_dir}")
+            self.logger.error(f"Timeout syncing directory: {local_dir}")
             return False
         except Exception as e:
-            self.logger.warning(f"Error syncing directory {local_dir}: {e}")
+            self.logger.error(f"Error syncing directory {local_dir}: {e}")
             return False
     
     def execute_remote_command(self, command: str, timeout: int = 30) -> Tuple[bool, str, str]:

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 import uvicorn
 import logging
 import socket
+import os
 
 from api.routes import router
 from client_manager.client_manager import ClientManager
@@ -98,8 +99,27 @@ if __name__ == "__main__":
         logging.error(f"Failed to setup SSH tunnel: {e}")
         logging.warning("Service will start but client group creation may fail without tunnel")
 
+
     logging.info(f"Starting Client Service on {host}:{port}")
     logging.info(f"Server address: {server_addr}")
     
+    remote_base_path_template = os.environ.get(
+        'REMOTE_BASE_PATH', 
+        '~/ai-factory-benchmarks'
+    )
+    
+    remote_base_path = ""
+    # Expand ~ to /home/users/$USER (NOT tier2 - SLURM daemon can't write there)
+    if remote_base_path_template.startswith('~'):
+        # Use standard home path /home/users/$USER
+        remote_base_path = remote_base_path_template.replace('~', f'/home/users/{ssh_manager.ssh_user}', 1)
+    else:
+        remote_base_path = remote_base_path_template
+
+    import time
+    time.sleep(10)
+    client_remote_path = f"{remote_base_path.rstrip('/')}/src/client/"
+    ssh_manager.sync_directory_to_remote(os.getcwd()+"/src/client/", client_remote_path)
+
     # Start the FastAPI server
     uvicorn.run("main:app", host=host, port=port)

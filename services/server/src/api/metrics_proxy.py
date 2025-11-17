@@ -228,7 +228,6 @@ async def proxy_service_metrics(job_id: str):
         
         # Get service info (will raise 404 if service doesn't exist)
         service = server_service.get_service(job_id)
-        
         # Check if service is running
         status = service.get("status", "").lower()
         if status not in ["running"]:
