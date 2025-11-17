@@ -116,7 +116,10 @@ if __name__ == "__main__":
     else:
         remote_base_path = remote_base_path_template
 
-    ssh_manager.sync_directory_to_remote(".",f"{remote_base_path.rstrip('/')}/src")
+    import time
+    time.sleep(10)
+    client_remote_path = f"{remote_base_path.rstrip('/')}/src/client/"
+    ssh_manager.sync_directory_to_remote(os.getcwd()+"/src/client/", client_remote_path)
 
     # Start the FastAPI server
     uvicorn.run("main:app", host=host, port=port)

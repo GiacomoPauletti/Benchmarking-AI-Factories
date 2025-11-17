@@ -223,10 +223,11 @@ echo "Load test completed at $(date)"
         
         log_dir = self._remote_base_path.rstrip("/") + "/logs"
         def_path = self._remote_base_path.rstrip("/") + "/src/client/client_container.def"
-        sif_path = self._remote_base_path.rstrip("/") + "/containers/"
+        sif_path = self._remote_base_path.rstrip("/") + "/containers/client.sif"
 
         build_block = f"""
 # Build container if needed
+
 if [ ! -f {sif_path} ]; then
     echo 'Building Apptainer image: {sif_path}'
     
@@ -297,7 +298,7 @@ mkdir -p {log_dir}
 
 exit $container_exit_code
 """
-
+        return script
 #         cmd = f"""python3 << 'LOAD_GENERATOR_EOF'
 # import asyncio
 # import aiohttp
