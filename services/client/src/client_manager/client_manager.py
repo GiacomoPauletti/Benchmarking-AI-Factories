@@ -180,7 +180,7 @@ class ClientManager:
                     return {"error": f"Group {group_id} not found", "success": False}
                 
                 dispatcher = group.get_dispatcher()
-                pattern = f"client-{group_id}-*.out"
+                pattern = f"loadgen-{group_id}-*.out"
                 success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
                 
                 return {
@@ -190,14 +190,21 @@ class ClientManager:
                     "local_path": local_logs_dir
                 }
             else:
-                # Sync all logs - use any dispatcher (they all point to same remote)
-                if not self._client_groups:
-                    return {"error": "No client groups available", "success": False}
+                # Sync all logs - create dispatcher if no groups exist
+                if self._client_groups:
+                    # Get dispatcher from existing group
+                    any_group = next(iter(self._client_groups.values()))
+                    dispatcher = any_group.get_dispatcher()
+                else:
+                    # No groups exist - create a standalone dispatcher just for syncing
+                    from deployment.client_dispatcher import SlurmClientDispatcher
+                    dispatcher = SlurmClientDispatcher(
+                        load_config={},  # Empty config, only used for syncing
+                        account=self._account,
+                        use_container=self._use_container
+                    )
                 
-                # Get any dispatcher
-                any_group = next(iter(self._client_groups.values()))
-                dispatcher = any_group.get_dispatcher()
-                pattern = "client-*.out"
+                pattern = "loadgen-*.out"
                 success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
                 
                 return {

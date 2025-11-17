@@ -5,9 +5,10 @@ Simple end-to-end example demonstrating vLLM load testing.
 This script:
 1. Starts a vLLM inference service via the server API
 2. Waits for the service to be ready
-3. Retrieves the service endpoint
-4. Starts a client group that generates load against the vLLM endpoint
-5. Monitors the load test progress
+3. Creates a client group that generates load through the Server API proxy
+4. Monitors the load test progress
+
+The client sends requests to the Server API, which proxies them to the vLLM service.
 
 Usage:
     python examples/simple_vllm_load_test.py
@@ -50,11 +51,11 @@ def create_vllm_service() -> str:
     return service_id
 
 
-def create_load_test_group(target_endpoint: str) -> Optional[int]:
-    """Create a client group that generates load against the vLLM endpoint.
+def create_load_test_group(service_id: str) -> Optional[int]:
+    """Create a client group that generates load against a vLLM service via Server API proxy.
     
     Args:
-        target_endpoint: The vLLM service endpoint (e.g., "http://mel2133:8001")
+        service_id: The vLLM service ID from the server
         
     Returns:
         The group ID if created successfully, None otherwise
@@ -63,7 +64,8 @@ def create_load_test_group(target_endpoint: str) -> Optional[int]:
     
     # Configure a gentle load test
     payload = {
-        "target_url": target_endpoint,
+        "target_url": SERVER_BASE,  # Server API URL
+        "service_id": service_id,    # Service to test
         "num_clients": 2,  # Small number of concurrent clients
         "requests_per_second": 0.5,  # Low rate: 1 request every 2 seconds
         "duration_seconds": 60,  # 1 minute test
@@ -79,7 +81,8 @@ def create_load_test_group(target_endpoint: str) -> Optional[int]:
     }
     
     print(f"Load test configuration:")
-    print(f"  Target: {target_endpoint}")
+    print(f"  Server API: {SERVER_BASE}")
+    print(f"  Service ID: {service_id}")
     print(f"  Clients: {payload['num_clients']}")
     print(f"  RPS: {payload['requests_per_second']}")
     print(f"  Duration: {payload['duration_seconds']}s")
@@ -111,10 +114,10 @@ def monitor_client_group(group_id: int, duration: int = 120):
     
     Args:
         group_id: The client group ID
-        duration: How long to monitor in seconds
+        duration: Maximum time to monitor in seconds (stops early if job completes)
     """
     print("Monitoring Load Test Progress")
-    print(f"Monitoring client group {group_id} for {duration}s")
+    print(f"Monitoring client group {group_id} for up to {duration}s")
     print("Note: Results will be written to remote logs directory")
     
     start_time = time.time()
@@ -125,18 +128,42 @@ def monitor_client_group(group_id: int, duration: int = 120):
             response.raise_for_status()
             
             group_info = response.json()
+            status = group_info.get('info', {}).get('status', 'unknown')
+            job_id = group_info.get('info', {}).get('job_id', 'N/A')
             elapsed = int(time.time() - start_time)
-            print(f"  [{elapsed}s] Group status: {json.dumps(group_info, indent=2)}")
+            
+            print(f"  [{elapsed}s] Status: {status}, Job ID: {job_id}")
+            
+            # Stop monitoring if the job has completed
+            if status == 'stopped':
+                print(f"\n✓ Load test completed after {elapsed}s")
+                break
             
         except requests.RequestException as e:
             print(f"  Error querying group: {e}")
         
         time.sleep(15)
+    else:
+        # Timeout reached without completion
+        print(f"\n⚠ Monitoring timeout reached after {duration}s")
     
-    print(f"\n✓ Monitoring complete")
-    print(f"  Check logs for detailed results:")
+    # Sync logs after monitoring completes
+    print("\nSyncing logs from remote...")
+    try:
+        response = requests.post(f"{CLIENT_API}/logs/sync")
+        response.raise_for_status()
+        result = response.json()
+        if result.get('success'):
+            print(f"✓ Logs synced successfully to {result.get('local_path', './logs')}")
+        else:
+            print(f"✗ Log sync failed: {result.get('message', 'Unknown error')}")
+    except requests.RequestException as e:
+        print(f"✗ Error syncing logs: {e}")
+    
+    print(f"\nCheck logs for detailed results:")
     print(f"  - SLURM logs: ~/ai-factory-benchmarks/logs/loadgen-{group_id}-*.out")
     print(f"  - Results JSON: ~/ai-factory-benchmarks/logs/loadgen-results-{group_id}.json")
+    print(f"  - Local synced logs: ./logs/loadgen-{group_id}-*.out")
 
 
 def main():
@@ -193,7 +220,7 @@ def main():
         print("=" * 80)
         print("STEP 3: Creating Load Test Group")
         print("=" * 80)
-        group_id = create_load_test_group(endpoint)
+        group_id = create_load_test_group(service_id)
         
         if not group_id:
             print("\n✗ Failed to create load test group. Aborting.")
@@ -205,7 +232,7 @@ def main():
         print("=" * 80)
         print("STEP 4: Monitoring Load Test")
         print("=" * 80)
-        monitor_client_group(group_id, duration=120)
+        monitor_client_group(group_id, duration=300)
         
         print()
         print("=" * 80)

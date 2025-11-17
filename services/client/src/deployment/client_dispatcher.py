@@ -201,6 +201,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             "rsync", "-avz",
             "--include", pattern,
             "--include", pattern.replace('.out', '.err'),  # Also include .err files
+            "--include", "loadgen-results-*.json",  # Include results JSON files
             "--include", "*/",  # Include directories for recursive search
             "--exclude", "*",   # Exclude everything else
             f"{self._ssh_manager.ssh_user}@{self._ssh_manager.ssh_host}:{self._remote_logs_dir}/",
@@ -210,6 +211,8 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         # Add SSH port option
         rsync_cmd.insert(2, "-e")
         rsync_cmd.insert(3, f"ssh -p {self._ssh_manager.ssh_port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
+        
+        logger.debug(f"Running rsync command: {' '.join(rsync_cmd)}")
         
         try:
             import subprocess
@@ -223,10 +226,14 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             
             if result.returncode == 0:
                 logger.info(f"Logs synced successfully")
-                logger.debug(f"Rsync output: {result.stdout}")
+                logger.debug(f"Rsync stdout: {result.stdout}")
+                if result.stderr:
+                    logger.debug(f"Rsync stderr: {result.stderr}")
                 return True, "Logs synced successfully"
             else:
-                logger.error(f"Rsync failed: {result.stderr}")
+                logger.error(f"Rsync failed with return code {result.returncode}")
+                logger.error(f"Rsync stderr: {result.stderr}")
+                logger.debug(f"Rsync stdout: {result.stdout}")
                 return False, f"Rsync failed: {result.stderr}"
                 
         except subprocess.TimeoutExpired:
@@ -319,7 +326,8 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
 
 echo "Starting load test at $(date)"
 echo "Configuration:"
-echo "  Target: {self._load_config['target_url']}"
+echo "  Server API: {self._load_config['target_url']}"
+echo "  Service ID: {self._load_config['service_id']}"
 echo "  Clients: {self._load_config['num_clients']}"
 echo "  RPS: {self._load_config['requests_per_second']}"
 echo "  Duration: {self._load_config['duration_seconds']}s"
@@ -346,6 +354,144 @@ echo "USER: $USER"
 echo "Log directory: {log_dir}"
 echo "Container sif: {sif_path}"
 echo "==========================="
+
+# Generate the Python load test script with config
+echo "Generating Python load test script..."
+cat > {self._remote_base_path}/src/client/main.py << 'PYTHON_EOF'
+import asyncio
+import aiohttp
+import time
+import json
+import random
+from dataclasses import dataclass
+
+@dataclass
+class RequestMetrics:
+    timestamp: float
+    latency_ms: float
+    status_code: int
+    success: bool
+    error: str = None
+
+async def send_request(session, url, prompt, config):
+    '''Send request to Server API proxy endpoint.'''
+    start = time.time()
+    try:
+        service_id = config.get("service_id")
+        if not service_id:
+            raise ValueError("service_id is required")
+            
+        payload = {{
+            "prompt": prompt,
+            "max_tokens": config["max_tokens"],
+            "temperature": config.get("temperature", 0.7)
+        }}
+        
+        # Server API proxy endpoint
+        endpoint = f"{{url}}/api/v1/vllm/{{service_id}}/prompt"
+            
+        async with session.post(endpoint, json=payload, timeout=60) as resp:
+            latency = (time.time() - start) * 1000
+            if resp.status == 200:
+                data = await resp.json()
+                # Server proxy returns: {{"success": true, "response": "...", "usage": {{...}}}}
+                success = data.get("success", False)
+                if not success:
+                    return RequestMetrics(start, latency, resp.status, False, data.get("error", "Unknown error"))
+                return RequestMetrics(start, latency, resp.status, True)
+            else:
+                text = await resp.text()
+                return RequestMetrics(start, latency, resp.status, False, text[:100])
+    except Exception as e:
+        latency = (time.time() - start) * 1000
+        return RequestMetrics(start, latency, 0, False, str(e))
+
+async def worker(worker_id, session, config, end_time, results, semaphore):
+    prompts = config["prompts"]
+    url = config["target_url"]
+    while time.time() < end_time:
+        async with semaphore:
+            prompt = random.choice(prompts)
+            metric = await send_request(session, url, prompt, config)
+            results.append(metric)
+            if len(results) % 50 == 0:
+                print(f"Sent {{len(results)}} requests", flush=True)
+
+async def rate_limiter_task(semaphore, rps, end_time):
+    interval = 1.0 / rps
+    while time.time() < end_time:
+        semaphore.release()
+        await asyncio.sleep(interval)
+
+async def run_load_test():
+    config = {{
+        "target_url": "{self._load_config['target_url']}",
+        "service_id": "{self._load_config['service_id']}",
+        "num_clients": {self._load_config['num_clients']},
+        "requests_per_second": {self._load_config['requests_per_second']},
+        "duration_seconds": {self._load_config['duration_seconds']},
+        "prompts": {prompts_json},
+        "max_tokens": {self._load_config.get('max_tokens', 100)},
+        "temperature": {self._load_config.get('temperature', 0.7)}
+    }}
+    
+    print(f"Starting load test with {{config['num_clients']}} clients")
+    print(f"Target: {{config['target_url']}}")
+    print(f"Service ID: {{config['service_id']}}")
+    print(f"Target RPS: {{config['requests_per_second']}}")
+    
+    start_time = time.time()
+    end_time = start_time + config["duration_seconds"]
+    results = []
+    semaphore = asyncio.Semaphore(0)
+    
+    connector = aiohttp.TCPConnector(limit=config["num_clients"])
+    async with aiohttp.ClientSession(connector=connector) as session:
+        rate_task = asyncio.create_task(rate_limiter_task(semaphore, config["requests_per_second"], end_time))
+        workers = [
+            asyncio.create_task(worker(i, session, config, end_time, results, semaphore))
+            for i in range(config["num_clients"])
+        ]
+        await asyncio.gather(*workers, return_exceptions=True)
+        rate_task.cancel()
+        try:
+            await rate_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Calculate results
+    total = len(results)
+    successful = sum(1 for r in results if r.success)
+    latencies = sorted([r.latency_ms for r in results])
+    
+    print("\\n" + "="*80)
+    print("LOAD TEST RESULTS")
+    print("="*80)
+    print(f"Total Requests: {{total}}")
+    print(f"Successful: {{successful}}")
+    print(f"Failed: {{total - successful}}")
+    if latencies:
+        print(f"Avg Latency: {{sum(latencies)/len(latencies):.2f}}ms")
+        print(f"P50 Latency: {{latencies[len(latencies)//2]:.2f}}ms")
+        print(f"P95 Latency: {{latencies[int(len(latencies)*0.95)]:.2f}}ms")
+        print(f"P99 Latency: {{latencies[int(len(latencies)*0.99)]:.2f}}ms")
+    print(f"Actual RPS: {{total/(time.time()-start_time):.2f}}")
+    print("="*80)
+    
+    # Save detailed results
+    results_file = "{log_dir}/loadgen-results-{group_id}.json"
+    with open(results_file, 'w') as f:
+        json.dump({{
+            "total_requests": total,
+            "successful": successful,
+            "failed": total - successful,
+            "latencies": latencies,
+            "config": config
+        }}, f, indent=2)
+    print(f"Results saved to: {{results_file}}")
+
+asyncio.run(run_load_test())
+PYTHON_EOF
 
 # Build container if needed
 if [ ! -f {sif_path} ]; then

@@ -1,3 +1,2 @@
-- Fix SSH tunneling
-- Aggrgeate client group metrics and expose endpoint for that
-- Implement health checks
+- main script hardcoding should be fixed in dispatcher
+- Make sure group services can easily be prompted too (find a load test schema that works)

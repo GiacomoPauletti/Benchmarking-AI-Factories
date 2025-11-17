@@ -28,6 +28,7 @@ MANIFEST
 
 # Server logs and job outputs
 services/server/logs/
+services/client/logs/
 *.out
 *.err
 

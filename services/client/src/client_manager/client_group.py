@@ -73,8 +73,33 @@ class ClientGroup:
         return self._created_at
 
     def get_status(self) -> ClientGroupStatus:
-        if ( self._status == ClientGroupStatus.PENDING ):
-            # Check if signal file exists
+        # For containerized load tests, check SLURM job status
+        if self._job_id and self._status != ClientGroupStatus.STOPPED:
+            try:
+                # Query SLURM job state via SSH
+                # First try squeue (for running jobs), fallback to sacct (for completed jobs)
+                # Need to check if squeue has output, as it exits 0 even when no jobs found
+                cmd = f"squeue -j {self._job_id} -h -o %T 2>/dev/null | grep -q . && squeue -j {self._job_id} -h -o %T || sacct -j {self._job_id} -n -o State | head -1"
+                success, stdout, stderr = self._ssh_manager.execute_remote_command(cmd, timeout=5)
+                
+                if success and stdout:
+                    state = stdout.strip().upper()
+                    # SLURM states: PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, etc.
+                    if state in ['RUNNING', 'COMPLETING']:
+                        self._status = ClientGroupStatus.RUNNING
+                        self._logger.debug(f"Job {self._job_id} is running")
+                    elif state in ['COMPLETED']:
+                        self._status = ClientGroupStatus.STOPPED
+                        self._logger.info(f"Job {self._job_id} completed")
+                    elif state in ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'PREEMPTED']:
+                        self._status = ClientGroupStatus.STOPPED
+                        self._logger.warning(f"Job {self._job_id} stopped with state: {state}")
+                    # else: keep PENDING for queued jobs
+            except Exception as e:
+                self._logger.error(f"Error checking job status for {self._job_id}: {e}")
+        
+        # Legacy: Check signal file for old architecture (backward compatibility)
+        if self._status == ClientGroupStatus.PENDING:
             import os
             if os.path.exists(self._signal_file_path):
                 try:
@@ -95,11 +120,14 @@ class ClientGroup:
 
     def get_info(self) -> dict:
         """Return group information as dict"""
+        # Call get_status() to update status before returning info
+        current_status = self.get_status()
+        
         return {
             "num_clients": self._num_clients,
             "client_address": self._client_address,
             "created_at": self._created_at,
             "load_config": self._load_config,
             "job_id": self._job_id,
-            "status": self._status.name.lower()
+            "status": current_status.name.lower()
         }

@@ -14,14 +14,7 @@ From: python:3.11-slim
 
 %files
     # Copy the client source code
-    # __init__.py              /app/src/client/
-    # client_observer.py      /app/src/client/
-    # client_group.py         /app/src/client/
-    # client.py               /app/src/client/
     main.py                 /app/src/client/
-    # api/                    /app/src/client/
-    # monitor_proxy/          /app/src/client/
-    requirements.txt        /app/
 
 %environment
     # Set Python path and other environment variables
@@ -36,8 +29,8 @@ From: python:3.11-slim
         procps \
         && rm -rf /var/lib/apt/lists/*
     
-    # Install Python dependencies
-    pip install --no-cache-dir -r /app/requirements.txt
+    # Install required Python packages for async load testing
+    pip install --no-cache-dir aiohttp prometheus-client
 
 %runscript
     # Default runscript - starts the client

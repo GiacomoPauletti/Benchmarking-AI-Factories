@@ -20,8 +20,13 @@ class CreateClientGroupRequest(BaseModel):
     # Load generation parameters
     target_url: str = Field(
         ...,
-        description="vLLM endpoint URL to test (e.g., http://server:8000)",
-        example="http://localhost:8000"
+        description="Server API URL (e.g., http://localhost:8001)",
+        example="http://localhost:8001"
+    )
+    service_id: str = Field(
+        ...,
+        description="Service ID of the vLLM service to test",
+        example="3732769"
     )
     num_clients: int = Field(
         ...,
@@ -62,11 +67,6 @@ class CreateClientGroupRequest(BaseModel):
         le=2.0,
         description="Sampling temperature for generation",
         example=0.7
-    )
-    model: Optional[str] = Field(
-        default=None,
-        description="Model name (if None, uses server default)",
-        example="meta-llama/Llama-2-7b-hf"
     )
     
     # SLURM parameters
