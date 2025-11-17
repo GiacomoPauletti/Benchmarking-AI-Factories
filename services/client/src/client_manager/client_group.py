@@ -24,13 +24,14 @@ class ClientGroup:
         self._group_id = group_id
         self._load_config = load_config  # Store full load test configuration
         self._num_clients = load_config["num_clients"]
-        self._time_limit = load_config.get("time_limit", 30)
+        self._time_limit = load_config.get("time_limit", 5)  # Default 5 minutes for faster queue
         self._client_address: Optional[str] = None
         self._created_at = time_module.time()
         self._use_container = use_container
         self._logger = logging.getLogger(f"client_manager.client_group.{group_id}")
         self._ssh_manager = SSHManager()
         self._status = ClientGroupStatus.PENDING
+        self._job_id = None  # SLURM job ID
         
         # Get signal file path for polling
         import os
@@ -44,8 +45,11 @@ class ClientGroup:
             use_container=use_container
         )
         try:
-            self._dispatcher.dispatch(group_id, self._time_limit)
-            self._logger.info(f"Dispatched SLURM job for client group {group_id}")
+            self._job_id = self._dispatcher.dispatch(group_id, self._time_limit)
+            if self._job_id:
+                self._logger.info(f"Dispatched SLURM job {self._job_id} for client group {group_id}")
+            else:
+                self._logger.warning(f"Dispatched SLURM job for client group {group_id} but no job ID returned")
         except Exception as e:
             self._logger.error(f"Failed to dispatch SLURM job for client group {group_id}: {e}")
             raise
@@ -85,11 +89,17 @@ class ClientGroup:
 
         return self._status
 
+    def get_job_id(self) -> Optional[str]:
+        """Get the SLURM job ID"""
+        return self._job_id
+
     def get_info(self) -> dict:
         """Return group information as dict"""
         return {
             "num_clients": self._num_clients,
             "client_address": self._client_address,
             "created_at": self._created_at,
-            "load_config": self._load_config
+            "load_config": self._load_config,
+            "job_id": self._job_id,
+            "status": self._status.name.lower()
         }

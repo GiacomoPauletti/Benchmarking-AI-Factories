@@ -71,11 +71,11 @@ class CreateClientGroupRequest(BaseModel):
     
     # SLURM parameters
     time_limit: int = Field(
-        default=30,
+        default=5,
         gt=0,
         le=1440,
         description="SLURM job time limit in minutes (should be > duration_seconds/60)",
-        example=30
+        example=5
     )
 
     class Config:
@@ -132,6 +132,8 @@ class ClientGroupInfo(BaseModel):
     client_address: Optional[str] = Field(None, description="Address of the registered client process")
     created_at: float = Field(..., description="Unix timestamp when the group was created")
     status: str = Field(default="pending", description="Current status: pending, running, stopped")
+    job_id: Optional[str] = Field(None, description="SLURM job ID for this load test")
+    load_config: Optional[dict] = Field(None, description="Load test configuration")
 
 
 class ClientGroupResponse(BaseModel):

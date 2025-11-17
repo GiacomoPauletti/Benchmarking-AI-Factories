@@ -108,7 +108,8 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         self._ssh_manager.execute_remote_command(mkdir_cmd, timeout=10)
         
         # Read local container definition
-        local_def_path = Path(__file__).parent.parent.parent / "container" / "loadgen.def"
+        # The container definition is in services/client/src/client/client_container.def
+        local_def_path = Path(__file__).parent.parent / "client" / "client_container.def"
         
         if not local_def_path.exists():
             raise FileNotFoundError(f"Container definition not found: {local_def_path}")
@@ -136,12 +137,51 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             raise RuntimeError(f"Failed to build load generator container: {stderr}")
 
 
-    def sync_logs_from_remote(self, local_logs_dir: str = "./logs", pattern: str = "slurm-*.out"):
+    def get_job_logs(self, job_id: str, group_id: int) -> str:
+        """Get logs from a SLURM job via SSH.
+        
+        Args:
+            job_id: SLURM job ID
+            group_id: Client group ID
+            
+        Returns:
+            Formatted log content or error message
+        """
+        if not job_id:
+            return "=== NO JOB ID ===\nJob ID not available"
+        
+        stdout_remote = f"{self._remote_logs_dir}/loadgen-{group_id}-{job_id}.out"
+        stderr_remote = f"{self._remote_logs_dir}/loadgen-{group_id}-{job_id}.err"
+        
+        # Fetch stdout using tail for last 200 lines
+        stdout_cmd = f"tail -n 200 {stdout_remote} 2>/dev/null || echo 'Log not yet available'"
+        success_out, stdout_content, _ = self._ssh_manager.execute_remote_command(stdout_cmd, timeout=10)
+        
+        # Fetch stderr using tail for last 100 lines
+        stderr_cmd = f"tail -n 100 {stderr_remote} 2>/dev/null || echo 'No errors logged'"
+        success_err, stderr_content, _ = self._ssh_manager.execute_remote_command(stderr_cmd, timeout=10)
+        
+        # Format combined output
+        log_output = f"=== SLURM STDOUT (last 200 lines) ===\n"
+        if success_out:
+            log_output += stdout_content if stdout_content else "Log not yet available"
+        else:
+            log_output += "Failed to fetch stdout"
+        
+        log_output += f"\n\n=== SLURM STDERR (last 100 lines) ===\n"
+        if success_err:
+            log_output += stderr_content if stderr_content else "No errors logged"
+        else:
+            log_output += "Failed to fetch stderr"
+        
+        return log_output
+
+    def sync_logs_from_remote(self, local_logs_dir: str = "./logs", pattern: str = "loadgen-*.out"):
         """Sync SLURM logs from remote MeluXina to local directory.
         
         Args:
             local_logs_dir: Local directory to sync logs to
-            pattern: Glob pattern for log files to sync (default: slurm-*.out)
+            pattern: Glob pattern for log files to sync (default: loadgen-*.out)
             
         Returns:
             Tuple of (success: bool, message: str)
@@ -160,6 +200,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         rsync_cmd = [
             "rsync", "-avz",
             "--include", pattern,
+            "--include", pattern.replace('.out', '.err'),  # Also include .err files
             "--include", "*/",  # Include directories for recursive search
             "--exclude", "*",   # Exclude everything else
             f"{self._ssh_manager.ssh_user}@{self._ssh_manager.ssh_host}:{self._remote_logs_dir}/",
@@ -209,12 +250,9 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         logger.info(f"Dispatching load generator for group {group_id}")
         logger.info(f"Config: {json.dumps(self._load_config, indent=2)}")
         
-        # Ensure container is built before dispatching jobs
-        self._ensure_loadgen_container()
         
-        # Build the load generator command
-        # The load generator will be run as a Python module on the compute node
-        load_gen_cmd = self._build_load_generator_command(group_id)
+        # Build the complete bash script for the load generator
+        script_content = self._build_load_generator_script(group_id)
         
         # Prepare job configuration matching server pattern and MeluXina requirements
         # Per https://docs.lxp.lu/web_services/slurmrestd/: these fields are mandatory:
@@ -230,34 +268,12 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             'partition': 'cpu',
             'nodes': '1',
             'tasks': 1,
-            'cpus_per_task': self._load_config.get('num_clients', 10),  # One CPU per client for parallelism
+            'cpus_per_task': 2,  # Async I/O workload only needs 2 CPUs regardless of client count
             'current_working_directory': self._remote_logs_dir,
             'standard_output': f'{self._remote_logs_dir}/loadgen-{group_id}-%j.out',
             'standard_error': f'{self._remote_logs_dir}/loadgen-{group_id}-%j.err',
             'environment': [f'USER={self._username}'],  # Mandatory per MeluXina docs
         }
-        
-        # Path to container and definition files
-        container_path = f"{self._remote_base_path}/containers/loadgen.sif"
-        
-        script_content = f"""#!/bin/bash -l
-# Load Generator Job for Group {group_id}
-
-echo "Starting load test at $(date)"
-echo "Configuration:"
-echo "  Target: {self._load_config['target_url']}"
-echo "  Clients: {self._load_config['num_clients']}"
-echo "  RPS: {self._load_config['requests_per_second']}"
-echo "  Duration: {self._load_config['duration_seconds']}s"
-echo "  Container: {container_path}"
-echo ""
-
-# Run the load generator using Apptainer container
-apptainer exec {container_path} {load_gen_cmd}
-
-echo ""
-echo "Load test completed at $(date)"
-"""
         
         # Submit job via SSH
         success, response_data = self._submit_slurm_job_via_ssh(
@@ -266,47 +282,96 @@ echo "Load test completed at $(date)"
         )
 
         if success:
-            logger.info("Load generator job submitted successfully!")
-            logger.debug(json.dumps(response_data, indent=2))
+            # Extract job ID from response
+            job_id = None
+            if 'job_id' in response_data:
+                job_id = str(response_data['job_id'])
+            elif 'jobs' in response_data and len(response_data['jobs']) > 0:
+                job_id = str(response_data['jobs'][0].get('job_id'))
+            
+            if job_id:
+                logger.info(f"Load generator job submitted successfully! Job ID: {job_id}")
+                return job_id
+            else:
+                logger.warning("Job submitted but no job_id in response")
+                logger.debug(json.dumps(response_data, indent=2))
+                return None
         else:
             logger.error(f"Job submission failed: {response_data}")
-
-        print(json.dumps(response_data, indent=2))
+            return None
     
-    def _build_load_generator_command(self, group_id: int) -> str:
-        """Build the command to run the load generator on the compute node."""
-        # First, we need to copy the load_generator.py to the remote
-        # For now, we'll embed it inline or assume it's in the repo
+    def _build_load_generator_script(self, group_id: int) -> str:
+        """Build the complete bash script to run the load generator on the compute node.
         
-        # Build Python command with inline script
+        This script:
+        1. Loads required modules (env, Apptainer)
+        2. Builds the container if it doesn't exist
+        3. Runs the load test inside the container
+        """
         prompts_json = json.dumps(self._load_config['prompts'])
         
         log_dir = self._remote_base_path.rstrip("/") + "/logs"
-        def_path = self._remote_base_path.rstrip("/") + "/src/client/client_container.def"
         sif_path = self._remote_base_path.rstrip("/") + "/containers/client.sif"
 
-        build_block = f"""
-# Build container if needed
+        script = f"""#!/bin/bash -l
 
+# Load Generator Job for Group {group_id}
+
+echo "Starting load test at $(date)"
+echo "Configuration:"
+echo "  Target: {self._load_config['target_url']}"
+echo "  Clients: {self._load_config['num_clients']}"
+echo "  RPS: {self._load_config['requests_per_second']}"
+echo "  Duration: {self._load_config['duration_seconds']}s"
+echo "  Container: {sif_path}"
+echo ""
+
+# Load required modules
+echo "Loading modules..."
+module load env/release/2023.1
+module load Apptainer/1.2.4-GCCcore-12.3.0
+
+# Ensure HOME is set (SLURM sometimes clears it)
+if [ -z "$HOME" ]; then
+    export HOME=/home/users/$USER
+fi
+
+# Debug: Print environment info
+echo "=== SLURM Job Debug Info ==="
+echo "Job ID: $SLURM_JOB_ID"
+echo "Node: $SLURMD_NODENAME"
+echo "Working directory: $(pwd)"
+echo "HOME: $HOME"
+echo "USER: $USER"
+echo "Log directory: {log_dir}"
+echo "Container sif: {sif_path}"
+echo "==========================="
+
+# Build container if needed
 if [ ! -f {sif_path} ]; then
     echo 'Building Apptainer image: {sif_path}'
     
-    # Set up user-writable directories to avoid permission issues
+    # Create containers directory
+    mkdir -p $(dirname {sif_path})
+    
+    # Set up user-writable directories for Apptainer
     export APPTAINER_TMPDIR=/tmp/apptainer-$USER-$$
-    export APPTAINER_CACHEDIR=/tmp/apptainer-cache-$USER
-    export HOME=/tmp/fake-home-$USER
+    export APPTAINER_CACHEDIR=$HOME/.apptainer/cache
     
     mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME/.apptainer
     
-    # Create empty docker config to bypass authentication
+    # Create empty docker config to avoid authentication issues
     echo '{{}}' > $HOME/.apptainer/docker-config.json
     
-    # Build container
-    apptainer build --disable-cache --no-https {sif_path} {def_path}
+    # Change to the source directory where files are located
+    cd {self._remote_base_path}/src/client
+    
+    # Build container from this directory
+    apptainer build {sif_path} client_container.def
     build_result=$?
     
-    # Clean up
-    rm -rf $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME
+    # Clean up temp directories
+    rm -rf $APPTAINER_TMPDIR
     
     if [ $build_result -ne 0 ]; then
         echo "ERROR: Failed to build container (exit code: $build_result)"
@@ -314,178 +379,28 @@ if [ ! -f {sif_path} ]; then
     fi
     
     echo "Container build successful!"
+else
+    echo "Container already exists: {sif_path}"
 fi
-        """
-
-        run_block = f"""
-echo "Starting container..."
-echo "Running inference container (no network binding, unprivileged user)..."
-
-apptainer run --bind {log_dir}:/app/logs {sif_path} 2>&1
-container_exit_code=$?
-
-echo "Container exited with code: $container_exit_code"
-if [ $container_exit_code -ne 0 ]; then
-    echo "ERROR: Container failed to run properly"
-fi
-        """
-
-        script = f"""#!/bin/bash -l
-
-# Load required modules
-module load env/release/2023.1
-module load Apptainer/1.2.4-GCCcore-12.3.0
-
-# Set environment variables
-# [env_section]
-
-# Debug: Print environment info
-echo "=== SLURM Job Debug Info ==="
-echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $SLURMD_NODENAME"
-echo "Working directory: $(pwd)"
-echo "Log directory: {log_dir}"
-echo "Container def: {def_path}"
-echo "Container sif: {sif_path}"
-echo "==========================="
-
-{build_block}
 
 # Ensure log directory exists
 mkdir -p {log_dir}
 
-{run_block}
+# Run the load test inside the container
+echo "Starting container..."
+echo "Running load test container..."
+
+apptainer run --bind {log_dir}:/app/logs {sif_path}
+container_exit_code=$?
+
+echo ""
+echo "Container exited with code: $container_exit_code"
+echo "Load test completed at $(date)"
 
 exit $container_exit_code
 """
         return script
-#         cmd = f"""python3 << 'LOAD_GENERATOR_EOF'
-# import asyncio
-# import aiohttp
-# import time
-# import json
-# import random
-# from dataclasses import dataclass, asdict
 
-# # Embedded load generator (simplified version)
-# @dataclass
-# class RequestMetrics:
-#     timestamp: float
-#     latency_ms: float
-#     status_code: int
-#     success: bool
-#     error: str = None
-
-# async def send_request(session, url, prompt, config):
-#     start = time.time()
-#     try:
-#         payload = {{
-#             "prompt": prompt,
-#             "max_tokens": config["max_tokens"],
-#             "temperature": config.get("temperature", 0.7)
-#         }}
-#         if config.get("model"):
-#             payload["model"] = config["model"]
-            
-#         async with session.post(f"{{url}}/v1/completions", json=payload, timeout=60) as resp:
-#             latency = (time.time() - start) * 1000
-#             if resp.status == 200:
-#                 await resp.json()
-#                 return RequestMetrics(start, latency, resp.status, True)
-#             else:
-#                 text = await resp.text()
-#                 return RequestMetrics(start, latency, resp.status, False, text[:100])
-#     except Exception as e:
-#         latency = (time.time() - start) * 1000
-#         return RequestMetrics(start, latency, 0, False, str(e))
-
-# async def worker(worker_id, session, config, end_time, results, semaphore):
-#     prompts = config["prompts"]
-#     url = config["target_url"]
-#     while time.time() < end_time:
-#         async with semaphore:
-#             prompt = random.choice(prompts)
-#             metric = await send_request(session, url, prompt, config)
-#             results.append(metric)
-#             if len(results) % 50 == 0:
-#                 print(f"Sent {{len(results)}} requests", flush=True)
-
-# async def rate_limiter_task(semaphore, rps, end_time):
-#     interval = 1.0 / rps
-#     while time.time() < end_time:
-#         semaphore.release()
-#         await asyncio.sleep(interval)
-
-# async def run_load_test():
-#     config = {{
-#         "target_url": "{self._load_config['target_url']}",
-#         "num_clients": {self._load_config['num_clients']},
-#         "requests_per_second": {self._load_config['requests_per_second']},
-#         "duration_seconds": {self._load_config['duration_seconds']},
-#         "prompts": {prompts_json},
-#         "max_tokens": {self._load_config.get('max_tokens', 100)},
-#         "temperature": {self._load_config.get('temperature', 0.7)},
-#         "model": {json.dumps(self._load_config.get('model'))}
-#     }}
-    
-#     print(f"Starting load test with {{config['num_clients']}} clients")
-#     print(f"Target RPS: {{config['requests_per_second']}}")
-    
-#     start_time = time.time()
-#     end_time = start_time + config["duration_seconds"]
-#     results = []
-#     semaphore = asyncio.Semaphore(0)
-    
-#     connector = aiohttp.TCPConnector(limit=config["num_clients"])
-#     async with aiohttp.ClientSession(connector=connector) as session:
-#         rate_task = asyncio.create_task(rate_limiter_task(semaphore, config["requests_per_second"], end_time))
-#         workers = [
-#             asyncio.create_task(worker(i, session, config, end_time, results, semaphore))
-#             for i in range(config["num_clients"])
-#         ]
-#         await asyncio.gather(*workers, return_exceptions=True)
-#         rate_task.cancel()
-#         try:
-#             await rate_task
-#         except asyncio.CancelledError:
-#             pass
-    
-#     # Calculate results
-#     total = len(results)
-#     successful = sum(1 for r in results if r.success)
-#     latencies = sorted([r.latency_ms for r in results])
-    
-#     print("\\n" + "="*80)
-#     print("LOAD TEST RESULTS")
-#     print("="*80)
-#     print(f"Total Requests: {{total}}")
-#     print(f"Successful: {{successful}}")
-#     print(f"Failed: {{total - successful}}")
-#     if latencies:
-#         print(f"Avg Latency: {{sum(latencies)/len(latencies):.2f}}ms")
-#         print(f"P50 Latency: {{latencies[len(latencies)//2]:.2f}}ms")
-#         print(f"P95 Latency: {{latencies[int(len(latencies)*0.95)]:.2f}}ms")
-#         print(f"P99 Latency: {{latencies[int(len(latencies)*0.99)]:.2f}}ms")
-#     print(f"Actual RPS: {{total/(time.time()-start_time):.2f}}")
-#     print("="*80)
-    
-#     # Save detailed results
-#     results_file = "{self._remote_logs_dir}/loadgen-results-{group_id}.json"
-#     with open(results_file, 'w') as f:
-#         json.dump({{
-#             "total_requests": total,
-#             "successful": successful,
-#             "failed": total - successful,
-#             "latencies": latencies,
-#             "config": config
-#         }}, f, indent=2)
-#     print(f"Results saved to: {{results_file}}")
-
-# asyncio.run(run_load_test())
-# LOAD_GENERATOR_EOF
-#
-#       return cmd
-# """
 
     def _submit_slurm_job_via_ssh(self, script_content: str, job_config: dict, 
                                   slurm_rest_host: str = "slurmrestd.meluxina.lxp.lu",

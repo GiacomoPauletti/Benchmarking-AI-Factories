@@ -22,6 +22,7 @@ from fastapi.responses import PlainTextResponse
 from typing import Dict, Any, List
 import logging
 import time
+import os
 
 from client_manager.client_manager import ClientManager, ClientManagerResponseStatus
 from api.schemas import (
@@ -666,10 +667,87 @@ async def get_client_group_metrics(
 
 # ==================== Log Management ====================
 
+@router.get(
+    "/client-groups/{group_id}/logs",
+    summary="Get SLURM logs for a client group",
+    tags=["Logs"],
+    responses={
+        200: {"description": "Logs retrieved successfully"},
+        404: {"description": "Client group not found", "model": ErrorResponse}
+    }
+)
+async def get_group_logs(
+    group_id: int,
+    client_manager: ClientManager = Depends(get_client_manager)
+):
+    """Get SLURM logs (stdout and stderr) from a client group's load generator job.
+    
+    Retrieves the job output logs via SSH. These logs contain:
+    - Job execution details
+    - Load test output and statistics
+    - Container build logs (if applicable)
+    - Any errors or warnings
+    
+    **Path Parameters:**
+    - `group_id`: Unique identifier for the client group
+    
+    **Returns:**
+    ```json
+    {
+      "logs": "=== SLURM STDOUT ===\\nStarting load test...\\n\\n=== SLURM STDERR ===\\n..."
+    }
+    ```
+    
+    **Example:**
+    ```bash
+    curl http://localhost:8003/api/v1/client-groups/500008/logs
+    ```
+    """
+    logger.debug(f"Fetching logs for client group {group_id}")
+    
+    group = client_manager.get_group_info(group_id)
+    if group is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Client group {group_id} not found"
+        )
+    
+    job_id = group.get("job_id")
+    if not job_id:
+        return {"logs": "=== NO JOB ID ===\nJob not yet submitted or job ID not available"}
+    
+    # Get the dispatcher to fetch logs
+    # All groups share same dispatcher setup, so get any group's dispatcher
+    groups = client_manager.list_groups()
+    if not groups:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No client groups available"
+        )
+    
+    any_group_info = client_manager.get_group_info(group_id)
+    if not any_group_info:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Client group {group_id} not found"
+        )
+    
+    # Create a temporary dispatcher to fetch logs
+    from deployment.client_dispatcher import SlurmClientDispatcher
+    dispatcher = SlurmClientDispatcher(
+        load_config=any_group_info.get("load_config", {}),
+        account=os.environ.get("SLURM_ACCOUNT", "p200981"),
+        use_container=True
+    )
+    
+    logs = dispatcher.get_job_logs(job_id, group_id)
+    return {"logs": logs}
+
+
 @router.post(
     "/client-groups/{group_id}/logs/sync",
     response_model=LogSyncResponse,
-    summary="Sync SLURM logs from remote to local",
+    summary="Sync SLURM logs for a client group",
     tags=["Logs"],
     responses={
         200: {"description": "Logs synced successfully"},
@@ -712,7 +790,7 @@ async def sync_group_logs(
     """
     logger.info(f"Syncing logs for client group {group_id}")
     
-    result = client_manager.sync_logs(benchmark_id=group_id)
+    result = client_manager.sync_logs(group_id=group_id)
     
     if "error" in result:
         raise HTTPException(
@@ -762,7 +840,7 @@ async def sync_all_logs(client_manager: ClientManager = Depends(get_client_manag
     """
     logger.info("Syncing all logs")
     
-    result = client_manager.sync_logs(benchmark_id=None)
+    result = client_manager.sync_logs(group_id=None)
     
     if "error" in result:
         raise HTTPException(

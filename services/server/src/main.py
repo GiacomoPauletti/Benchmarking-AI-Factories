@@ -121,6 +121,33 @@ async def health():
 # Include API routes
 app.include_router(router, prefix="/api/v1")
 
+@app.on_event("startup")
+async def on_startup():
+    """FastAPI startup event handler - set up SSH tunnel."""
+    global logger
+    
+    if logger:
+        logger.info("Setting up SSH tunnel to SLURM REST API...")
+    else:
+        print("Setting up SSH tunnel to SLURM REST API...")
+    
+    try:
+        from ssh_manager import SSHManager
+        ssh_manager = SSHManager()
+        ssh_manager.setup_slurm_rest_tunnel(local_port=6820)
+        
+        if logger:
+            logger.info("SSH tunnel established successfully on port 6820")
+        else:
+            print("SSH tunnel established successfully on port 6820")
+    except Exception as e:
+        if logger:
+            logger.warning(f"Failed to set up SSH tunnel: {e}")
+            logger.warning("The server will attempt to create tunnels on-demand, but this may cause delays.")
+        else:
+            print(f"WARNING: Failed to set up SSH tunnel: {e}")
+            print("The server will attempt to create tunnels on-demand, but this may cause delays.")
+
 @app.on_event("shutdown")
 async def on_shutdown():
     """FastAPI shutdown event handler."""
@@ -158,6 +185,7 @@ if __name__ == "__main__":
     print(f"Node: {os.environ.get('SLURMD_NODENAME', 'unknown')}")
     print(f"Job ID: {os.environ.get('SLURM_JOB_ID', 'unknown')}")
     print("Shutdown handlers registered (SIGTERM, SIGINT, FastAPI shutdown event)")
+    
     uvicorn.run(
         app,
         host="0.0.0.0",
