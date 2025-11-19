@@ -1,2 +1,3 @@
 - main script hardcoding should be fixed in dispatcher
+- Fix client to server request failures.
 - Make sure group services can easily be prompted too (find a load test schema that works)

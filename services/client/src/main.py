@@ -9,29 +9,68 @@ import uvicorn
 import logging
 import socket
 import os
+import atexit
+import glob
 
 from api.routes import router
 from client_manager.client_manager import ClientManager
-from ssh_manager import SSHManager
 
 # =================================== LOGGING CONFIG ====================================
-# Always log to console (stdout) with debug level
+# Set up logging to both console and file
+log_dir = "/app/logs"
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, "client.log")
+
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_file, mode='w')  
+    ],
+    force=True 
 )
 
 # Suppress some uvicorn logs but keep our application logs visible
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("uvicorn").setLevel(logging.INFO)
 
+logger = logging.getLogger(__name__)
+
+# =================================== CLEANUP HANDLER ===================================
+def cleanup_logs():
+    """Clean up synced logs on service shutdown."""
+    log_dir = "/app/logs"
+    logger.info(f"Cleaning up logs in {log_dir}...")
+    
+    try:
+        # Remove all loadgen log files
+        for pattern in ["loadgen-*.out", "loadgen-*.err", "loadgen-*-container.log", "loadgen-results-*.json"]:
+            for file in glob.glob(os.path.join(log_dir, pattern)):
+                try:
+                    os.remove(file)
+                    logger.debug(f"Removed {file}")
+                except Exception as e:
+                    logger.warning(f"Could not remove {file}: {e}")
+        
+        # Remove snapshot directories
+        snapshots_dir = os.path.join(log_dir, "snapshots")
+        if os.path.exists(snapshots_dir):
+            import shutil
+            shutil.rmtree(snapshots_dir, ignore_errors=True)
+            logger.debug(f"Removed {snapshots_dir}")
+        
+        logger.info("Log cleanup complete")
+    except Exception as e:
+        logger.error(f"Error during log cleanup: {e}")
+
+# Register cleanup handler
+atexit.register(cleanup_logs)
+
 app = FastAPI(
     title="AI Factory Client Service",
-    description="Manages client groups on HPC clusters via SLURM. Provides job submission, metrics collection via Prometheus, and log management. Client groups can be used by benchmark orchestrators or other services.",
-    version="1.0.0",
+    description="Manages client groups for local load testing. Provides job execution, metrics collection via Prometheus, and log management. Client groups can be used by benchmark orchestrators or other services.",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_tags=[
@@ -39,7 +78,7 @@ app = FastAPI(
         {"name": "Client Groups", "description": "Create and manage client groups"},
         {"name": "Execution", "description": "Trigger client group execution"},
         {"name": "Monitoring", "description": "Prometheus metrics and targets"},
-        {"name": "Logs", "description": "Sync and manage SLURM job logs"}
+        {"name": "Logs", "description": "Sync and manage load test logs"}
     ]
 )
 @app.get("/health")
@@ -61,10 +100,6 @@ if __name__ == "__main__":
                        help="Host to bind to (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8002, 
                        help="Port to bind to (default: 8002)")
-    parser.add_argument("--container", action="store_true",
-                       help="Enable container mode for client execution")
-    parser.add_argument("--account", default="p200981",
-                       help="SLURM account for job submission (default: p200981)")
     
     args = parser.parse_args()
     
@@ -73,53 +108,15 @@ if __name__ == "__main__":
     host = args.host
     logging.debug(f"args.port: {args.port}")
     port = args.port
-    use_container = args.container
-    account = args.account
     
-    if use_container:
-        logging.info("Container mode enabled for client execution")
-    
-    logging.info(f"Using SLURM account: {account}")
-
-        # Initialize client manager
+    # Initialize client manager
     client_manager = ClientManager()
     client_manager.configure(
-        server_addr=server_addr, 
-        use_container=use_container,
-        account=account
+        server_addr=server_addr
     )
-
-    # Setup SSH tunnel for SLURM REST API (shared across all client groups)
-    logging.info("Setting up SSH tunnel for SLURM REST API...")
-    try:
-        ssh_manager = SSHManager()
-        tunnel_port = ssh_manager.setup_slurm_rest_tunnel(local_port=6821)
-        logging.info(f"SSH tunnel established on localhost:{tunnel_port}")
-    except Exception as e:
-        logging.error(f"Failed to setup SSH tunnel: {e}")
-        logging.warning("Service will start but client group creation may fail without tunnel")
-
 
     logging.info(f"Starting Client Service on {host}:{port}")
     logging.info(f"Server address: {server_addr}")
-    
-    remote_base_path_template = os.environ.get(
-        'REMOTE_BASE_PATH', 
-        '~/ai-factory-benchmarks'
-    )
-    
-    remote_base_path = ""
-    # Expand ~ to /home/users/$USER (NOT tier2 - SLURM daemon can't write there)
-    if remote_base_path_template.startswith('~'):
-        # Use standard home path /home/users/$USER
-        remote_base_path = remote_base_path_template.replace('~', f'/home/users/{ssh_manager.ssh_user}', 1)
-    else:
-        remote_base_path = remote_base_path_template
-
-    import time
-    time.sleep(10)
-    client_remote_path = f"{remote_base_path.rstrip('/')}/src/client/"
-    ssh_manager.sync_directory_to_remote(os.getcwd()+"/src/client/", client_remote_path)
 
     # Start the FastAPI server
     uvicorn.run("main:app", host=host, port=port)

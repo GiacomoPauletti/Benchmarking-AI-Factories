@@ -24,8 +24,8 @@ class CMResponse:
 
 class ClientManager:
     """
-    Manages client groups. Each group has a unique group_id and can contain
-    multiple client processes managed via SLURM.
+    Manages client groups. Each group has a unique group_id and runs
+    as a local Python process for load testing.
     """
     _instance = None
 
@@ -63,20 +63,14 @@ class ClientManager:
         # Default addresses - can be configured via environment or config file
         self._server_addr = "http://localhost:8002"
         self._client_service_addr = "http://localhost:8001"
-        self._use_container = False  # Default to native execution
-        self._account = "p200981"  # Default SLURM account
         self._initialized = True
     
-    def configure(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None, use_container: Optional[bool] = None, account: Optional[str] = None):
-        """Configure server and client service addresses, container mode, and SLURM account after initialization"""
+    def configure(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None):
+        """Configure server and client service addresses after initialization"""
         if server_addr:
             self._server_addr = server_addr
         if client_service_addr:
             self._client_service_addr = client_service_addr
-        if use_container is not None:
-            self._use_container = use_container
-        if account:
-            self._account = account
 
     def add_client_group(self, group_id: int, load_config: dict) -> int:
         """
@@ -97,9 +91,7 @@ class ClientManager:
                 # Create ClientGroup - it handles the dispatching internally
                 client_group = ClientGroup(
                     group_id=group_id,
-                    load_config=load_config,
-                    account=self._account,
-                    use_container=self._use_container
+                    load_config=load_config
                 )
                 self._client_groups[group_id] = client_group
                 self._logger.info(
@@ -163,7 +155,7 @@ class ClientManager:
         return results
 
     def sync_logs(self, group_id: Optional[int] = None, local_logs_dir: str = "./logs") -> Dict[str, Any]:
-        """Sync SLURM logs from remote MeluXina to local directory.
+        """Sync logs from local processes to specified directory.
         
         Args:
             group_id: If specified, sync logs for specific group. If None, sync all logs.
@@ -180,8 +172,8 @@ class ClientManager:
                     return {"error": f"Group {group_id} not found", "success": False}
                 
                 dispatcher = group.get_dispatcher()
-                pattern = f"loadgen-{group_id}-*.out"
-                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
+                # Pass group_id to sync function for specific file patterns
+                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, group_id=group_id)
                 
                 return {
                     "group_id": group_id,
@@ -197,15 +189,12 @@ class ClientManager:
                     dispatcher = any_group.get_dispatcher()
                 else:
                     # No groups exist - create a standalone dispatcher just for syncing
-                    from deployment.client_dispatcher import SlurmClientDispatcher
-                    dispatcher = SlurmClientDispatcher(
-                        load_config={},  # Empty config, only used for syncing
-                        account=self._account,
-                        use_container=self._use_container
+                    from deployment.client_dispatcher import LocalClientDispatcher
+                    dispatcher = LocalClientDispatcher(
+                        load_config={}  # Empty config, only used for syncing
                     )
                 
-                pattern = "loadgen-*.out"
-                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, pattern)
+                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, group_id=None)
                 
                 return {
                     "group_id": "all",
@@ -214,4 +203,3 @@ class ClientManager:
                     "local_path": local_logs_dir,
                     "groups": list(self._client_groups.keys())
                 }
-

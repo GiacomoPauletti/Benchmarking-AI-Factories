@@ -4,8 +4,7 @@ import os
 import logging
 import subprocess
 from pathlib import Path
-
-from ssh_manager import SSHManager
+from typing import Optional, Tuple
 
 # Use the logger configured by main.py instead of basic config
 logger = logging.getLogger(__name__)
@@ -14,6 +13,255 @@ class AbstractClientDispatcher:
     def dispatch(self, group_id: int, time_limit: int):
         pass
 
+
+class LocalClientDispatcher(AbstractClientDispatcher):
+    """
+    Local client dispatcher for running load tests without SLURM.
+    Executes load generator jobs as local Python processes.
+    """
+
+    def __init__(self, load_config: dict):
+        """Initialize local client dispatcher.
+        
+        Args:
+            load_config: Dictionary with load test configuration
+        """
+        self._load_config = load_config
+        self._processes = {}  # Track running processes: group_id -> subprocess.Popen
+        
+        # Set up local logs directory
+        self._logs_dir = os.path.join(os.getcwd(), "logs")
+        os.makedirs(self._logs_dir, exist_ok=True)
+        
+        logger.info(f"Local client dispatcher initialized. Logs dir: {self._logs_dir}")
+
+    def get_job_logs(self, job_id: str, group_id: int) -> str:
+        """Get logs from a local process.
+        
+        Args:
+            job_id: Process ID (job_id for compatibility)
+            group_id: Client group ID
+            
+        Returns:
+            Formatted log content or error message
+        """
+        stdout_file = os.path.join(self._logs_dir, f"loadgen-{group_id}.out")
+        stderr_file = os.path.join(self._logs_dir, f"loadgen-{group_id}.err")
+        
+        log_output = f"=== STDOUT (last 200 lines) ===\n"
+        if os.path.exists(stdout_file):
+            try:
+                with open(stdout_file, 'r') as f:
+                    lines = f.readlines()
+                    log_output += ''.join(lines[-200:]) if len(lines) > 200 else ''.join(lines)
+            except Exception as e:
+                log_output += f"Failed to read stdout: {e}"
+        else:
+            log_output += "Log not yet available"
+        
+        log_output += f"\n\n=== STDERR (last 100 lines) ===\n"
+        if os.path.exists(stderr_file):
+            try:
+                with open(stderr_file, 'r') as f:
+                    lines = f.readlines()
+                    log_output += ''.join(lines[-100:]) if len(lines) > 100 else ''.join(lines)
+            except Exception as e:
+                log_output += f"Failed to read stderr: {e}"
+        else:
+            log_output += "No errors logged"
+        
+        return log_output
+
+    def sync_logs_from_remote(self, local_logs_dir: str = "./logs", pattern: str = None, group_id: int = None):
+        """Sync logs from local logs directory (no-op for local execution).
+        
+        Args:
+            local_logs_dir: Local directory to sync logs to
+            pattern: Glob pattern for log files to sync (deprecated, use group_id)
+            group_id: Specific group ID to sync logs for
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        logger.info("Running locally - logs are already available locally")
+        
+        # Ensure target directory exists
+        os.makedirs(local_logs_dir, exist_ok=True)
+        
+        # If logs dir is different from target, copy files
+        if os.path.abspath(self._logs_dir) != os.path.abspath(local_logs_dir):
+            import shutil
+            try:
+                if group_id is not None:
+                    # Copy specific group files
+                    patterns = [
+                        f"loadgen-{group_id}.out",
+                        f"loadgen-{group_id}.err",
+                        f"loadgen-results-{group_id}.json"
+                    ]
+                else:
+                    # Copy all loadgen files
+                    patterns = ["loadgen-*.out", "loadgen-*.err", "loadgen-results-*.json"]
+                
+                import glob
+                for pattern in patterns:
+                    for src_file in glob.glob(os.path.join(self._logs_dir, pattern)):
+                        dst_file = os.path.join(local_logs_dir, os.path.basename(src_file))
+                        shutil.copy2(src_file, dst_file)
+                        logger.debug(f"Copied {src_file} -> {dst_file}")
+                
+                return True, "Logs synced successfully"
+            except Exception as e:
+                logger.error(f"Error syncing logs: {e}")
+                return False, f"Error: {str(e)}"
+        else:
+            return True, "Logs already in target directory"
+
+    def dispatch(self, group_id: int, time_limit: int):
+        """
+        Dispatch load generator job locally using subprocess.
+        
+        Args:
+            group_id: Group ID to associate with the job
+            time_limit: Time limit for the job in minutes (used for info only)
+            
+        Returns:
+            Process ID as string
+        """
+        logger.info(f"Dispatching local load generator for group {group_id}")
+        logger.info(f"Config: {json.dumps(self._load_config, indent=2)}")
+        
+        # Build the JSON configuration for the load test
+        load_config = {
+            "target_url": self._load_config['target_url'],
+            "service_id": self._load_config['service_id'],
+            "num_clients": self._load_config['num_clients'],
+            "requests_per_second": self._load_config['requests_per_second'],
+            "duration_seconds": self._load_config['duration_seconds'],
+            "prompts": self._load_config['prompts'],
+            "max_tokens": self._load_config.get('max_tokens', 100),
+            "temperature": self._load_config.get('temperature', 0.7),
+            "direct_url": self._load_config.get('direct_url'),
+            "model": self._load_config.get('model'),
+            "results_file": os.path.join(self._logs_dir, f"loadgen-results-{group_id}.json")
+        }
+        
+        # Write config file
+        config_file = os.path.join(self._logs_dir, f"loadgen-config-{group_id}.json")
+        with open(config_file, 'w') as f:
+            json.dump(load_config, f, indent=2)
+        
+        logger.info(f"Configuration file created: {config_file}")
+        
+        # Get path to loadgen_template.py
+        client_dir = Path(__file__).parent.parent / "client"
+        loadgen_script = client_dir / "loadgen_template.py"
+        
+        if not loadgen_script.exists():
+            logger.error(f"Load generator script not found: {loadgen_script}")
+            return None
+        
+        # Open log files
+        stdout_file = os.path.join(self._logs_dir, f"loadgen-{group_id}.out")
+        stderr_file = os.path.join(self._logs_dir, f"loadgen-{group_id}.err")
+        
+        # Start the load generator as a background process
+        try:
+            stdout_fh = open(stdout_file, 'w')
+            stderr_fh = open(stderr_file, 'w')
+            
+            env = os.environ.copy()
+            env['LOADGEN_CONFIG'] = config_file
+            
+            process = subprocess.Popen(
+                ['python', str(loadgen_script)],
+                stdout=stdout_fh,
+                stderr=stderr_fh,
+                env=env,
+                cwd=str(client_dir)
+            )
+            
+            self._processes[group_id] = {
+                'process': process,
+                'stdout': stdout_fh,
+                'stderr': stderr_fh
+            }
+            
+            job_id = str(process.pid)
+            logger.info(f"Load generator started successfully! PID: {job_id}")
+            logger.info(f"Logs: stdout={stdout_file}, stderr={stderr_file}")
+            
+            return job_id
+            
+        except Exception as e:
+            logger.error(f"Failed to start load generator: {e}")
+            return None
+    
+    def get_process_status(self, group_id: int) -> Optional[str]:
+        """Get the status of a load generator process.
+        
+        Args:
+            group_id: Group ID
+            
+        Returns:
+            'running', 'completed', or None if process not found
+        """
+        if group_id not in self._processes:
+            return None
+        
+        process_info = self._processes[group_id]
+        process = process_info['process']
+        
+        # Check if process is still running
+        poll_result = process.poll()
+        if poll_result is None:
+            return 'running'
+        else:
+            # Process has completed
+            # Close file handles
+            try:
+                process_info['stdout'].close()
+                process_info['stderr'].close()
+            except:
+                pass
+            return 'completed'
+    
+    def cleanup(self, group_id: int):
+        """Clean up resources for a load generator process.
+        
+        Args:
+            group_id: Group ID
+        """
+        if group_id in self._processes:
+            process_info = self._processes[group_id]
+            process = process_info['process']
+            
+            # Terminate if still running
+            if process.poll() is None:
+                logger.info(f"Terminating load generator for group {group_id}")
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Force killing load generator for group {group_id}")
+                    process.kill()
+            
+            # Close file handles
+            try:
+                process_info['stdout'].close()
+                process_info['stderr'].close()
+            except:
+                pass
+            
+            del self._processes[group_id]
+
+
+# ============================================================================
+# DEPRECATED: SlurmClientDispatcher is no longer used for local execution
+# Kept for reference only - do not use
+# ============================================================================
+
+"""
 class SlurmClientDispatcher(AbstractClientDispatcher):
     """
     SLURM client dispatcher for MeluXina HPC cluster.
@@ -176,37 +424,65 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         
         return log_output
 
-    def sync_logs_from_remote(self, local_logs_dir: str = "./logs", pattern: str = "loadgen-*.out"):
+    def sync_logs_from_remote(self, local_logs_dir: str = "./logs", pattern: str = None, group_id: int = None):
         """Sync SLURM logs from remote MeluXina to local directory.
         
         Args:
             local_logs_dir: Local directory to sync logs to
-            pattern: Glob pattern for log files to sync (default: loadgen-*.out)
+            pattern: Glob pattern for log files to sync (deprecated, use group_id)
+            group_id: Specific group ID to sync logs for (syncs .out, .err, and .json files)
             
         Returns:
             Tuple of (success: bool, message: str)
         """
         logger.info(f"Syncing logs from {self._remote_logs_dir} to {local_logs_dir}...")
         
-        # Ensure local logs directory exists
+        # Ensure local logs directory exists with proper permissions
         os.makedirs(local_logs_dir, exist_ok=True)
         
-        # Use rsync via SSH to sync logs
-        # -a: archive mode (preserves permissions, timestamps, etc.)
-        # -v: verbose
-        # -z: compress during transfer
-        # --include: only sync matching files
-        # --exclude: exclude everything else
+        # Build rsync command based on parameters
         rsync_cmd = [
             "rsync", "-avz",
-            "--include", pattern,
-            "--include", pattern.replace('.out', '.err'),  # Also include .err files
-            "--include", "loadgen-results-*.json",  # Include results JSON files
-            "--include", "*/",  # Include directories for recursive search
-            "--exclude", "*",   # Exclude everything else
+        ]
+        
+        if group_id is not None:
+            # Sync specific group files only
+            rsync_cmd.extend([
+                "--include", f"loadgen-{group_id}-*.out",        # SLURM stdout
+                "--include", f"loadgen-{group_id}-*.err",        # SLURM stderr
+                "--include", f"loadgen-{group_id}-container.log", # Container logs
+                "--include", f"loadgen-results-{group_id}.json",  # Results
+                "--include", "*/",  # Include directories for recursive search
+                "--exclude", "*",   # Exclude everything else
+            ])
+            logger.debug(f"Syncing logs for group {group_id}")
+        elif pattern:
+            # Legacy: use pattern (for backwards compatibility)
+            rsync_cmd.extend([
+                "--include", pattern,
+                "--include", pattern.replace('.out', '.err'),
+                "--include", "loadgen-results-*.json",
+                "--include", "*/",
+                "--exclude", "*",
+            ])
+            logger.debug(f"Syncing logs with pattern {pattern}")
+        else:
+            # Sync all loadgen logs
+            rsync_cmd.extend([
+                "--include", "loadgen-*.out",
+                "--include", "loadgen-*.err",
+                "--include", "loadgen-*-container.log",
+                "--include", "loadgen-results-*.json",
+                "--include", "*/",
+                "--exclude", "*",
+            ])
+            logger.debug("Syncing all loadgen logs")
+        
+        # Add source and destination
+        rsync_cmd.extend([
             f"{self._ssh_manager.ssh_user}@{self._ssh_manager.ssh_host}:{self._remote_logs_dir}/",
             f"{local_logs_dir}/"
-        ]
+        ])
         
         # Add SSH port option
         rsync_cmd.insert(2, "-e")
@@ -229,6 +505,20 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
                 logger.debug(f"Rsync stdout: {result.stdout}")
                 if result.stderr:
                     logger.debug(f"Rsync stderr: {result.stderr}")
+                
+                # Fix permissions on synced files so they're readable by the user
+                try:
+                    import glob
+                    for pattern in ["loadgen-*.out", "loadgen-*.err", "loadgen-*.json", "loadgen-*-container.log"]:
+                        for file in glob.glob(os.path.join(local_logs_dir, pattern)):
+                            try:
+                                os.chmod(file, 0o644)  # rw-r--r--
+                                logger.debug(f"Fixed permissions for {file}")
+                            except Exception as e:
+                                logger.warning(f"Could not fix permissions for {file}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error fixing file permissions: {e}")
+                
                 return True, "Logs synced successfully"
             else:
                 logger.error(f"Rsync failed with return code {result.returncode}")
@@ -313,9 +603,23 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         This script:
         1. Loads required modules (env, Apptainer)
         2. Builds the container if it doesn't exist
-        3. Runs the load test inside the container
+        3. Runs the load test inside the container with configuration
         """
-        prompts_json = json.dumps(self._load_config['prompts'])
+        # Build the JSON configuration for the load test
+        load_config = {
+            "target_url": self._load_config['target_url'],
+            "service_id": self._load_config['service_id'],
+            "num_clients": self._load_config['num_clients'],
+            "requests_per_second": self._load_config['requests_per_second'],
+            "duration_seconds": self._load_config['duration_seconds'],
+            "prompts": self._load_config['prompts'],
+            "max_tokens": self._load_config.get('max_tokens', 100),
+            "temperature": self._load_config.get('temperature', 0.7),
+            "direct_url": self._load_config.get('direct_url'),
+            "model": self._load_config.get('model'),
+            "results_file": f"/app/logs/loadgen-results-{group_id}.json"
+        }
+        prompts_json_config = json.dumps(load_config, indent=2)
         
         log_dir = self._remote_base_path.rstrip("/") + "/logs"
         sif_path = self._remote_base_path.rstrip("/") + "/containers/client.sif"
@@ -355,143 +659,13 @@ echo "Log directory: {log_dir}"
 echo "Container sif: {sif_path}"
 echo "==========================="
 
-# Generate the Python load test script with config
-echo "Generating Python load test script..."
-cat > {self._remote_base_path}/src/client/main.py << 'PYTHON_EOF'
-import asyncio
-import aiohttp
-import time
-import json
-import random
-from dataclasses import dataclass
+# Generate the JSON config file for this load test
+echo "Generating load test configuration..."
+cat > {log_dir}/loadgen-config-{group_id}.json << 'CONFIG_EOF'
+{prompts_json_config}
+CONFIG_EOF
 
-@dataclass
-class RequestMetrics:
-    timestamp: float
-    latency_ms: float
-    status_code: int
-    success: bool
-    error: str = None
-
-async def send_request(session, url, prompt, config):
-    '''Send request to Server API proxy endpoint.'''
-    start = time.time()
-    try:
-        service_id = config.get("service_id")
-        if not service_id:
-            raise ValueError("service_id is required")
-            
-        payload = {{
-            "prompt": prompt,
-            "max_tokens": config["max_tokens"],
-            "temperature": config.get("temperature", 0.7)
-        }}
-        
-        # Server API proxy endpoint
-        endpoint = f"{{url}}/api/v1/vllm/{{service_id}}/prompt"
-            
-        async with session.post(endpoint, json=payload, timeout=60) as resp:
-            latency = (time.time() - start) * 1000
-            if resp.status == 200:
-                data = await resp.json()
-                # Server proxy returns: {{"success": true, "response": "...", "usage": {{...}}}}
-                success = data.get("success", False)
-                if not success:
-                    return RequestMetrics(start, latency, resp.status, False, data.get("error", "Unknown error"))
-                return RequestMetrics(start, latency, resp.status, True)
-            else:
-                text = await resp.text()
-                return RequestMetrics(start, latency, resp.status, False, text[:100])
-    except Exception as e:
-        latency = (time.time() - start) * 1000
-        return RequestMetrics(start, latency, 0, False, str(e))
-
-async def worker(worker_id, session, config, end_time, results, semaphore):
-    prompts = config["prompts"]
-    url = config["target_url"]
-    while time.time() < end_time:
-        async with semaphore:
-            prompt = random.choice(prompts)
-            metric = await send_request(session, url, prompt, config)
-            results.append(metric)
-            if len(results) % 50 == 0:
-                print(f"Sent {{len(results)}} requests", flush=True)
-
-async def rate_limiter_task(semaphore, rps, end_time):
-    interval = 1.0 / rps
-    while time.time() < end_time:
-        semaphore.release()
-        await asyncio.sleep(interval)
-
-async def run_load_test():
-    config = {{
-        "target_url": "{self._load_config['target_url']}",
-        "service_id": "{self._load_config['service_id']}",
-        "num_clients": {self._load_config['num_clients']},
-        "requests_per_second": {self._load_config['requests_per_second']},
-        "duration_seconds": {self._load_config['duration_seconds']},
-        "prompts": {prompts_json},
-        "max_tokens": {self._load_config.get('max_tokens', 100)},
-        "temperature": {self._load_config.get('temperature', 0.7)}
-    }}
-    
-    print(f"Starting load test with {{config['num_clients']}} clients")
-    print(f"Target: {{config['target_url']}}")
-    print(f"Service ID: {{config['service_id']}}")
-    print(f"Target RPS: {{config['requests_per_second']}}")
-    
-    start_time = time.time()
-    end_time = start_time + config["duration_seconds"]
-    results = []
-    semaphore = asyncio.Semaphore(0)
-    
-    connector = aiohttp.TCPConnector(limit=config["num_clients"])
-    async with aiohttp.ClientSession(connector=connector) as session:
-        rate_task = asyncio.create_task(rate_limiter_task(semaphore, config["requests_per_second"], end_time))
-        workers = [
-            asyncio.create_task(worker(i, session, config, end_time, results, semaphore))
-            for i in range(config["num_clients"])
-        ]
-        await asyncio.gather(*workers, return_exceptions=True)
-        rate_task.cancel()
-        try:
-            await rate_task
-        except asyncio.CancelledError:
-            pass
-    
-    # Calculate results
-    total = len(results)
-    successful = sum(1 for r in results if r.success)
-    latencies = sorted([r.latency_ms for r in results])
-    
-    print("\\n" + "="*80)
-    print("LOAD TEST RESULTS")
-    print("="*80)
-    print(f"Total Requests: {{total}}")
-    print(f"Successful: {{successful}}")
-    print(f"Failed: {{total - successful}}")
-    if latencies:
-        print(f"Avg Latency: {{sum(latencies)/len(latencies):.2f}}ms")
-        print(f"P50 Latency: {{latencies[len(latencies)//2]:.2f}}ms")
-        print(f"P95 Latency: {{latencies[int(len(latencies)*0.95)]:.2f}}ms")
-        print(f"P99 Latency: {{latencies[int(len(latencies)*0.99)]:.2f}}ms")
-    print(f"Actual RPS: {{total/(time.time()-start_time):.2f}}")
-    print("="*80)
-    
-    # Save detailed results
-    results_file = "{log_dir}/loadgen-results-{group_id}.json"
-    with open(results_file, 'w') as f:
-        json.dump({{
-            "total_requests": total,
-            "successful": successful,
-            "failed": total - successful,
-            "latencies": latencies,
-            "config": config
-        }}, f, indent=2)
-    print(f"Results saved to: {{results_file}}")
-
-asyncio.run(run_load_test())
-PYTHON_EOF
+echo "Configuration file created: {log_dir}/loadgen-config-{group_id}.json"
 
 # Build container if needed
 if [ ! -f {sif_path} ]; then
@@ -532,15 +706,26 @@ fi
 # Ensure log directory exists
 mkdir -p {log_dir}
 
+# Copy the loadgen template to the logs directory for this run
+cp {self._remote_base_path}/src/client/loadgen_template.py {log_dir}/loadgen-{group_id}.py
+
 # Run the load test inside the container
 echo "Starting container..."
-echo "Running load test container..."
+echo "Running load test container with config: loadgen-config-{group_id}.json"
 
-apptainer run --bind {log_dir}:/app/logs {sif_path}
+# Mount the config file and Python script, then run
+# Redirect container output to a log file
+apptainer run \\
+    --bind {log_dir}:/app/logs \\
+    --bind {log_dir}/loadgen-config-{group_id}.json:/app/config.json:ro \\
+    --bind {log_dir}/loadgen-{group_id}.py:/app/main.py:ro \\
+    --env LOADGEN_CONFIG=/app/config.json \\
+    {sif_path} > {log_dir}/loadgen-{group_id}-container.log 2>&1
 container_exit_code=$?
 
 echo ""
 echo "Container exited with code: $container_exit_code"
+echo "Container logs saved to: {log_dir}/loadgen-{group_id}-container.log"
 echo "Load test completed at $(date)"
 
 exit $container_exit_code
@@ -603,4 +788,5 @@ exit $container_exit_code
                 
         except Exception as e:
             logger.exception(f"Error submitting SLURM job via SSH tunnel: {e}")
-            return False, {"error": str(e)} 
+            return False, {"error": str(e)}
+"""

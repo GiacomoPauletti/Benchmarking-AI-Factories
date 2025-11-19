@@ -7,7 +7,7 @@ The service provides endpoints to:
 - Create/delete client groups
 - Query group status  
 - Trigger group execution
-- Sync SLURM logs
+- Sync logs
 - Expose Prometheus metrics
 
 A separate benchmark orchestrator service should use this client service
@@ -146,7 +146,7 @@ async def create_client_group(
 ):
     """Create a new client group for load testing.
     
-    A client group represents a SLURM job that will spawn multiple concurrent clients
+    A client group represents a local process that will spawn multiple concurrent clients
     to send requests to AI inference services. The service automatically generates a unique
     group ID and returns it in the response.
     
@@ -159,7 +159,7 @@ async def create_client_group(
     - `max_tokens`: Maximum tokens per request (default: 100)
     - `temperature`: Sampling temperature (default: 0.7)
     - `model`: Model name (optional, uses server default)
-    - `time_limit`: SLURM job time limit in minutes (default: 30)
+    - `time_limit`: Process time limit in minutes (default: 30)
     
     **Returns (Success):**
     ```json
@@ -167,7 +167,7 @@ async def create_client_group(
       "status": "created",
       "group_id": 12345,
       "num_clients": 10,
-      "message": "Load generator job submitted targeting http://mel2133:8001"
+      "message": "Load generator process started targeting http://mel2133:8001"
     }
     ```
     
@@ -190,11 +190,10 @@ async def create_client_group(
     1. Client Service generates a unique group ID
     2. Validates the request
     3. Creates a ClientGroup object with load test configuration
-    4. Submits a SLURM job to HPC cluster
-    5. SLURM job runs load generator on compute node
-    6. Load generator sends requests to target vLLM endpoint
-    7. Results are saved to logs directory
-    8. Returns immediately with the group ID (job runs asynchronously)
+    4. Starts a local Python process to run the load generator
+    5. Load generator sends requests to target vLLM endpoint
+    6. Results are saved to logs directory
+    7. Returns immediately with the group ID (process runs asynchronously)
     
     **Note:** The load test runs asynchronously. Use `GET /client-groups/{group_id}`
     to check status and retrieve results after completion.
@@ -220,7 +219,7 @@ async def create_client_group(
         logger.error(f"Failed to create client group {group_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create client group. Check SSH connectivity and SLURM configuration."
+            detail="Failed to create client group. Check configuration and system resources."
         )
     
     logger.info(f"Created client group {group_id}: {payload.num_clients} clients @ {payload.requests_per_second} RPS")
@@ -228,7 +227,7 @@ async def create_client_group(
         "status": "created",
         "group_id": group_id,
         "num_clients": payload.num_clients,
-        "message": f"Load generator job submitted targeting {payload.target_url}"
+        "message": f"Load generator process started targeting {payload.target_url}"
     }
 
 
@@ -311,9 +310,9 @@ async def get_client_group_info(
     ```
     
     **Status Values:**
-    - `pending`: SLURM job submitted, waiting for client process to register
-    - `running`: Client process registered and ready to accept commands
-    - `stopped`: Client group has been terminated
+    - `pending`: Process starting, waiting for initialization
+    - `running`: Client process running and executing load test
+    - `stopped`: Client group has completed or been terminated
     """
     info = client_manager.get_group_info(group_id)
     
@@ -340,7 +339,7 @@ async def delete_client_group(
     group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
-    """Remove a client group and stop its associated SLURM job.
+    """Remove a client group and stop its associated process.
     
     **Path Parameters:**
     - `group_id`: Unique identifier for the client group
@@ -358,8 +357,8 @@ async def delete_client_group(
     curl -X DELETE http://localhost:8002/api/v1/client-groups/12345
     ```
     
-    **Note:** This only removes the group from the Client Service's tracking.
-    The SLURM job will continue running until its time limit or manual cancellation.
+    **Note:** This removes the group from the Client Service's tracking.
+    The load generator process will continue running until completion or manual termination.
     """
     logger.debug(f"Deleting client group {group_id}")
     client_manager.remove_client_group(group_id)
@@ -391,7 +390,7 @@ async def run_client_group(
     """Trigger a registered client group to start sending requests.
     
     This endpoint forwards the run command to the client process(es) that were spawned
-    by the SLURM job. The client processes will then start sending concurrent requests
+    by the load generator. The client processes will then start sending concurrent requests
     to the configured AI services.
     
     **Path Parameters:**
@@ -415,7 +414,7 @@ async def run_client_group(
     **Returns (Not Ready):**
     ```json
     {
-      "detail": "Client process not registered yet. Wait for SLURM job to start.",
+      "detail": "Client process not registered yet. Wait for process to start.",
       "status_code": 404
     }
     ```
@@ -639,7 +638,7 @@ async def get_client_group_metrics(
     if not client_addr:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Client process not registered yet. Wait for SLURM job to start."
+            detail="Client process not registered yet. Wait for process to start."
         )
     
     # Proxy metrics request to the client process
@@ -669,7 +668,7 @@ async def get_client_group_metrics(
 
 @router.get(
     "/client-groups/{group_id}/logs",
-    summary="Get SLURM logs for a client group",
+    summary="Get logs for a client group",
     tags=["Logs"],
     responses={
         200: {"description": "Logs retrieved successfully"},
@@ -680,12 +679,11 @@ async def get_group_logs(
     group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
-    """Get SLURM logs (stdout and stderr) from a client group's load generator job.
+    """Get logs (stdout and stderr) from a client group's load generator process.
     
-    Retrieves the job output logs via SSH. These logs contain:
-    - Job execution details
+    Retrieves the process output logs. These logs contain:
+    - Process execution details
     - Load test output and statistics
-    - Container build logs (if applicable)
     - Any errors or warnings
     
     **Path Parameters:**
@@ -694,13 +692,13 @@ async def get_group_logs(
     **Returns:**
     ```json
     {
-      "logs": "=== SLURM STDOUT ===\\nStarting load test...\\n\\n=== SLURM STDERR ===\\n..."
+      "logs": "=== STDOUT ===\\nStarting load test...\\n\\n=== STDERR ===\\n..."
     }
     ```
     
     **Example:**
     ```bash
-    curl http://localhost:8003/api/v1/client-groups/500008/logs
+    curl http://localhost:8002/api/v1/client-groups/500008/logs
     ```
     """
     logger.debug(f"Fetching logs for client group {group_id}")
@@ -714,10 +712,9 @@ async def get_group_logs(
     
     job_id = group.get("job_id")
     if not job_id:
-        return {"logs": "=== NO JOB ID ===\nJob not yet submitted or job ID not available"}
+        return {"logs": "=== NO JOB ID ===\nProcess not yet started or job ID not available"}
     
     # Get the dispatcher to fetch logs
-    # All groups share same dispatcher setup, so get any group's dispatcher
     groups = client_manager.list_groups()
     if not groups:
         raise HTTPException(
@@ -733,11 +730,9 @@ async def get_group_logs(
         )
     
     # Create a temporary dispatcher to fetch logs
-    from deployment.client_dispatcher import SlurmClientDispatcher
-    dispatcher = SlurmClientDispatcher(
-        load_config=any_group_info.get("load_config", {}),
-        account=os.environ.get("SLURM_ACCOUNT", "p200981"),
-        use_container=True
+    from deployment.client_dispatcher import LocalClientDispatcher
+    dispatcher = LocalClientDispatcher(
+        load_config=any_group_info.get("load_config", {})
     )
     
     logs = dispatcher.get_job_logs(job_id, group_id)
@@ -747,7 +742,7 @@ async def get_group_logs(
 @router.post(
     "/client-groups/{group_id}/logs/sync",
     response_model=LogSyncResponse,
-    summary="Sync SLURM logs for a client group",
+    summary="Sync logs for a client group",
     tags=["Logs"],
     responses={
         200: {"description": "Logs synced successfully"},
@@ -758,10 +753,9 @@ async def sync_group_logs(
     group_id: int,
     client_manager: ClientManager = Depends(get_client_manager)
 ):
-    """Sync SLURM job logs from MeluXina to local directory for a specific client group.
+    """Sync process logs to local directory for a specific client group.
     
-    This endpoint uses rsync over SSH to download log files from the remote HPC cluster
-    to the local `./logs` directory.
+    This endpoint copies log files from the process output to the local `./logs` directory.
     
     **Path Parameters:**
     - `group_id`: Unique identifier for the client group
@@ -782,11 +776,9 @@ async def sync_group_logs(
     ```
     
     **Log Files:**
-    - Pattern: `loadgen-{group_id}-{job_id}.out`
-    - Pattern: `loadgen-{group_id}-{job_id}.err`
+    - Pattern: `loadgen-{group_id}.out`
+    - Pattern: `loadgen-{group_id}.err`
     - Location: `./logs/` directory
-    
-    **Note:** Requires rsync to be installed and SSH access to MeluXina configured.
     """
     logger.info(f"Syncing logs for client group {group_id}")
     
@@ -804,13 +796,13 @@ async def sync_group_logs(
 @router.post(
     "/logs/sync",
     response_model=LogSyncResponse,
-    summary="Sync all SLURM logs from remote to local",
+    summary="Sync all logs from local processes",
     tags=["Logs"]
 )
 async def sync_all_logs(client_manager: ClientManager = Depends(get_client_manager)):
-    """Sync all SLURM job logs from MeluXina to local directory.
+    """Sync all process logs to local directory.
     
-    Downloads logs for all client groups in a single rsync operation.
+    Copies logs for all client groups to the local directory.
     
     **Returns:**
     ```json
@@ -829,8 +821,8 @@ async def sync_all_logs(client_manager: ClientManager = Depends(get_client_manag
     ```
     
     **Synced Files:**
-    - All files matching `client-*.out` and `client-*.err`
-    - Synced from remote MeluXina to local `./logs/` directory
+    - All files matching `loadgen-*.out` and `loadgen-*.err`
+    - Synced to local `./logs/` directory
     
     **Use Cases:**
     - Debugging failed jobs

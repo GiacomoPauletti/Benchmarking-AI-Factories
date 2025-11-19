@@ -1,28 +1,25 @@
 ````markdown
 # AI Factory Client Services
 
-A comprehensive suite of services for managing and coordinating AI benchmarking clients on HPC infrastructures with Slurm.
+A comprehensive suite of services for managing and coordinating AI benchmarking clients for local execution.
 
 ## 🎯 Overview
 
-The AI Factory Client Services system is designed to orchestrate performance tests on distributed AI services. It provides a scalable architecture for launching and managing client groups that execute coordinated benchmarks against AI servers.
+The AI Factory Client Services system is designed to orchestrate performance tests on AI services running locally. It provides a scalable architecture for launching and managing client groups that execute coordinated benchmarks against AI servers.
 
 ### Main Components
 
 - **Client Service**: FastAPI service for client group management
 - **VLLMClient**: Specialized client for vLLM service interactions
-- **Slurm Integration**: Native integration with Slurm scheduler for HPC deployment
-- **Container Support**: Complete support for Apptainer container execution
+- **Local Execution**: Native Python process execution for load testing
+- **No Containerization**: Direct execution without containers for simplicity
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.8+ (for native execution)
-- Docker & Docker Compose (for containerized execution) 
-- Slurm cluster access (for HPC deployment)
-- SSH access to HPC cluster (MeluXina)
-- Valid SSH keys for cluster authentication
+- Python 3.8+
+- Docker & Docker Compose (for containerized services)
 
 ### Installation
 
@@ -31,9 +28,8 @@ The AI Factory Client Services system is designed to orchestrate performance tes
 git clone <repository-url>
 cd Benchmarking-AI-Factories
 
-# Set up environment
+# Set up environment (if needed)
 cp .env.example .env
-# Edit .env with your SSH credentials
 
 # Start all services
 docker compose up -d
@@ -50,15 +46,7 @@ docker compose down
 
 ### Configuration
 
-Edit the `.env` file with your MeluXina credentials:
-
-```bash
-SSH_HOST=login.lxp.lu
-SSH_PORT=8822
-SSH_USER=your_meluxina_username
-SSH_KEY_PATH=~/.ssh/id_rsa
-REMOTE_BASE_PATH=/home/users/your_meluxina_username/Benchmarking-AI-Factories
-```
+The client service runs locally and does not require SSH or SLURM configuration.
 
 ### Custom Configuration
 
@@ -67,29 +55,24 @@ You can override default settings using environment variables:
 ```bash
 # Custom server address and port
 CLIENT_SERVICE_SERVER_ADDR=http://192.168.1.100:8001 \
-CLIENT_SERVICE_PORT=8003 \
-CLIENT_SERVICE_CONTAINER_MODE=true \
+CLIENT_SERVICE_PORT=8002 \
 docker compose up -d client
-
-# Enable container mode for MeluXina clients
-CLIENT_SERVICE_CONTAINER_MODE=true docker compose up -d client
 ```
 
 ### Architecture
 
-- **Client Service**: Runs locally in Docker container
-- **Clients**: Run on MeluXina HPC cluster via SSH
-- **Communication**: SSH reverse tunnels for client-service communication
-- **Deployment**: SLURM jobs submitted via SSH to launch clients on MeluXina
+- **Client Service**: Runs locally (in Docker container or natively)
+- **Clients**: Run as local Python processes on the same machine
+- **Communication**: Direct HTTP communication (no SSH tunnels needed)
+- **Deployment**: Local subprocess execution for load generators
 
 ### Key Features
 
 - 🐳 **Docker-first**: Simple `docker compose up -d client` to start
-- 🔐 **SSH Integration**: Automatic SSH tunnels and job submission  
 - 🔄 **Hot Reload**: Source code changes reflected immediately
 - 📊 **API Documentation**: Auto-generated at http://localhost:8002/docs
-- 🏗️ **SLURM Integration**: Direct job submission to MeluXina
-- 📦 **Container Support**: Apptainer containers on MeluXina side
+- 🏗️ **Local Execution**: No HPC cluster or SLURM required
+- 📦 **No Containers**: Direct Python execution for clients
 
 ## 📁 Repository Organization
 
@@ -129,7 +112,7 @@ services/client/
 ### Service Layer
 - **ClientManager**: Singleton for client group management
 - **Frontend API**: Endpoints for group creation/management
-- **Slurm Integration**: Automatic job dispatch on HPC clusters
+- **Local Execution**: Automatic process spawning for load tests
 
 ### Client Layer
 - **VLLMClient**: Specialized client for vLLM services
@@ -137,9 +120,8 @@ services/client/
 - **Observer Pattern**: Notification system for monitoring
 
 ### Deployment Layer
-- **Container Support**: Execution in Apptainer containers
-- **Slurm Dispatcher**: Automatic job submission
-- **Configuration Management**: Credentials and configuration management
+- **Local Execution**: Python subprocess-based execution
+- **Configuration Management**: Load test configuration management
 
 ## 🔧 Typical Workflow
 
@@ -150,19 +132,18 @@ services/client/
 
 2. **Create Client Group** (via API)
    ```bash
-   curl -X POST http://client-service:8001/api/v1/client-group/123 \
+   curl -X POST http://localhost:8002/api/v1/client-groups \
      -H "Content-Type: application/json" \
-     -d '{"num_clients": 5, "time_limit": 10}'
+     -d '{"target_url": "http://localhost:8001", "service_id": "test", "num_clients": 5, "requests_per_second": 1.0, "duration_seconds": 60, "prompts": ["Hello"], "time_limit": 10}'
    ```
 
-3. **Client Process Registration** (automatic via Slurm)
-   - System automatically dispatches Slurm jobs
-   - Clients register with service on startup
+3. **Client Process Registration** (automatic)
+   - System automatically spawns local Python processes
+   - Clients run in background and execute load tests
 
-4. **Benchmark Execution**
-   ```bash
-   curl -X POST http://client-service:8001/api/v1/client-group/123/run
-   ```
+4. **Monitor Results**
+   - Check logs in `./logs/` directory
+   - View results JSON files for detailed metrics
 
 ## 🧪 Testing
 
@@ -177,12 +158,6 @@ The project includes a comprehensive test suite:
 
 # With coverage
 ./scripts/run_tests.sh --coverage
-
-# Container mode (unit + integration tests)
-./scripts/run_tests.sh --container
-
-# Integration tests only
-./scripts/run_tests.sh --integration
 ```
 
 See `tests/README.md` for complete testing system documentation.
@@ -191,7 +166,6 @@ See `tests/README.md` for complete testing system documentation.
 
 - **[Architecture Guide](docs/architecture.md)**: Detailed system architecture
 - **[API Reference](docs/api-reference.md)**: Complete API documentation
-- **[Slurm Integration](docs/slurm-integration.md)**: HPC integration guide
 - **[Deployment Guide](docs/deployment-guide.md)**: Deployment procedures
 - **[Scripts Documentation](scripts/README.md)**: Scripts usage guide
 
@@ -201,56 +175,28 @@ See `tests/README.md` for complete testing system documentation.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SLURM_JWT` | JWT token for Slurm API | Auto-generated |
-| `USER` | Username for Slurm | Auto-detected |
-
-### Configuration Files
-
-Example `slurm.conf`:
-```
-url=http://slurmrestd.cluster.domain:6820
-user_name=myuser
-api_ver=v0.0.40
-account=myaccount
-jwt=<token-if-available>
-```
-
-## 🐳 Container Mode
-
-The system supports complete container execution:
-
-```bash
-# Build containers
-./scripts/build_all.sh
-
-# Launch with container mode
-python src/main.py http://server:8000 --container
-```
-
-Containers use Apptainer for HPC compatibility and include all necessary dependencies.
+| `CLIENT_SERVICE_PORT` | Port for client service | 8002 |
+| `CLIENT_SERVICE_SERVER_ADDR` | Server address | http://localhost:8001 |
 
 ## 🔍 Troubleshooting
 
 ### Common Issues
 
-**Invalid Slurm token**
+**Port already in use**
 ```bash
-# Verify token
-scontrol token
-
-# Regenerate if needed
-export SLURM_JWT=$(scontrol token | grep SLURM_JWT | cut -d= -f2)
+# Change the port
+CLIENT_SERVICE_PORT=8003 python src/main.py
 ```
 
 **Connection problems**
 - Verify that AI server is reachable
 - Check firewall and open ports
-- Verify Slurm network configuration
+- Verify network configuration
 
-**Container issues**
-- Ensure Apptainer is installed
-- Verify permissions for container build
-- Check available disk space
+**Process issues**
+- Check available system resources
+- Verify Python dependencies are installed
+- Check available disk space for logs
 
 ## 🤝 Contributing
 
@@ -280,6 +226,6 @@ For issues and questions:
 
 ---
 
-**Version**: 1.0.0  
-**Compatibility**: Python 3.8+, Slurm 20.02+  
-**Last updated**: October 2025
+**Version**: 2.0.0  
+**Compatibility**: Python 3.8+  
+**Last updated**: November 2025
