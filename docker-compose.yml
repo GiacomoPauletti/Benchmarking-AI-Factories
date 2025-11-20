@@ -38,6 +38,12 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
 
   # Prometheus - Metrics storage and scraping
   prometheus:
@@ -142,7 +148,7 @@ services:
       prometheus:
         condition: service_healthy
       server:
-        condition: service_started
+        condition: service_healthy
 
   # Front-end
   grafana:
@@ -192,6 +198,43 @@ services:
     working_dir: /
     command: mkdocs serve --dev-addr=0.0.0.0:8000
     restart: unless-stopped
+
+  logs:
+    build:
+      context: ./services/logs
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-logs
+    ports:
+      - "8004:8004"  # Expose logs service API
+    volumes:
+      # Mount source code for hot-reload during development
+      - ./services/logs/src:/app/src
+      - ./services/logs/data:/app/data  # Persistent log storage
+      # Mount SSH keys from host (read-only) 
+      - ${HOME}/.ssh:/tmp/host-ssh:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      
+      # Logs Service Configuration
+      - SYNC_INTERVAL=60  # Seconds between syncs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    networks: 
+      - ai-factory
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
   ai-factory:
