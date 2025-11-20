@@ -732,7 +732,7 @@ class SlurmDeployer:
         else:
             # Search all categories
             for yaml_file in recipes_dir.rglob(f"{recipe_name}.yaml"):
-                return str(yaml_file.parts[-2] / recipe_name), yaml_file
+                return f"{yaml_file.parts[-2]}/{recipe_name}", yaml_file
         
             raise FileNotFoundError(f"Recipe '{recipe_name}' not found")
     
