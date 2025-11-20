@@ -51,7 +51,7 @@ class InferenceRecipeBuilder(RecipeScriptBuilder):
         """Build the container image build/check block."""
         return f"""
 # Build container if needed
-if [ ! -f {paths.sif_path} ]; then
+if ! apptainer inspect -a {paths.sif_path}; then
     echo 'Building Apptainer image: {paths.sif_path}'
     
     # Set up user-writable directories to avoid permission issues
@@ -65,7 +65,7 @@ if [ ! -f {paths.sif_path} ]; then
     echo '{{}}' > $HOME/.apptainer/docker-config.json
     
     # Build container
-    apptainer build --disable-cache --no-https {paths.sif_path} {paths.def_path}
+    apptainer --debug build --fix-perms --force --disable-cache --no-https {paths.sif_path} {paths.def_path}
     build_result=$?
     
     # Clean up
