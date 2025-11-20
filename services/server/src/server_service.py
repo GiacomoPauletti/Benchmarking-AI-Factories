@@ -69,7 +69,7 @@ class ServerService:
             import yaml
             
             # Load recipe
-            recipe_path = self.deployer._find_recipe(recipe_name)
+            recipe_name, recipe_path = self.deployer._find_recipe(recipe_name)
             with open(recipe_path, 'r') as f:
                 recipe = yaml.safe_load(f)
             
