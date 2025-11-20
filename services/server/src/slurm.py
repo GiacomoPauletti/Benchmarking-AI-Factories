@@ -77,9 +77,8 @@ class SlurmDeployer:
         except Exception as e:
             self.logger.warning(f"Could not ensure remote directories: {e}")
             
-        print(f"Local base path (for recipes): {self.local_base_path}")
-        print(f"Remote base path (for SLURM jobs): {self.remote_base_path}")
-        self.logger.debug(f"Local: {self.local_base_path}, Remote: {self.remote_base_path}")
+        self.logger.debug(f"Local base path (for recipes): {self.local_base_path}")
+        self.logger.debug(f"Remote base path (for SLURM jobs): {self.remote_base_path}")
         
         # SLURM REST API configuration (via SSH tunnel)
         self.base_url = f"http://localhost:{self.rest_api_port}/slurm/v0.0.40"
@@ -138,16 +137,16 @@ class SlurmDeployer:
         self.ssh_manager.create_remote_directory(remote_hf_cache)
         
         # Load recipe
-        recipe_path = self._find_recipe(recipe_name)
+        recipe_name, recipe_path = self._find_recipe(recipe_name)
         with open(recipe_path, 'r') as f:
             recipe = yaml.safe_load(f)
         
         # Generate and submit job
-        job_payload = self._create_job_payload(recipe, config or {}, recipe_name, recipe_path)
+        job_payload = self._create_job_payload(recipe, config or {}, recipe_path)
         
         # Debug: print the payload
-        print("Submitting job payload:")
-        print(json.dumps(job_payload, indent=2))
+        self.logger.info("Submitting job payload")
+        self.logger.debug(json.dumps(job_payload, indent=2))
         
         response = requests.post(
             f"{self.base_url}/job/submit", 
@@ -156,8 +155,8 @@ class SlurmDeployer:
         )
         
         # Debug: print the response for troubleshooting
-        print(f"SLURM API Response Status: {response.status_code}")
-        print(f"SLURM API Response Body: {response.text}")
+        self.logger.info(f"SLURM API Response Status: {response.status_code}")
+        self.logger.debug(f"SLURM API Response Body: {response.text}")
         
         response.raise_for_status()
         
@@ -720,24 +719,24 @@ class SlurmDeployer:
         
         return nodes
     
-    def _find_recipe(self, recipe_name: str) -> Path:
+    def _find_recipe(self, recipe_name: str) -> tuple[str, Path]:
         """Find recipe file by name (searches locally)."""
         recipes_dir = self.local_base_path / "src" / "recipes"
         
         if "/" in recipe_name:
             category, name = recipe_name.split("/", 1)
             recipe_path = recipes_dir / category / f"{name}.yaml"
+            if not recipe_path or not recipe_path.exists():
+                raise FileNotFoundError(f"Recipe path '{recipe_name}' does not exist")
+            return recipe_name, recipe_path
         else:
             # Search all categories
             for yaml_file in recipes_dir.rglob(f"{recipe_name}.yaml"):
-                return yaml_file
-            recipe_path = None
+                return str(yaml_file.parts[-2] / recipe_name), yaml_file
         
-        if not recipe_path or not recipe_path.exists():
             raise FileNotFoundError(f"Recipe '{recipe_name}' not found")
-        return recipe_path
     
-    def _create_job_payload(self, recipe: Dict[str, Any], config: Dict[str, Any], recipe_name: str, recipe_path: Path) -> Dict[str, Any]:
+    def _create_job_payload(self, recipe: Dict[str, Any], config: Dict[str, Any], recipe_path: Path) -> Dict[str, Any]:
         """Create SLURM job payload according to official API schema."""
         # Merge resources: recipe defaults + config overrides
         resources = recipe.get("resources", {}).copy()
