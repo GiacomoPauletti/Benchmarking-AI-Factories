@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional
-from services.base_service import BaseService
+from service_orchestration.services.base_service import BaseService
 
 
 class VectorDbService(BaseService, ABC):

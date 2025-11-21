@@ -5,7 +5,7 @@ import requests
 import time
 import json
 from .inference_service import InferenceService
-from load_balancer import LoadBalancer
+from service_orchestration.load_balancer import LoadBalancer
 
 DEFAULT_VLLM_PORT = 8001
 BASE_TIMEOUT = 30  # Base timeout for single-node setups
@@ -144,52 +144,46 @@ class VllmService(InferenceService):
                     "models": []
                 }
 
-            # Parse endpoint URL and use SSH tunneling to reach compute node (same as prompt endpoint)
+            # Parse endpoint URL and make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or 8001
             path = "/v1/models"
             
-            self.logger.debug("Querying models via SSH: %s:%s%s", remote_host, remote_port, path)
+            self.logger.debug("Querying models: %s:%s%s", remote_host, remote_port, path)
             
-            # Use SSH to make the HTTP request (tunnels through login node to compute node)
-            ssh_manager = self.deployer.ssh_manager
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="GET",
-                path=path,
-                timeout=timeout
-            )
-            
-            # Create a mock response object that matches requests.Response interface
-            class MockResponse:
-                def __init__(self, status_code, text, ok):
-                    self.status_code = status_code
-                    self.text = text
-                    self.ok = ok
-                
-                def json(self):
-                    import json
-                    return json.loads(self.text)
-            
-            resp = MockResponse(status_code, body, status_code >= 200 and status_code < 300)
-            
-            if not resp.ok:
-                self.logger.warning("Model discovery for %s returned %s: %s", service_id, resp.status_code, resp.text)
+            # Direct HTTP request to compute node
+            try:
+                response = requests.get(
+                    f"http://{remote_host}:{remote_port}{path}",
+                    timeout=timeout
+                )
+            except Exception as e:
+                self.logger.warning("Model discovery for %s failed: %s", service_id, str(e))
                 return {
                     "success": False,
-                    "error": f"HTTP {resp.status_code} from models endpoint",
-                    "message": f"Failed to query models from vLLM service (HTTP {resp.status_code}).",
+                    "error": f"Connection failed: {str(e)}",
+                    "message": "Failed to connect to vLLM service for model discovery.",
+                    "service_id": service_id,
+                    "endpoint": endpoint,
+                    "models": []
+                }
+            
+            if not response.ok:
+                self.logger.warning("Model discovery for %s returned %s: %s", service_id, response.status_code, response.text)
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code} from models endpoint",
+                    "message": f"Failed to query models from vLLM service (HTTP {response.status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "models": []
                 }
 
-            self.logger.debug("Model discovery response for %s: %s", service_id, resp.text)
+            self.logger.debug("Model discovery response for %s: %s", service_id, response.text)
 
-            data = resp.json()
+            data = response.json()
             models = []
             
             # vLLM returns {"object": "list", "data": [...]}
@@ -280,7 +274,7 @@ class VllmService(InferenceService):
         endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
         if not endpoint:
             # Job is running but endpoint not available yet
-            self.logger.debug(f"Service {service_id} is RUNNING but endpoint not resolved yet")
+            self.logger.info(f"Service {service_id} is RUNNING but endpoint not resolved yet")
             return False, "starting", None
         
         # Try lightweight HTTP GET to /v1/models with short timeout
@@ -292,21 +286,23 @@ class VllmService(InferenceService):
             remote_port = parsed.port or 8001
             path = "/v1/models"
             
-            self.logger.debug(f"Testing readiness + discovering model via {remote_host}:{remote_port}{path}")
+            self.logger.info(f"Testing readiness + discovering model via {remote_host}:{remote_port}{path}")
             
-            # Use SSH to make the HTTP request with short timeout
-            ssh_manager = self.deployer.ssh_manager
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="GET",
-                path=path,
-                timeout=8  # Short timeout for health checks (vs 30s for prompts)
-            )
+            # Direct HTTP request to compute node (orchestrator runs on MeluXina)
+            try:
+                response = requests.get(
+                    f"http://{remote_host}:{remote_port}{path}",
+                    timeout=8
+                )
+                status_code = response.status_code
+                body = response.text
+            except Exception as e:
+                self.logger.info(f"Direct HTTP request to {remote_host}:{remote_port} failed: {e}")
+                return False, "starting", None
             
             # Connection succeeded and got valid HTTP response
             if status_code >= 200 and status_code < 300:
-                self.logger.debug(f"Service {service_id} is ready (HTTP {status_code})")
+                self.logger.info(f"Service {service_id} is ready (HTTP {status_code})")
                 
                 # Parse model list from response
                 model = None
@@ -605,7 +601,7 @@ class VllmService(InferenceService):
         # Default to base timeout
         return BASE_TIMEOUT
 
-    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
+    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> requests.Response:
         """Try to send prompt using chat completions endpoint."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -625,33 +621,18 @@ class VllmService(InferenceService):
         # Calculate timeout based on node count
         timeout = self._calculate_timeout(service_id) if service_id else BASE_TIMEOUT
         
-        self.logger.debug("Trying chat endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
+        self.logger.debug("Trying chat endpoint: http://%s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
-        # Use SSH to make the HTTP request
-        ssh_manager = self.deployer.ssh_manager
-        success, status_code, body = ssh_manager.http_request_via_ssh(
-            remote_host=remote_host,
-            remote_port=remote_port,
-            method="POST",
-            path=path,
-            json_data=request_data,
+        # Direct HTTP request to compute node
+        response = requests.post(
+            f"http://{remote_host}:{remote_port}{path}",
+            json=request_data,
             timeout=timeout
         )
         
-        # Create a mock response object that matches requests.Response interface
-        class MockResponse:
-            def __init__(self, status_code, text, ok):
-                self.status_code = status_code
-                self.text = text
-                self.ok = ok
-            
-            def json(self):
-                import json
-                return json.loads(self.text)
-        
-        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
+        return response
 
-    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
+    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> requests.Response:
         """Try to send prompt using completions endpoint (for base models)."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -671,31 +652,16 @@ class VllmService(InferenceService):
         # Calculate timeout based on node count
         timeout = self._calculate_timeout(service_id) if service_id else BASE_TIMEOUT
         
-        self.logger.debug("Trying completions endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
+        self.logger.debug("Trying completions endpoint: http://%s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
-        # Use SSH to make the HTTP request
-        ssh_manager = self.deployer.ssh_manager
-        success, status_code, body = ssh_manager.http_request_via_ssh(
-            remote_host=remote_host,
-            remote_port=remote_port,
-            method="POST",
-            path=path,
-            json_data=request_data,
+        # Direct HTTP request to compute node
+        response = requests.post(
+            f"http://{remote_host}:{remote_port}{path}",
+            json=request_data,
             timeout=timeout
         )
         
-        # Create a mock response object that matches requests.Response interface
-        class MockResponse:
-            def __init__(self, status_code, text, ok):
-                self.status_code = status_code
-                self.text = text
-                self.ok = ok
-            
-            def json(self):
-                import json
-                return json.loads(self.text)
-        
-        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
+        return response
 
     def _is_chat_template_error(self, response: requests.Response) -> bool:
         """Check if response indicates a chat template error."""
@@ -838,41 +804,48 @@ class VllmService(InferenceService):
                     "metrics": ""
                 }
 
-            # Parse endpoint URL and use SSH tunneling to reach compute node
+            # Parse endpoint URL and make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or 8001
             path = "/metrics"
             
-            self.logger.debug("Querying metrics via SSH: %s:%s%s", remote_host, remote_port, path)
+            self.logger.debug("Querying metrics: http://%s:%s%s", remote_host, remote_port, path)
             
-            # Use SSH to make the HTTP request (tunnels through login node to compute node)
-            ssh_manager = self.deployer.ssh_manager
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="GET",
-                path=path,
-                timeout=timeout
-            )
-            
-            if status_code < 200 or status_code >= 300:
-                self.logger.warning("Metrics endpoint for %s returned %s: %s", service_id, status_code, body[:200])
+            # Direct HTTP request to compute node
+            try:
+                response = requests.get(
+                    f"http://{remote_host}:{remote_port}{path}",
+                    timeout=timeout
+                )
+            except Exception as e:
+                self.logger.warning("Metrics retrieval for %s failed: %s", service_id, str(e))
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from metrics endpoint",
-                    "message": f"Failed to query metrics from vLLM service (HTTP {status_code}).",
+                    "error": f"Connection failed: {str(e)}",
+                    "message": "Failed to connect to vLLM service for metrics.",
+                    "service_id": service_id,
+                    "endpoint": endpoint,
+                    "metrics": ""
+                }
+            
+            if response.status_code < 200 or response.status_code >= 300:
+                self.logger.warning("Metrics endpoint for %s returned %s: %s", service_id, response.status_code, response.text[:200])
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code} from metrics endpoint",
+                    "message": f"Failed to query metrics from vLLM service (HTTP {response.status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "metrics": ""
                 }
 
-            self.logger.debug("Metrics retrieved for %s (size: %d bytes)", service_id, len(body))
+            self.logger.debug("Metrics retrieved for %s (size: %d bytes)", service_id, len(response.text))
 
             return {
                 "success": True,
-                "metrics": body,  # Return raw Prometheus text format
+                "metrics": response.text,  # Return raw Prometheus text format
                 "service_id": service_id,
                 "endpoint": endpoint,
                 "metrics_format": "prometheus_text_format"

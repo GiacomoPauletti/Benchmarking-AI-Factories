@@ -11,16 +11,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Clean package imports
-from api.routes import router
+from api.routes import router, get_server_service
 from logging_setup import setup_logging
+from orchestrator_initializer import initialize_orchestrator_proxy
 
-# Global logger and server service instance
+# Global logger and orchestrator proxy
 logger = None
-server_service_instance = None
+orchestrator_proxy = None
 
 def shutdown_handler(signum, frame):
-    """Handle graceful shutdown by stopping all running services."""
-    global server_service_instance, logger
+    """Handle graceful shutdown by stopping all running services and orchestrator."""
+    global logger, orchestrator_proxy
     
     if logger:
         logger.info(f"Received shutdown signal {signum}. Stopping all services...")
@@ -28,10 +29,21 @@ def shutdown_handler(signum, frame):
         print(f"Received shutdown signal {signum}. Stopping all services...")
     
     try:
-        if server_service_instance is None:
-            # Import here to avoid circular dependency
-            from server_service import ServerService
-            server_service_instance = ServerService()
+        # First, stop the orchestrator to prevent new jobs
+        if orchestrator_proxy:
+            try:
+                if logger:
+                    logger.info("Stopping orchestrator job...")
+                else:
+                    print("Stopping orchestrator job...")
+                orchestrator_proxy.stop_orchestrator()
+            except Exception as e:
+                if logger:
+                    logger.error(f"Failed to stop orchestrator: {e}")
+                else:
+                    print(f"Failed to stop orchestrator: {e}")
+        
+        server_service_instance = get_server_service()
         
         # Get all running services
         services = server_service_instance.list_running_services()
@@ -115,16 +127,64 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint - server is healthy but may not be ready."""
+    global orchestrator_proxy
+    
+    return {
+        "status": "healthy",
+        "orchestrator_initialized": orchestrator_proxy is not None,
+        "ready": orchestrator_proxy is not None
+    }
+
+@app.get("/ready")
+async def ready():
+    """Readiness check endpoint - server is ready to accept requests."""
+    global orchestrator_proxy
+    
+    if orchestrator_proxy is None:
+        from fastapi import Response
+        import os
+        
+        # Provide helpful error message
+        remote_base = os.getenv("REMOTE_BASE_PATH", "~/ai-factory-benchmarks")
+        error_detail = {
+            "status": "not ready",
+            "reason": "orchestrator not initialized",
+            "details": (
+                "The orchestrator failed to initialize. This is a critical error that prevents "
+                "the server from accepting service deployment requests."
+            ),
+            "troubleshooting": {
+                "check_logs": f"{remote_base}/logs/orchestrator_job.err",
+                "common_issues": [
+                    "Orchestrator container (.sif) is corrupted - it will be rebuilt on next attempt",
+                    "SLURM job failed to start - check SLURM queue with 'squeue'",
+                    "Network connectivity issues between server and MeluXina",
+                    "SSH authentication failure"
+                ],
+                "next_steps": [
+                    "Check the orchestrator job logs on MeluXina",
+                    "Restart the server service to trigger a rebuild",
+                    "Verify SSH connectivity to MeluXina"
+                ]
+            }
+        }
+        
+        return Response(
+            content=str(error_detail).replace("'", '"'),
+            status_code=503,
+            media_type="application/json"
+        )
+    
+    return {"status": "ready", "orchestrator": "available"}
 
 # Include API routes
 app.include_router(router, prefix="/api/v1")
 
 @app.on_event("startup")
 async def on_startup():
-    """FastAPI startup event handler - set up SSH tunnel."""
-    global logger
+    """FastAPI startup event handler - set up SSH tunnel and wait for orchestrator."""
+    global logger, orchestrator_proxy
     
     if logger:
         logger.info("Setting up SSH tunnel to SLURM REST API...")
@@ -140,28 +200,104 @@ async def on_startup():
             logger.info("SSH tunnel established successfully on port 6820")
         else:
             print("SSH tunnel established successfully on port 6820")
-    except Exception as e:
+            
+        # Initialize OrchestratorProxy - this blocks until orchestrator is ready
         if logger:
-            logger.warning(f"Failed to set up SSH tunnel: {e}")
-            logger.warning("The server will attempt to create tunnels on-demand, but this may cause delays.")
+            logger.info("Initializing orchestrator (may take up to 2 minutes)...")
         else:
-            print(f"WARNING: Failed to set up SSH tunnel: {e}")
-            print("The server will attempt to create tunnels on-demand, but this may cause delays.")
+            print("Initializing orchestrator (may take up to 2 minutes)...")
+            
+        orchestrator_proxy = initialize_orchestrator_proxy(ssh_manager)
+        
+        if orchestrator_proxy:
+            # Inject into ServerService singleton
+            server_service_instance = get_server_service()
+            server_service_instance.set_orchestrator_proxy(orchestrator_proxy)
+            
+            if logger:
+                logger.info("✓ Server is ready - orchestrator initialized successfully")
+            else:
+                print("✓ Server is ready - orchestrator initialized successfully")
+        else:
+            error_msg = (
+                "✗ CRITICAL: Orchestrator initialization FAILED - server is NOT ready!\n"
+                "The orchestrator container may be corrupted or failed to build.\n"
+                "Check logs.\n"
+                "The server will remain in unhealthy state until this is resolved."
+            )
+            if logger:
+                logger.error(error_msg)
+            else:
+                print(error_msg)
+            # Don't raise - let the server run but mark as not ready
+            # This allows health checks to show the issue
+                
+    except Exception as e:
+        error_msg = (
+            f"✗ CRITICAL: Server initialization FAILED: {e}\n"
+            "The orchestrator is required for the server to function.\n"
+            "Possible causes:\n"
+            "  - SSH connection to MeluXina failed\n"
+            "  - SLURM REST API tunnel failed\n"
+            "  - Orchestrator container build failed\n"
+            "  - Network connectivity issues\n"
+            "Check logs for more details."
+        )
+        if logger:
+            logger.error(error_msg)
+            logger.exception("Detailed error:")
+        else:
+            print(error_msg)
+            import traceback
+            traceback.print_exc()
+        # Don't raise - let health endpoint report the issue
+
+@app.get("/orchestrator/services")
+async def get_orchestrator_services():
+    """Get services from orchestrator"""
+    from fastapi import HTTPException
+    if not orchestrator_proxy:
+        raise HTTPException(status_code=503, detail="Orchestrator not available")
+    return orchestrator_proxy.list_services()
+
+@app.get("/orchestrator/metrics")
+async def get_orchestrator_metrics():
+    """Get metrics from orchestrator"""
+    from fastapi import HTTPException
+    if not orchestrator_proxy:
+        raise HTTPException(status_code=503, detail="Orchestrator not available")
+    return orchestrator_proxy.get_metrics()
+
+@app.post("/orchestrator/configure")
+async def configure_orchestrator(strategy: str):
+    """Configure orchestrator load balancing"""
+    from fastapi import HTTPException
+    if not orchestrator_proxy:
+        raise HTTPException(status_code=503, detail="Orchestrator not available")
+    return orchestrator_proxy.configure_load_balancer(strategy)
 
 @app.on_event("shutdown")
 async def on_shutdown():
     """FastAPI shutdown event handler."""
-    global server_service_instance, logger
+    global logger, orchestrator_proxy
     
     if logger:
-        logger.info("FastAPI shutdown event triggered. Stopping all services...")
+        logger.info("FastAPI shutdown event triggered. Stopping orchestrator and services...")
     else:
-        print("FastAPI shutdown event triggered. Stopping all services...")
+        print("FastAPI shutdown event triggered. Stopping orchestrator and services...")
     
     try:
-        if server_service_instance is None:
-            from server_service import ServerService
-            server_service_instance = ServerService()
+        # Stop orchestrator first
+        if orchestrator_proxy:
+            try:
+                if logger:
+                    logger.info("Stopping orchestrator job...")
+                orchestrator_proxy.stop_orchestrator()
+            except Exception as e:
+                if logger:
+                    logger.error(f"Failed to stop orchestrator: {e}")
+        
+        server_service_instance = get_server_service()
         
         services = server_service_instance.list_running_services()
         

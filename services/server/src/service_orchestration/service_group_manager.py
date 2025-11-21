@@ -172,6 +172,24 @@ class ServiceGroupManager:
         
         self.logger.warning(f"Replica {replica_id} not found in group {group_id}")
     
+    def update_node_info(self, group_id: str, job_id: str, node: str) -> None:
+        """Update the node hostname for a job in a group.
+        
+        Args:
+            group_id: The service group ID
+            job_id: The SLURM job ID
+            node: The node hostname
+        """
+        group = self.groups.get(group_id)
+        if not group:
+            return
+        
+        for node_job in group.get("node_jobs", []):
+            if node_job["job_id"] == job_id and not node_job.get("node"):
+                node_job["node"] = node
+                self.logger.debug(f"Updated node info for job {job_id} in group {group_id}: {node}")
+                return
+    
     def _update_group_status(self, group_id: str) -> None:
         """Update the overall group status based on replica statuses.
         
@@ -191,15 +209,15 @@ class ServiceGroupManager:
             group["status"] = "pending"
             return
         
-        # Count status types
-        running_count = sum(1 for s in replica_statuses if s == "running")
+        # Count status types (treat "ready" as "running")
+        ready_or_running_count = sum(1 for s in replica_statuses if s in ["running", "ready"])
         starting_count = sum(1 for s in replica_statuses if s == "starting")
         completed_count = sum(1 for s in replica_statuses if s in ["completed", "failed", "cancelled"])
         
         # Determine group status
         if completed_count == len(replica_statuses):
             group["status"] = "completed"
-        elif running_count > 0:
+        elif ready_or_running_count > 0:
             group["status"] = "running"
         elif starting_count > 0:
             group["status"] = "starting"
@@ -213,13 +231,13 @@ class ServiceGroupManager:
             group_id: The service group ID
             
         Returns:
-            List of replica IDs with status "running" or "healthy"
+            List of replica IDs with status "ready", "running", or "healthy"
         """
         all_replicas = self.get_all_replicas_flat(group_id)
         
         healthy_replicas = []
         for replica in all_replicas:
-            if replica.get("status") in ["running", "healthy"]:
+            if replica.get("status") in ["ready", "running", "healthy"]:
                 healthy_replicas.append(replica["id"])
         
         return healthy_replicas

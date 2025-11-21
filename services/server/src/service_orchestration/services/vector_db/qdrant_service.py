@@ -90,23 +90,19 @@ class QdrantService(VectorDbService):
             
             self.logger.debug(f"Testing readiness via connection to {remote_host}:{remote_port}{path}")
             
-            # Use SSH to make the HTTP request with short timeout
-            ssh_manager = self.deployer.ssh_manager
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="GET",
-                path=path,
-                timeout=8  # Short timeout for health checks
+            # Direct HTTP request to compute node
+            response = requests.get(
+                f"http://{remote_host}:{remote_port}{path}",
+                timeout=8
             )
             
             # Connection succeeded and got valid HTTP response
-            if status_code >= 200 and status_code < 300:
-                self.logger.debug(f"Service {service_id} is ready (HTTP {status_code})")
+            if response.status_code >= 200 and response.status_code < 300:
+                self.logger.debug(f"Service {service_id} is ready (HTTP {response.status_code})")
                 return True, "running"
             else:
                 # Connected but got error response - likely still initializing
-                self.logger.debug(f"Service {service_id} connected but returned HTTP {status_code}")
+                self.logger.debug(f"Service {service_id} connected but returned HTTP {response.status_code}")
                 return False, "starting"
                 
         except Exception as e:
@@ -159,33 +155,28 @@ class QdrantService(VectorDbService):
                     "collections": []
                 }
             
-            # Make HTTP request via SSH
-            ssh_manager = self.deployer.ssh_manager
+            # Make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or DEFAULT_QDRANT_PORT
             
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="GET",
-                path="/collections",
+            response = requests.get(
+                f"http://{remote_host}:{remote_port}/collections",
                 timeout=timeout
             )
             
-            if not success or status_code != 200:
+            if response.status_code != 200:
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from collections endpoint",
-                    "message": f"Failed to query collections from vector DB service (HTTP {status_code}).",
+                    "error": f"HTTP {response.status_code} from collections endpoint",
+                    "message": f"Failed to query collections from vector DB service (HTTP {response.status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "collections": []
                 }
             
-            import json
-            data = json.loads(body)
+            data = response.json()
             
             # Qdrant returns {"result": {"collections": [...]}}
             collections = []
@@ -249,33 +240,28 @@ class QdrantService(VectorDbService):
                     "service_id": service_id
                 }
             
-            # Make HTTP request via SSH
-            ssh_manager = self.deployer.ssh_manager
+            # Make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or DEFAULT_QDRANT_PORT
             
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="GET",
-                path=f"/collections/{collection_name}",
+            response = requests.get(
+                f"http://{remote_host}:{remote_port}/collections/{collection_name}",
                 timeout=timeout
             )
             
-            if not success or status_code != 200:
+            if response.status_code != 200:
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from collection info endpoint",
-                    "message": f"Failed to get collection info (HTTP {status_code}). Collection may not exist.",
+                    "error": f"HTTP {response.status_code} from collection info endpoint",
+                    "message": f"Failed to get collection info (HTTP {response.status_code}). Collection may not exist.",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "collection_name": collection_name
                 }
             
-            import json
-            data = json.loads(body)
+            data = response.json()
             
             return {
                 "success": True,
@@ -346,27 +332,23 @@ class QdrantService(VectorDbService):
                 }
             }
             
-            # Make HTTP request via SSH
-            ssh_manager = self.deployer.ssh_manager
+            # Make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or DEFAULT_QDRANT_PORT
             
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="PUT",
-                path=f"/collections/{collection_name}",
-                json_data=request_body,
+            response = requests.put(
+                f"http://{remote_host}:{remote_port}/collections/{collection_name}",
+                json=request_body,
                 timeout=timeout
             )
             
-            if not success or status_code not in [200, 201]:
+            if response.status_code not in [200, 201]:
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from create collection endpoint",
-                    "message": f"Failed to create collection (HTTP {status_code}).",
+                    "error": f"HTTP {response.status_code} from create collection endpoint",
+                    "message": f"Failed to create collection (HTTP {response.status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "collection_name": collection_name
@@ -432,26 +414,22 @@ class QdrantService(VectorDbService):
                     "service_id": service_id
                 }
             
-            # Make HTTP request via SSH
-            ssh_manager = self.deployer.ssh_manager
+            # Make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or DEFAULT_QDRANT_PORT
             
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="DELETE",
-                path=f"/collections/{collection_name}",
+            response = requests.delete(
+                f"http://{remote_host}:{remote_port}/collections/{collection_name}",
                 timeout=timeout
             )
             
-            if not success or status_code not in [200, 204]:
+            if response.status_code not in [200, 204]:
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from delete collection endpoint",
-                    "message": f"Failed to delete collection (HTTP {status_code}). Collection may not exist.",
+                    "error": f"HTTP {response.status_code} from delete collection endpoint",
+                    "message": f"Failed to delete collection (HTTP {response.status_code}). Collection may not exist.",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "collection_name": collection_name
@@ -523,27 +501,23 @@ class QdrantService(VectorDbService):
                 "points": points
             }
             
-            # Make HTTP request via SSH
-            ssh_manager = self.deployer.ssh_manager
+            # Make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or DEFAULT_QDRANT_PORT
             
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="PUT",
-                path=f"/collections/{collection_name}/points",
-                json_data=request_body,
+            response = requests.put(
+                f"http://{remote_host}:{remote_port}/collections/{collection_name}/points",
+                json=request_body,
                 timeout=timeout
             )
             
-            if not success or status_code not in [200, 201]:
+            if response.status_code not in [200, 201]:
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from upsert points endpoint",
-                    "message": f"Failed to upsert points (HTTP {status_code}).",
+                    "error": f"HTTP {response.status_code} from upsert points endpoint",
+                    "message": f"Failed to upsert points (HTTP {response.status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "collection_name": collection_name
@@ -622,35 +596,30 @@ class QdrantService(VectorDbService):
                 "with_vector": False
             }
             
-            # Make HTTP request via SSH
-            ssh_manager = self.deployer.ssh_manager
+            # Make direct HTTP request to compute node
             from urllib.parse import urlparse
             parsed = urlparse(endpoint)
             remote_host = parsed.hostname
             remote_port = parsed.port or DEFAULT_QDRANT_PORT
             
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="POST",
-                path=f"/collections/{collection_name}/points/search",
-                json_data=request_body,
+            response = requests.post(
+                f"http://{remote_host}:{remote_port}/collections/{collection_name}/points/search",
+                json=request_body,
                 timeout=timeout
             )
             
-            if not success or status_code != 200:
+            if response.status_code != 200:
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from search endpoint",
-                    "message": f"Failed to search points (HTTP {status_code}).",
+                    "error": f"HTTP {response.status_code} from search endpoint",
+                    "message": f"Failed to search points (HTTP {response.status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "collection_name": collection_name,
                     "results": []
                 }
             
-            import json
-            data = json.loads(body)
+            data = response.json()
             results = data.get("result", [])
             
             return {
@@ -730,35 +699,31 @@ class QdrantService(VectorDbService):
             remote_port = parsed.port or DEFAULT_QDRANT_PORT
             path = "/metrics"
             
-            self.logger.debug("Querying metrics via SSH: %s:%s%s", remote_host, remote_port, path)
+            self.logger.debug("Querying metrics: http://%s:%s%s", remote_host, remote_port, path)
             
-            # Use SSH to make the HTTP request (tunnels through login node to compute node)
-            ssh_manager = self.deployer.ssh_manager
-            success, status_code, body = ssh_manager.http_request_via_ssh(
-                remote_host=remote_host,
-                remote_port=remote_port,
-                method="GET",
-                path=path,
+            # Direct HTTP request to compute node
+            response = requests.get(
+                f"http://{remote_host}:{remote_port}{path}",
                 timeout=timeout
             )
             
-            if not success or not (200 <= status_code < 300):
-                self.logger.warning("Metrics query for %s returned %s: %s", service_id, status_code, body[:200])
+            if not (200 <= response.status_code < 300):
+                self.logger.warning("Metrics query for %s returned %s: %s", service_id, response.status_code, response.text[:200])
                 return {
                     "success": False,
-                    "error": f"HTTP {status_code} from metrics endpoint",
-                    "message": f"Failed to query metrics from Qdrant service (HTTP {status_code}).",
+                    "error": f"HTTP {response.status_code} from metrics endpoint",
+                    "message": f"Failed to query metrics from Qdrant service (HTTP {response.status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
-                    "status": status_code,
+                    "status": response.status_code,
                     "metrics": ""
                 }
             
-            self.logger.debug("Metrics retrieved successfully for service %s (%d bytes)", service_id, len(body))
+            self.logger.debug("Metrics retrieved successfully for service %s (%d bytes)", service_id, len(response.text))
             
             return {
                 "success": True,
-                "metrics": body,
+                "metrics": response.text,
                 "service_id": service_id,
                 "endpoint": endpoint
             }

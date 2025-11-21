@@ -1,7 +1,12 @@
 DOCS:
 
 MAIN:
-- Create examples in docs using the new replicas model. Show how to launch with different number of replicas, different gpu_per_replica, etc.
+- Orchestration manager should not be inside the service_orchestration folder?
+- Adapt the testing scripts to the new orchestrator system.
+- Delete all files in meluxina. Then restart server to see if everything works smoothly.
+- Find a smarter way to proxy to the orchestrator. 
+(Is there a smarter, more dynamic way of proxying the orchestrator 
+from the server? Rather than hardcoding everything?)
 
 Optional:
 - Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.

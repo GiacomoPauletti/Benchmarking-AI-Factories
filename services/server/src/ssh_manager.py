@@ -114,8 +114,20 @@ class SSHManager:
                     return True
                 else:
                     self.logger.debug("ControlMaster check failed, will recreate")
+                    # Force remove socket file if check failed
+                    try:
+                        if self._control_master_socket.exists():
+                            self._control_master_socket.unlink()
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove stale socket: {e}")
             except Exception as e:
                 self.logger.debug(f"ControlMaster check error: {e}")
+                # Force remove socket file if check error
+                try:
+                    if self._control_master_socket.exists():
+                        self._control_master_socket.unlink()
+                except Exception as ex:
+                    self.logger.warning(f"Failed to remove stale socket: {ex}")
         
         # Create new control master
         try:
@@ -511,6 +523,27 @@ class SSHManager:
                 timeout=timeout,
                 env=env
             )
+            
+            # Check for ControlMaster connection refused error and retry once
+            if result.returncode != 0 and "Control socket connect" in result.stderr and "Connection refused" in result.stderr:
+                self.logger.warning("ControlMaster connection refused. Retrying with fresh connection...")
+                # Force remove socket
+                try:
+                    if self._control_master_socket.exists():
+                        self._control_master_socket.unlink()
+                except:
+                    pass
+                self._control_master_active = False
+                
+                # Retry command
+                cmd = self._get_ssh_command(command, use_control_master=True)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=env
+                )
             
             success = result.returncode == 0
             return success, result.stdout, result.stderr

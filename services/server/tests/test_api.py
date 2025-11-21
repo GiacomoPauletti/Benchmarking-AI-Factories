@@ -859,7 +859,7 @@ class TestVLLMServiceLogic:
         """
         Test that chat template errors are correctly detected.
         """
-        from services.inference import VllmService
+        from service_orchestration.services.inference import VllmService
         
         # Mock response with chat template error
         mock_response = Mock()
@@ -896,12 +896,12 @@ class TestVLLMServiceLogic:
         is_error = vllm_service._is_chat_template_error(mock_response)
         assert is_error is False
     
-    @patch('services.inference.vllm_service.requests')
+    @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_model_discovery_openai_format(self, mock_requests):
         """
         Test model discovery with OpenAI API format (data field).
         """
-        from services.inference import VllmService
+        from service_orchestration.services.inference import VllmService
         
         # Create VllmService with mocked dependencies
         mock_deployer = Mock()
@@ -940,7 +940,7 @@ class TestVLLMServiceLogic:
         """
         Test parsing successful chat response.
         """
-        from services.inference import VllmService
+        from service_orchestration.services.inference import VllmService
         
         mock_response = Mock()
         mock_response.ok = True
@@ -980,7 +980,7 @@ class TestVLLMServiceLogic:
         """
         Test parsing successful completions response.
         """
-        from services.inference import VllmService
+        from service_orchestration.services.inference import VllmService
         
         mock_response = Mock()
         mock_response.ok = True
@@ -1188,7 +1188,7 @@ class TestVllmServiceUnit:
     @pytest.fixture
     def vllm_service(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
         """Create a VllmService instance with mocked dependencies."""
-        from services.inference import VllmService
+        from service_orchestration.services.inference import VllmService
         
         service = VllmService(
             deployer=mock_deployer,
@@ -1367,7 +1367,7 @@ class TestVllmServiceUnit:
 
     def test_vllm_get_metrics_success(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
         """Unit test: VllmService.get_metrics returns raw metrics when service is ready."""
-        from services.inference import VllmService
+        from service_orchestration.services.inference import VllmService
 
         mock_service_manager.get_service.return_value = {
             "id": "svc-1",
@@ -1392,7 +1392,7 @@ class TestVllmServiceUnit:
 
     def test_vllm_get_metrics_service_not_found(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
         """Unit test: VllmService.get_metrics handles missing service gracefully."""
-        from services.inference import VllmService
+        from service_orchestration.services.inference import VllmService
 
         mock_service_manager.get_service.return_value = None
         vservice = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
@@ -1406,7 +1406,7 @@ class TestVllmServiceUnit:
         """
 
         def test_qdrant_get_metrics_success(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
-            from services.vector_db import QdrantService
+            from service_orchestration.services.vector_db import QdrantService
 
             mock_service_manager.get_service.return_value = {
                 "id": "qsvc-1",
@@ -1429,7 +1429,7 @@ class TestVllmServiceUnit:
             assert result["service_id"] == "qsvc-1"
 
         def test_qdrant_get_metrics_not_ready(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
-            from services.vector_db import QdrantService
+            from service_orchestration.services.vector_db import QdrantService
 
             mock_service_manager.get_service.return_value = {
                 "id": "qsvc-2",

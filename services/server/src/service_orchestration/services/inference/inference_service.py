@@ -1,8 +1,8 @@
 """Abstract base class for inference services (vLLM, TGI, etc.)."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any
-from services.base_service import BaseService
+from typing import Dict, List, Any, Optional
+from service_orchestration.services.base_service import BaseService
 
 
 class InferenceService(BaseService, ABC):
