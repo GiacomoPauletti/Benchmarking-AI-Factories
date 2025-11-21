@@ -7,18 +7,7 @@ import threading
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from collections import defaultdict
-
-
-"""
-In-memory service manager for managing service and job information.
-Provides better organization, querying, and lifecycle management within a single server run.
-"""
-
-import threading
-from typing import Dict, List, Optional, Any
-from datetime import datetime
-from collections import defaultdict
-from service_group_manager import ServiceGroupManager
+from service_orchestration.managers.service_group_manager import ServiceGroupManager
 
 
 class ServiceManager:

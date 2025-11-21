@@ -21,11 +21,10 @@ from dataclasses import dataclass, asdict
 from collections import defaultdict
 import httpx
 
-from slurm_client import SlurmClient
-from job_builder import JobBuilder
-from service_manager import ServiceManager
-from recipe_loader import RecipeLoader
-from endpoint_resolver import EndpointResolver
+from service_orchestration.core.slurm_client import SlurmClient
+from service_orchestration.builders import JobBuilder, RecipeLoader
+from service_orchestration.managers import ServiceManager
+from service_orchestration.networking import EndpointResolver
 
 logger = logging.getLogger("service_orchestrator")
 
@@ -131,12 +130,12 @@ class ServiceOrchestrator:
         self._vllm_service = None
         self._qdrant_service = None
         
-        self.metrics: Dict[str, Any] = defaultdict(lambda: {
+        self.metrics: Dict[str, Any] = {
             "total_requests": 0,
             "failed_requests": 0,
             "total_latency_ms": 0.0,
             "requests_per_service": defaultdict(int)
-        })
+        }
         self._health_check_task: Optional[asyncio.Task] = None
         self._http_client = httpx.AsyncClient(timeout=300.0)
     
@@ -452,6 +451,126 @@ class ServiceOrchestrator:
         except Exception as e:
             logger.error(f"Failed to get logs for {service_id}: {e}")
             return {"logs": f"Error fetching logs: {str(e)}"}
+    
+    def get_service_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
+        """Get Prometheus metrics for a service by auto-detecting service type"""
+        import requests
+        from urllib.parse import urlparse
+        
+        logger.info(f"Getting metrics for service: {service_id}")
+        
+        # Check if it's a service group
+        if self.service_manager.is_group(service_id):
+            return {
+                "success": False,
+                "error": "Metrics endpoint does not support service groups. Query individual services instead."
+            }
+        
+        # Get service info
+        service = self.service_manager.get_service(service_id)
+        if not service:
+            logger.error(f"Service {service_id} not found")
+            return {
+                "success": False,
+                "error": f"Service {service_id} not found"
+            }
+        
+        # Extract recipe name to determine service type and default port
+        recipe_name = service.get("recipe_name", "").lower()
+        status = service.get("status", "unknown")
+        
+        # Determine default port based on service type
+        if "vllm" in recipe_name:
+            default_port = 8001  # DEFAULT_VLLM_PORT
+        elif "qdrant" in recipe_name:
+            default_port = 6333  # DEFAULT_QDRANT_PORT
+        else:
+            logger.warning(f"Metrics not available for service type: {recipe_name}")
+            return {
+                "success": False,
+                "error": f"Metrics not available for service type: {recipe_name}",
+                "status": status
+            }
+        
+        # Check if service is ready
+        if status not in ["running", "RUNNING", "ready"]:
+            return {
+                "success": False,
+                "error": f"Service is not ready yet (status: {status})",
+                "message": f"The service is still starting up (status: {status}). Please wait a moment and try again.",
+                "service_id": service_id,
+                "status": status,
+                "metrics": ""
+            }
+        
+        try:
+            # Resolve endpoint using endpoint_resolver
+            endpoint = self.endpoint_resolver.resolve(service_id, default_port=default_port)
+            if not endpoint:
+                logger.debug(f"No endpoint found for service {service_id} when querying metrics")
+                return {
+                    "success": False,
+                    "error": "Service endpoint not available",
+                    "message": "The service endpoint is not available yet.",
+                    "service_id": service_id,
+                    "status": status,
+                    "metrics": ""
+                }
+            
+            # Parse endpoint URL and make direct HTTP request to compute node
+            parsed = urlparse(endpoint)
+            remote_host = parsed.hostname
+            remote_port = parsed.port or default_port
+            path = "/metrics"
+            
+            logger.debug(f"Querying metrics: http://{remote_host}:{remote_port}{path}")
+            
+            # Direct HTTP request to compute node
+            try:
+                response = requests.get(
+                    f"http://{remote_host}:{remote_port}{path}",
+                    timeout=timeout
+                )
+            except Exception as e:
+                logger.warning(f"Metrics retrieval for {service_id} failed: {e}")
+                return {
+                    "success": False,
+                    "error": f"Connection failed: {str(e)}",
+                    "message": "Failed to connect to service for metrics.",
+                    "service_id": service_id,
+                    "endpoint": endpoint,
+                    "metrics": ""
+                }
+            
+            if response.status_code < 200 or response.status_code >= 300:
+                logger.warning(f"Metrics endpoint for {service_id} returned {response.status_code}: {response.text[:200]}")
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code} from metrics endpoint",
+                    "message": f"Failed to query metrics from service (HTTP {response.status_code}).",
+                    "service_id": service_id,
+                    "endpoint": endpoint,
+                    "metrics": ""
+                }
+            
+            logger.debug(f"Metrics retrieved for {service_id} (size: {len(response.text)} bytes)")
+            
+            return {
+                "success": True,
+                "metrics": response.text,  # Return raw Prometheus text format
+                "service_id": service_id,
+                "endpoint": endpoint,
+                "metrics_format": "prometheus_text_format"
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get metrics for {service_id}: {e}")
+            return {
+                "success": False,
+                "error": f"Error fetching metrics: {str(e)}",
+                "status": status,
+                "metrics": ""
+            }
     
     def list_recipes(self) -> List[Dict[str, Any]]:
         """List all available service recipes"""

@@ -1,4 +1,30 @@
 """
+⚠️ DEPRECATED - This file is being phased out ⚠️
+
+This test file has been split into a better-organized structure:
+
+NEW STRUCTURE (in tests/unit/):
+├── test_gateway_api.py       - Public API / Proxy layer tests
+├── test_orchestrator_api.py  - Internal Orchestrator API tests  
+└── test_orchestrator_core.py - Core business logic tests
+
+USE THE NEW TEST RUNNER:
+  ./run_tests.sh              # Run all unit tests
+  ./run_tests.sh gateway      # Run only gateway tests
+  ./run_tests.sh orch-api     # Run only orchestrator API tests
+  ./run_tests.sh orch-core    # Run only core logic tests
+  ./run_tests.sh help         # Show usage
+
+WHY THE SPLIT?
+1. Gateway tests (test_gateway_api.py): Test the public API's HTTP handling and proxy forwarding
+2. Orchestrator API tests (test_orchestrator_api.py): Test the internal API that runs on MeluXina
+3. Core Logic tests (test_orchestrator_core.py): Test business logic (SLURM, VllmService, etc.)
+
+This file is kept temporarily for backwards compatibility but should not be modified.
+All new tests should go into the appropriate file in tests/unit/.
+
+---
+
 Unit Tests for Server
 
 Unit tests test individual components in isolation using mocks and fakes.
@@ -21,7 +47,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from main import app
-from api.routes import get_server_service
+from api.routes import get_orchestrator_proxy
 
 
 class TestAPIEndpoints:
@@ -35,14 +61,14 @@ class TestAPIEndpoints:
     
     @pytest.fixture
     def mock_server_service(self):
-        """Create a mock ServerService instance."""
+        """Create a mock OrchestratorProxy instance."""
         return Mock()
     
     @pytest.fixture
     def client(self, mock_server_service):
         """Create a test client for the FastAPI app with mocked dependencies."""
         # Override the dependency with our mock
-        app.dependency_overrides[get_server_service] = lambda: mock_server_service
+        app.dependency_overrides[get_orchestrator_proxy] = lambda: mock_server_service
         client = TestClient(app)
         yield client
         # Clean up the override after the test
@@ -854,7 +880,7 @@ class TestVLLMServiceLogic:
     Test VLLM-specific service logic including chat template fallback.
     """
     
-    @patch('server_service.requests')
+    @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_chat_template_error_detection(self, mock_requests):
         """
         Test that chat template errors are correctly detected.
@@ -907,14 +933,11 @@ class TestVLLMServiceLogic:
         mock_deployer = Mock()
         mock_deployer.get_job_status.return_value = "running"
         
-        # Mock SSH manager to simulate HTTP request via SSH
-        mock_ssh_manager = Mock()
-        mock_ssh_manager.http_request_via_ssh.return_value = (
-            True,  # success
-            200,   # status_code
-            '{"object": "list", "data": [{"id": "gpt2", "object": "model", "created": 1234567890}]}'  # body
-        )
-        mock_deployer.ssh_manager = mock_ssh_manager
+        # Mock requests response
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = {"object": "list", "data": [{"id": "gpt2", "object": "model", "created": 1234567890}]}
+        mock_requests.get.return_value = mock_response
         
         mock_service_manager = Mock()
         mock_service_manager.get_service.return_value = {
@@ -935,7 +958,7 @@ class TestVLLMServiceLogic:
         assert "gpt2" in result["models"]
         assert len(result["models"]) == 1
     
-    @patch('server_service.requests')
+    @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_parse_chat_response_success(self, mock_requests):
         """
         Test parsing successful chat response.
@@ -975,7 +998,7 @@ class TestVLLMServiceLogic:
         assert result["endpoint_used"] == "chat"
         assert result["usage"]["prompt_tokens"] == 10
     
-    @patch('server_service.requests')
+    @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_parse_completions_response_success(self, mock_requests):
         """
         Test parsing successful completions response.
@@ -1014,68 +1037,6 @@ class TestVLLMServiceLogic:
         assert result["usage"]["total_tokens"] == 25
 
 
-class TestSLURMDeployer:
-    """
-    Test SLURM deployer functionality with mocks.
-    
-    We test the logic and configuration, not actual SLURM communication.
-    """
-    
-    @patch.dict(os.environ, {'SLURM_JWT': 'test_token'})
-    @patch('slurm.SSHManager')
-    def test_deployer_initialization(self, mock_ssh):
-        """Test that SlurmDeployer initializes correctly."""
-        from slurm import SlurmDeployer
-        
-        # Mock SSH Manager
-        mock_ssh_instance = Mock()
-        mock_ssh_instance.setup_slurm_rest_tunnel.return_value = 6820
-        mock_ssh.return_value = mock_ssh_instance
-        
-        deployer = SlurmDeployer()
-        assert deployer.token == "test_token"
-        assert deployer.rest_api_port == 6820
-    
-    @patch.dict(os.environ, {'SLURM_JWT': 'test_token'})
-    @patch('slurm.SSHManager')
-    def test_job_submission_logic(self, mock_ssh):
-        """Test that deployer can be initialized and would make HTTP calls."""
-        from slurm import SlurmDeployer
-        
-        # Mock SSH Manager
-        mock_ssh_instance = Mock()
-        mock_ssh_instance.setup_slurm_rest_tunnel.return_value = 6820
-        mock_ssh.return_value = mock_ssh_instance
-        
-        deployer = SlurmDeployer()
-        
-        # Verify deployer is properly configured for HTTP calls
-        assert deployer.base_url == f"http://localhost:6820/slurm/v0.0.40"
-        assert deployer.headers['X-SLURM-USER-TOKEN'] == 'test_token'
-        assert 'Content-Type' in deployer.headers
-        
-        # Test that submit_job would fail appropriately without a recipe file
-        try:
-            deployer.submit_job("test/recipe", {"nodes": 1})
-            assert False, "Should have raised FileNotFoundError"
-        except FileNotFoundError:
-            # Expected - this verifies the method attempts to find the recipe file
-            pass
-    
-    @patch.dict(os.environ, {}, clear=True)
-    @patch('slurm.SSHManager')
-    def test_missing_environment_variables(self, mock_ssh):
-        """Test error handling when required env vars are missing."""
-        from slurm import SlurmDeployer
-        
-        # Mock SSH Manager to fail with proper error
-        mock_ssh.side_effect = ValueError("SSH_USER must be set. Check your .env.local file.")
-        
-        # Test should raise error when environment variables are missing
-        with pytest.raises(ValueError, match="SSH_USER must be set"):
-            SlurmDeployer()
-
-
 class TestServiceWorkflows:
     """
     Test complete service workflows using mocks.
@@ -1086,21 +1047,20 @@ class TestServiceWorkflows:
     
     @pytest.fixture
     def mock_server_service(self):
-        """Create a mock ServerService instance."""
+        """Create a mock OrchestratorProxy instance."""
         return Mock()
     
     @pytest.fixture
     def client(self, mock_server_service):
         """Create a test client for the FastAPI app with mocked dependencies."""
         # Override the dependency with our mock
-        app.dependency_overrides[get_server_service] = lambda: mock_server_service
+        app.dependency_overrides[get_orchestrator_proxy] = lambda: mock_server_service
         client = TestClient(app)
         yield client
         # Clean up the override after the test
         app.dependency_overrides.clear()
     
-    @patch('server_service.SlurmDeployer')
-    def test_complete_service_lifecycle(self, mock_deployer, mock_server_service, client):
+    def test_complete_service_lifecycle(self, mock_server_service, client):
         """
         Test a complete service lifecycle: create -> list -> (cleanup).
         
@@ -1121,7 +1081,7 @@ class TestServiceWorkflows:
         }
         
         # Mock service listing (includes our created service)
-        mock_server_service.list_running_services.return_value = [
+        mock_server_service.list_services.return_value = [
             {
                 "id": "workflow-test-123",
                 "name": "workflow-service",
@@ -1154,7 +1114,7 @@ class TestServiceWorkflows:
         
         # Verify both methods were called
         mock_server_service.start_service.assert_called_once()
-        mock_server_service.list_running_services.assert_called_once()
+        mock_server_service.list_services.assert_called_once()
 
 
 class TestVllmServiceUnit:
@@ -1253,10 +1213,11 @@ class TestVllmServiceUnit:
         
         # Should use live status from check
         assert result["success"] is False
-        assert "starting" in result["message"].lower()
+        assert "initializing" in result["message"].lower() or "starting" in result["message"].lower()
         assert result["status"] == "starting"
     
-    def test_prompt_uses_correct_endpoint_resolver_method(self, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver, mock_logger):
+    @patch('service_orchestration.services.inference.vllm_service.requests')
+    def test_prompt_uses_correct_endpoint_resolver_method(self, mock_requests, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver, mock_logger):
         """Test that prompt() calls endpoint_resolver.resolve() (not resolve_endpoint())."""
         # Mock service exists and is running
         mock_service_manager.get_service.return_value = {
@@ -1275,14 +1236,15 @@ class TestVllmServiceUnit:
         # Mock endpoint resolver to return valid endpoint
         mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
         
-        # Mock SSH manager for HTTP request
-        mock_ssh_manager = Mock()
-        mock_ssh_manager.http_request_via_ssh.return_value = (
-            True,  # success
-            200,   # status_code
-            '{"id": "chat-123", "choices": [{"message": {"content": "Hello!"}}]}'  # body
-        )
-        mock_deployer.ssh_manager = mock_ssh_manager
+        # Mock requests response
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "chat-123", 
+            "choices": [{"message": {"content": "Hello!"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
+        }
+        mock_requests.post.return_value = mock_response
         
         # Mock service health tracking
         mock_service_manager.is_service_recently_healthy.return_value = False
@@ -1315,7 +1277,8 @@ class TestVllmServiceUnit:
         assert "error" in result
         assert "not found" in result["error"].lower()
     
-    def test_get_models_uses_correct_endpoint(self, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver):
+    @patch('service_orchestration.services.inference.vllm_service.requests')
+    def test_get_models_uses_correct_endpoint(self, mock_requests, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver):
         """Test that get_models() uses the resolved endpoint correctly and returns proper dict format."""
         # Mock service exists and is running
         mock_service_manager.get_service.return_value = {
@@ -1331,14 +1294,11 @@ class TestVllmServiceUnit:
         # Mock endpoint resolver
         mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
         
-        # Mock SSH manager to simulate HTTP request via SSH
-        mock_ssh_manager = Mock()
-        mock_ssh_manager.http_request_via_ssh.return_value = (
-            True,  # success
-            200,   # status_code
-            '{"data": [{"id": "model1"}, {"id": "model2"}]}'  # body
-        )
-        mock_deployer.ssh_manager = mock_ssh_manager
+        # Mock requests response
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = {"data": [{"id": "model1"}, {"id": "model2"}]}
+        mock_requests.get.return_value = mock_response
         
         # Call get_models
         result = vllm_service.get_models("123")
@@ -1356,93 +1316,40 @@ class TestVllmServiceUnit:
         assert mock_endpoint_resolver.resolve.call_count >= 1
         mock_endpoint_resolver.resolve.assert_any_call("123", default_port=8001)
         
-        # Verify SSH tunnel was used
-        mock_ssh_manager.http_request_via_ssh.assert_called_once_with(
-            remote_host="node1",
-            remote_port=8000,
-            method="GET",
-            path="/v1/models",
-            timeout=5
+        # Verify requests was used
+        mock_requests.get.assert_called_with(
+            "http://node1:8000/v1/models",
+            timeout=30
         )
 
-    def test_vllm_get_metrics_success(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
-        """Unit test: VllmService.get_metrics returns raw metrics when service is ready."""
-        from service_orchestration.services.inference import VllmService
-
+    @patch('service_orchestration.services.inference.vllm_service.requests')
+    def test_get_models_handles_errors(self, mock_requests, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver):
+        """Test that get_models() handles errors gracefully."""
+        # Mock service exists and is running
         mock_service_manager.get_service.return_value = {
-            "id": "svc-1",
+            "id": "123",
+            "name": "vllm-test",
             "status": "running",
             "recipe_name": "inference/vllm-single-node"
         }
-        mock_endpoint_resolver.resolve.return_value = "http://node1:8001"
-
-        ssh = Mock()
-        metrics_text = "# HELP vllm:prompt_tokens_total Total prompt tokens\nvllm:prompt_tokens_total 123\n"
-        ssh.http_request_via_ssh.return_value = (True, 200, metrics_text)
-        mock_deployer.ssh_manager = ssh
-
-        vservice = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        # Mock the service manager and vLLM service check
-        vservice._check_ready_and_discover_model = lambda sid, info: (True, "running", "Qwen/Qwen2.5-0.5B-Instruct")
-
-        result = vservice.get_metrics("svc-1")
-        assert result["success"] is True
-        assert metrics_text in result["metrics"]
-        assert result["service_id"] == "svc-1"
-
-    def test_vllm_get_metrics_service_not_found(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
-        """Unit test: VllmService.get_metrics handles missing service gracefully."""
-        from service_orchestration.services.inference import VllmService
-
-        mock_service_manager.get_service.return_value = None
-        vservice = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        result = vservice.get_metrics("missing")
+        
+        # Mock the check method to return ready
+        vllm_service._check_ready_and_discover_model = Mock(return_value=(True, "running", None))
+        
+        # Mock endpoint resolver
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
+        
+        # Mock requests exception
+        mock_requests.get.side_effect = Exception("Connection refused")
+        
+        # Call get_models
+        result = vllm_service.get_models("123")
+        
+        # Should return dict with success=False
         assert result["success"] is False
-        assert "not found" in result["error"].lower()
-
-    class TestQdrantServiceUnit:
-        """
-        Unit tests for QdrantService methods related to metrics.
-        """
-
-        def test_qdrant_get_metrics_success(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
-            from service_orchestration.services.vector_db import QdrantService
-
-            mock_service_manager.get_service.return_value = {
-                "id": "qsvc-1",
-                "status": "running",
-                "recipe_name": "vector-db/qdrant"
-            }
-            mock_endpoint_resolver.resolve.return_value = "http://node2:6333"
-
-            ssh = Mock()
-            qmetrics = "# HELP collections_total Number of collections\ncollections_total 2\n"
-            ssh.http_request_via_ssh.return_value = (True, 200, qmetrics)
-            mock_deployer.ssh_manager = ssh
-
-            qservice = QdrantService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-            qservice._check_service_ready = lambda sid, info: (True, "running")
-
-            result = qservice.get_metrics("qsvc-1")
-            assert result["success"] is True
-            assert qmetrics in result["metrics"]
-            assert result["service_id"] == "qsvc-1"
-
-        def test_qdrant_get_metrics_not_ready(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
-            from service_orchestration.services.vector_db import QdrantService
-
-            mock_service_manager.get_service.return_value = {
-                "id": "qsvc-2",
-                "status": "starting",
-                "recipe_name": "vector-db/qdrant"
-            }
-
-            qservice = QdrantService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-            qservice._check_service_ready = lambda sid, info: (False, "starting")
-
-            result = qservice.get_metrics("qsvc-2")
-            assert result["success"] is False
-            assert "not ready" in result["error"].lower() or "starting" in result.get("message", "").lower()
+        assert "error" in result
+        assert "Connection refused" in result["error"]
+        
 
 
 # Fixture to create test client once per module

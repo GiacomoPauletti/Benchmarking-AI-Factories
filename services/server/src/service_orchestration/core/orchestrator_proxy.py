@@ -204,10 +204,6 @@ class OrchestratorProxy:
         """Get models from a vLLM service"""
         return self._make_request("GET", f"/api/services/vllm/{service_id}/models", params={"timeout": timeout})
 
-    def get_vllm_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
-        """Get metrics from a vLLM service"""
-        return self._make_request("GET", f"/api/services/vllm/{service_id}/metrics", params={"timeout": timeout})
-
     def prompt_vllm_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a vLLM service"""
         data = {"prompt": prompt, **kwargs}
@@ -246,9 +242,20 @@ class OrchestratorProxy:
         data = {"query_vector": query_vector, "limit": limit, "timeout": timeout}
         return self._make_request("POST", f"/api/services/vector-db/{service_id}/collections/{collection_name}/search", json=data)
 
-    def get_qdrant_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
-        """Get metrics from a Qdrant service"""
-        return self._make_request("GET", f"/api/services/vector-db/{service_id}/metrics", params={"timeout": timeout})
+    def get_service_metrics(self, service_id: str, timeout: int = 10) -> Dict[str, Any]:
+        """Get metrics from any service (auto-detects service type).
+        
+        This is a generic metrics endpoint that delegates to the orchestrator
+        to determine the service type and fetch appropriate metrics.
+        
+        Args:
+            service_id: Service or service group ID
+            timeout: Request timeout in seconds
+            
+        Returns:
+            Dict with success status and metrics or error information
+        """
+        return self._make_request("GET", f"/api/services/{service_id}/metrics", params={"timeout": timeout})
 
     def stop_orchestrator(self) -> bool:
         """Stop the orchestrator job via SLURM."""

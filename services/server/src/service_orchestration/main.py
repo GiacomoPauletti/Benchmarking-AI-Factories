@@ -8,7 +8,7 @@ import logging
 import os
 from pathlib import Path
 
-from service_orchestrator import ServiceOrchestrator
+from service_orchestration.core import ServiceOrchestrator
 from api import create_app
 
 # Configure logging to both file and console

@@ -353,7 +353,7 @@ def initialize_orchestrator_proxy(ssh_manager):
     Returns:
         OrchestratorProxy instance if successful, None otherwise
     """
-    from service_orchestration.orchestrator_proxy import OrchestratorProxy
+    from service_orchestration.core import OrchestratorProxy
     
     try:
         # Get remote paths

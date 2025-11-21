@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Clean package imports
-from api.routes import router, get_server_service
+from api.routes import router, set_orchestrator_proxy
 from logging_setup import setup_logging
 from orchestrator_initializer import initialize_orchestrator_proxy
 
@@ -43,31 +43,30 @@ def shutdown_handler(signum, frame):
                 else:
                     print(f"Failed to stop orchestrator: {e}")
         
-        server_service_instance = get_server_service()
-        
-        # Get all running services
-        services = server_service_instance.list_running_services()
-        
-        if logger:
-            logger.info(f"Found {len(services)} services to stop")
-        else:
-            print(f"Found {len(services)} services to stop")
-        
-        # Cancel each service
-        for service in services:
-            service_id = service.get("id")
-            service_name = service.get("name", "unknown")
-            try:
-                if logger:
-                    logger.info(f"Stopping service {service_id} ({service_name})...")
-                else:
-                    print(f"Stopping service {service_id} ({service_name})...")
-                server_service_instance.stop_service(service_id)
-            except Exception as e:
-                if logger:
-                    logger.error(f"Failed to stop service {service_id}: {e}")
-                else:
-                    print(f"Failed to stop service {service_id}: {e}")
+        # Get all running services from orchestrator
+        if orchestrator_proxy:
+            services = orchestrator_proxy.list_services()
+            
+            if logger:
+                logger.info(f"Found {len(services)} services to stop")
+            else:
+                print(f"Found {len(services)} services to stop")
+            
+            # Cancel each service
+            for service in services:
+                service_id = service.get("id")
+                service_name = service.get("name", "unknown")
+                try:
+                    if logger:
+                        logger.info(f"Stopping service {service_id} ({service_name})...")
+                    else:
+                        print(f"Stopping service {service_id} ({service_name})...")
+                    orchestrator_proxy.stop_service(service_id)
+                except Exception as e:
+                    if logger:
+                        logger.error(f"Failed to stop service {service_id}: {e}")
+                    else:
+                        print(f"Failed to stop service {service_id}: {e}")
         
         if logger:
             logger.info("All services stopped. Exiting...")
@@ -210,9 +209,8 @@ async def on_startup():
         orchestrator_proxy = initialize_orchestrator_proxy(ssh_manager)
         
         if orchestrator_proxy:
-            # Inject into ServerService singleton
-            server_service_instance = get_server_service()
-            server_service_instance.set_orchestrator_proxy(orchestrator_proxy)
+            # Inject orchestrator proxy into routes module
+            set_orchestrator_proxy(orchestrator_proxy)
             
             if logger:
                 logger.info("✓ Server is ready - orchestrator initialized successfully")
@@ -297,20 +295,20 @@ async def on_shutdown():
                 if logger:
                     logger.error(f"Failed to stop orchestrator: {e}")
         
-        server_service_instance = get_server_service()
-        
-        services = server_service_instance.list_running_services()
-        
-        for service in services:
-            service_id = service.get("id")
-            service_name = service.get("name", "unknown")
-            try:
-                if logger:
-                    logger.info(f"Stopping service {service_id} ({service_name})...")
-                server_service_instance.stop_service(service_id)
-            except Exception as e:
-                if logger:
-                    logger.error(f"Failed to stop service {service_id}: {e}")
+        # Get all running services from orchestrator
+        if orchestrator_proxy:
+            services = orchestrator_proxy.list_services()
+            
+            for service in services:
+                service_id = service.get("id")
+                service_name = service.get("name", "unknown")
+                try:
+                    if logger:
+                        logger.info(f"Stopping service {service_id} ({service_name})...")
+                    orchestrator_proxy.stop_service(service_id)
+                except Exception as e:
+                    if logger:
+                        logger.error(f"Failed to stop service {service_id}: {e}")
     except Exception as e:
         if logger:
             logger.error(f"Error during FastAPI shutdown: {e}")

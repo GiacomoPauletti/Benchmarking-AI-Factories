@@ -8,7 +8,7 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Dict, Any, Tuple, List
-from recipe_builders import BuilderRegistry, ScriptPaths
+from service_orchestration.recipe_builders import BuilderRegistry, ScriptPaths
 
 logger = logging.getLogger(__name__)
 
