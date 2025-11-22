@@ -446,38 +446,22 @@ class SlurmDeployer:
         import subprocess
         
         try:
-            # Check if file exists on remote
-            exists, _, _ = self.ssh_manager.execute_remote_command(
-                f"test -f {remote_path}", 
-                timeout=5
-            )
-            
-            if not exists:
-                self.logger.debug(f"Remote file does not exist: {remote_path}")
-                return False
-            
             # Use tail to fetch only the last N lines
-            cmd = self.ssh_manager.ssh_base_cmd + [
-                self.ssh_manager.ssh_target, 
-                f"tail -n {lines} {remote_path}"
-            ]
-            
-            env = os.environ.copy()
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,  # Shorter timeout since we're fetching less data
-                env=env
-            )
-            
-            if result.returncode == 0:
+            success, stdout, _ = self.ssh_manager.execute_remote_command(f"tail -n {lines} {remote_path}")
+            if success:
                 # Save the output to local file
                 local_path.parent.mkdir(parents=True, exist_ok=True)
-                local_path.write_text(result.stdout)
+                local_path.write_text(stdout)
                 self.logger.debug(f"Successfully fetched last {lines} lines from {remote_path}")
                 return True
             else:
+                # Check if file exists on remote
+                exists = self.ssh_manager.check_remote_file_exists(remote_path)
+                
+                if not exists:
+                    self.logger.debug(f"Remote file does not exist: {remote_path}")
+                    return False
+                
                 self.logger.warning(f"Failed to fetch tail of {remote_path}: {result.stderr}")
                 return False
                 
