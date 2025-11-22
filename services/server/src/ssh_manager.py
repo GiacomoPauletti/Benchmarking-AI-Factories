@@ -103,8 +103,7 @@ class SSHManager:
                 result = subprocess.run(
                     test_cmd,
                     capture_output=True,
-                    timeout=2,
-                    env=os.environ.copy()
+                    timeout=2
                 )
                 
                 if result.returncode == 0:
@@ -136,8 +135,7 @@ class SSHManager:
                 master_cmd,
                 capture_output=True,
                 text=True,
-                timeout=15,
-                env=os.environ.copy()
+                timeout=15
             )
             
             if result.returncode != 0:
@@ -207,8 +205,7 @@ class SSHManager:
             subprocess.run(
                 exit_cmd,
                 capture_output=True,
-                timeout=5,
-                env=os.environ.copy()
+                timeout=5
             )
             self._control_master_active = False
             self.logger.info("ControlMaster connection closed")
@@ -295,15 +292,11 @@ class SSHManager:
             
             self.logger.debug(f"Creating SSH tunnel: {' '.join(ssh_command)}")
             
-            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-            env = os.environ.copy()
-            
             result = subprocess.run(
                 ssh_command,
                 capture_output=True,
                 text=True,
-                timeout=10,
-                env=env
+                timeout=10
             )
             
             if result.returncode != 0:
@@ -382,22 +375,10 @@ class SSHManager:
             else:
                 # Safe to fetch
                 try:
-                    cmd = self.ssh_base_cmd + [self.ssh_target, f"cat {remote_path}"]
-                    
-                    # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-                    env = os.environ.copy()
-                    
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=per_attempt_timeout,
-                        env=env
-                    )
-
-                    if result.returncode == 0 and result.stdout:
+                    success, stdout, _ = self.execute_remote_command(f"cat {remote_path}", timeout=per_attempt_timeout)
+                    if success and stdout:
                         local_path.parent.mkdir(parents=True, exist_ok=True)
-                        local_path.write_text(result.stdout)
+                        local_path.write_text(stdout)
                         self.logger.debug(f"Fetched remote file: {remote_path} -> {local_path}")
                         return True
                     else:
@@ -459,8 +440,7 @@ class SSHManager:
                 rsync_cmd, 
                 capture_output=True, 
                 text=True, 
-                timeout=60,
-                env=env
+                timeout=60
             )
             
             if result.returncode == 0:
@@ -490,15 +470,11 @@ class SSHManager:
         try:
             cmd = self._get_ssh_command(command, use_control_master=True)
             
-            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-            env = os.environ.copy()
-            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
-                env=env
+                timeout=timeout
             )
             
             success = result.returncode == 0
