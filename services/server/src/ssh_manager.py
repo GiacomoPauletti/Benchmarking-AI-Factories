@@ -10,7 +10,8 @@ import logging
 import requests
 import time
 from pathlib import Path
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
+import requests
 
 
 class SSHManager:
@@ -24,7 +25,7 @@ class SSHManager:
     - Auto-fetching SLURM JWT tokens
     """
     
-    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None):
+    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None, local_socks_port: int = 1080):
         """Initialize SSH manager with connection details.
         
         Authentication is handled via SSH agent forwarding (SSH_AUTH_SOCK).
@@ -56,14 +57,14 @@ class SSHManager:
         self.ssh_target = f"{self.ssh_user}@{self.ssh_host}"
         
         # Build base SSH command with port (authentication via SSH agent)
-        self.ssh_base_cmd = ["ssh"]
+        self._ssh_base_cmd = ["ssh"]
         if self.ssh_port != 22:
-            self.ssh_base_cmd.extend(["-p", str(self.ssh_port)])
+            self._ssh_base_cmd.extend(["-p", str(self.ssh_port)])
         
         # Disable host key checking for container environments
         # In production, consider mounting known_hosts or using accept-new
-        self.ssh_base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
-        self.ssh_base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
+        self._ssh_base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
+        self._ssh_base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
         
         # ControlMaster setup for persistent SSH connections
         self.control_socket_dir = Path("/tmp/ssh-control-sockets")
@@ -72,9 +73,53 @@ class SSHManager:
         self._control_master_active = False
         self._last_control_check = 0
         self._control_check_interval = 30  # Check every 30s
+
+        self._local_socks_port = local_socks_port
+        self._establish_socks_proxy(local_port=local_socks_port)
+        self._establish_session(local_socks_port=local_socks_port)
         
         self.logger.info(f"SSH Manager initialized for {self.ssh_target}:{self.ssh_port} (using SSH agent)")
         self.logger.info(f"ControlMaster socket: {self._control_master_socket}")
+
+    def _establish_socks_proxy(self, local_port: int = 1080) -> bool:
+        """Establish a SOCKS5 proxy tunnel to MeluXina via SSH.
+        
+        Args:
+            local_port: Local port to bind the SOCKS5 proxy (default: 1080)
+        """
+        try:
+            # Build SSH command for SOCKS5 proxy
+            ssh_command = self._ssh_base_cmd + [
+                "-D", str(local_port),
+                "-N",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=60",
+                self.ssh_target
+            ]
+            
+            self.logger.debug(f"Establishing SOCKS5 proxy: {' '.join(ssh_command)}")
+            
+            self.socks_proxy = subprocess.Popen(ssh_command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            
+            self.logger.info(f"SOCKS5 proxy established on localhost:{local_port}, PID: {self.socks_proxy.pid}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to establish SOCKS5 proxy: {e}")
+            return False
+        
+    def _establish_session(self, local_socks_port: int = 1080) -> bool:
+        """Establish a requests session that uses the SOCKS5 proxy."""
+        try:
+            self._session = requests.Session()
+            self._session.proxies = {
+                "http": f"socks5h://localhost:{local_socks_port}",
+                "https": f"socks5h://localhost:{local_socks_port}"
+            }
+            self.logger.info("HTTP session established using SOCKS5 proxy")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to establish HTTP session via SOCKS5 proxy: {e}")
+            return False
     
     def _ensure_control_master(self) -> bool:
         """Ensure a ControlMaster connection is active.
@@ -95,7 +140,7 @@ class SSHManager:
         if self._control_master_socket.exists():
             try:
                 # Test if control master is alive with a quick command
-                test_cmd = self.ssh_base_cmd + [
+                test_cmd = self._ssh_base_cmd + [
                     "-S", str(self._control_master_socket),
                     "-O", "check",
                     self.ssh_target
@@ -103,8 +148,7 @@ class SSHManager:
                 result = subprocess.run(
                     test_cmd,
                     capture_output=True,
-                    timeout=2,
-                    env=os.environ.copy()
+                    timeout=2
                 )
                 
                 if result.returncode == 0:
@@ -121,7 +165,7 @@ class SSHManager:
         try:
             self.logger.info("Creating ControlMaster connection...")
             
-            master_cmd = self.ssh_base_cmd + [
+            master_cmd = self._ssh_base_cmd + [
                 "-M",  # Master mode
                 "-S", str(self._control_master_socket),  # Control socket path
                 "-o", "ControlPersist=600",  # Keep connection alive for 10 minutes after last use
@@ -136,8 +180,7 @@ class SSHManager:
                 master_cmd,
                 capture_output=True,
                 text=True,
-                timeout=15,
-                env=os.environ.copy()
+                timeout=15
             )
             
             if result.returncode != 0:
@@ -177,7 +220,7 @@ class SSHManager:
         Returns:
             List of command parts for subprocess
         """
-        cmd = self.ssh_base_cmd.copy()
+        cmd = self._ssh_base_cmd.copy()
         
         # Add ControlMaster socket if available
         if use_control_master and self._ensure_control_master():
@@ -199,7 +242,7 @@ class SSHManager:
         
         try:
             self.logger.info("Closing ControlMaster connection...")
-            exit_cmd = self.ssh_base_cmd + [
+            exit_cmd = self._ssh_base_cmd + [
                 "-S", str(self._control_master_socket),
                 "-O", "exit",
                 self.ssh_target
@@ -207,16 +250,12 @@ class SSHManager:
             subprocess.run(
                 exit_cmd,
                 capture_output=True,
-                timeout=5,
-                env=os.environ.copy()
+                timeout=5
             )
             self._control_master_active = False
             self.logger.info("ControlMaster connection closed")
         except Exception as e:
             self.logger.warning(f"Error closing ControlMaster: {e}")
-    
-    def get_slurm_token(self) -> str:
-        self.logger.info(f"ControlMaster socket: {self._control_master_socket}")
     
     def get_slurm_token(self) -> str:
         """Fetch a fresh SLURM JWT token from MeluXina.
@@ -257,13 +296,8 @@ class SSHManager:
             f"{remote_base_path}/logs"
         ]
         
-        cmd = f"mkdir -p {' '.join(dirs_to_create)}"
-        success, stdout, stderr = self.execute_remote_command(cmd, timeout=10)
-        
-        if not success:
-            self.logger.warning(f"Failed to create remote directories: {stderr}")
-        else:
-            self.logger.info("Remote directories ready")
+        self.create_remote_directories(dirs_to_create)
+        self.logger.info("Remote directories ready")
     
     def setup_slurm_rest_tunnel(self, local_port: int = 6820, 
                                 remote_host: str = "slurmrestd.meluxina.lxp.lu",
@@ -290,7 +324,7 @@ class SSHManager:
         
         # Create SSH tunnel in background
         try:
-            ssh_command = self.ssh_base_cmd + [
+            ssh_command = self._ssh_base_cmd + [
                 "-f", "-N",
                 "-L", f"{local_port}:{remote_host}:{remote_port}",
                 "-o", "ExitOnForwardFailure=yes",
@@ -300,15 +334,11 @@ class SSHManager:
             
             self.logger.debug(f"Creating SSH tunnel: {' '.join(ssh_command)}")
             
-            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-            env = os.environ.copy()
-            
             result = subprocess.run(
                 ssh_command,
                 capture_output=True,
                 text=True,
-                timeout=10,
-                env=env
+                timeout=10
             )
             
             if result.returncode != 0:
@@ -387,22 +417,10 @@ class SSHManager:
             else:
                 # Safe to fetch
                 try:
-                    cmd = self.ssh_base_cmd + [self.ssh_target, f"cat {remote_path}"]
-                    
-                    # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-                    env = os.environ.copy()
-                    
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=per_attempt_timeout,
-                        env=env
-                    )
-
-                    if result.returncode == 0 and result.stdout:
+                    success, stdout, _ = self.execute_remote_command(f"cat {remote_path}", timeout=per_attempt_timeout)
+                    if success and stdout:
                         local_path.parent.mkdir(parents=True, exist_ok=True)
-                        local_path.write_text(result.stdout)
+                        local_path.write_text(stdout)
                         self.logger.debug(f"Fetched remote file: {remote_path} -> {local_path}")
                         return True
                     else:
@@ -439,13 +457,7 @@ class SSHManager:
             return False
         
         try:
-            # Ensure remote directory exists using proper SSH command
-            mkdir_cmd = self.ssh_base_cmd + [self.ssh_target, f"mkdir -p {remote_dir}"]
-            
-            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-            env = os.environ.copy()
-            
-            subprocess.run(mkdir_cmd, check=True, capture_output=True, timeout=10, env=env)
+            _ = self.create_remote_directories([remote_dir])
             
             # Build SSH command for rsync (no -i flag needed with SSH agent)
             rsync_ssh_cmd = "ssh"
@@ -470,8 +482,7 @@ class SSHManager:
                 rsync_cmd, 
                 capture_output=True, 
                 text=True, 
-                timeout=60,
-                env=env
+                timeout=60
             )
             
             if result.returncode == 0:
@@ -501,15 +512,11 @@ class SSHManager:
         try:
             cmd = self._get_ssh_command(command, use_control_master=True)
             
-            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-            env = os.environ.copy()
-            
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
-                env=env
+                timeout=timeout
             )
             
             success = result.returncode == 0
@@ -547,7 +554,7 @@ class SSHManager:
         success, _, _ = self.execute_remote_command(f"test -d {remote_path}", timeout=10)
         return success
     
-    def create_remote_directory(self, remote_path: str) -> bool:
+    def create_remote_directories(self, remote_paths: List[str]) -> bool:
         """Create a directory on MeluXina (with parents).
         
         Args:
@@ -563,29 +570,25 @@ class SSHManager:
         attempt = 0
         while attempt < max_attempts:
             attempt += 1
-            success, _, stderr = self.execute_remote_command(f"mkdir -p {remote_path}", timeout=30)
+            dirs = "' '".join(remote_paths)
+            success, _, stderr = self.execute_remote_command(f"mkdir -p '{dirs}'", timeout=30)
             if success:
-                # Double-check directory exists
-                exists = self.check_remote_dir_exists(remote_path)
-                if exists:
-                    self.logger.debug(f"Remote directory ready: {remote_path} (attempt {attempt})")
-                    return True
-                else:
-                    self.logger.debug(f"mkdir returned but dir not visible yet: {remote_path} (attempt {attempt})")
+                return True
             else:
-                self.logger.warning(f"Failed to create remote directory {remote_path} (attempt {attempt}): {stderr}")
+                self.logger.warning(f"Failed to create remote directories {remote_paths} (attempt {attempt}): {stderr}")
 
             if attempt < max_attempts:
                 sleep_seconds = 2 ** attempt
-                self.logger.debug(f"Waiting {sleep_seconds}s before retrying mkdir for {remote_path}")
+                self.logger.debug(f"Waiting {sleep_seconds}s before retrying mkdir for {remote_paths}")
                 time.sleep(sleep_seconds)
 
-        self.logger.warning(f"Exhausted attempts creating remote directory: {remote_path}")
+        self.logger.warning(f"Exhausted attempts creating remote directory: {remote_paths}")
         return False
     
     def http_request_via_ssh(self, remote_host: str, remote_port: int, method: str, path: str, 
-                             headers: dict = None, json_data: dict = None, timeout: int = 30) -> Tuple[bool, int, str]:
-        """Make an HTTP request to a remote host through SSH using curl.
+                             headers: dict = None, json_data: dict = None, timeout: int = 30,
+                             json_body: bool = True) -> Tuple[bool, int, str]:
+        """Make an HTTP request to a remote host through the SSH SOCKS proxy.
         
         This allows making HTTP requests to internal MeluXina nodes that aren't
         directly accessible from the Docker container.
@@ -598,71 +601,49 @@ class SSHManager:
             headers: Optional HTTP headers dict
             json_data: Optional JSON body for POST requests
             timeout: Request timeout in seconds
+            json_body: Whether the expected response is JSON (default: True)
             
         Returns:
             Tuple of (success: bool, status_code: int, response_body: str)
         """
-        import json as json_lib
-        import shlex
+        if (self.socks_proxy is None) or (self.socks_proxy.poll() is not None):
+            if self.socks_proxy is not None:
+                (stdout, stderr) = self.socks_proxy.communicate()
+                self.logger.warning(f"SOCKS5 proxy process not running, exited with code {self.socks_proxy.returncode}, restarting...")
+                self.logger.debug(f"SOCKS5 proxy stdout: {stdout.decode().strip()}")
+                self.logger.debug(f"SOCKS5 proxy stderr: {stderr.decode().strip()}")
+            else:
+                self.logger.warning("SOCKS5 proxy process not initialized, starting...")
+            self.socks_proxy = None
+            if not self._establish_socks_proxy(local_port=self._local_socks_port):
+                self.logger.error("Cannot make HTTP request via SSH: SOCKS5 proxy not available")
+                # Try even if SOCKS proxy failed to start, might be a leftover
         
         url = f"http://{remote_host}:{remote_port}{path}"
         
-        # Build curl command as a list (will be properly escaped)
-        curl_cmd_parts = ["curl", "-s", "-w", "\\nHTTP_STATUS:%{http_code}"]
-        
-        # Add method
-        if method != "GET":
-            curl_cmd_parts.extend(["-X", method])
-        
-        # Add headers
-        if headers:
-            for key, value in headers.items():
-                curl_cmd_parts.extend(["-H", f"{key}: {value}"])
-        
-        # Add JSON data for POST/PUT
-        if json_data:
-            curl_cmd_parts.extend(["-H", "Content-Type: application/json"])
-            # Use shlex.quote to properly escape the JSON string
-            json_str = json_lib.dumps(json_data)
-            curl_cmd_parts.extend(["-d", json_str])
-        
-        # Add URL and timeout
-        curl_cmd_parts.extend(["--max-time", str(timeout), url])
-        
-        curl_cmd = " ".join(shlex.quote(str(part)) for part in curl_cmd_parts)
-        
-        self.logger.debug(f"Executing HTTP request via SSH: {curl_cmd}")
-        
         try:
-            success, stdout, stderr = self.execute_remote_command(curl_cmd, timeout=timeout + 5)
+            resp = self._session.request(method, url, timeout=timeout, headers=headers, json=json_data)
+            status_code = resp.status_code
+            is_json = 'application/json' in resp.headers.get('Content-Type', '')
+            body = resp.json() if is_json else resp.text
+            self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes) took {resp.elapsed.total_seconds()/1000:.2f}ms")
+
+            if not resp.ok:
+                self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}: {status_code} - {body}")
+
+            if json_body and not is_json:
+                self.logger.warning(f"Expected JSON response but got non-JSON from {remote_host}:{remote_port}{path}")
+                return False, status_code, body
             
-            if not success:
-                self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}")
-                self.logger.warning(f"  Command: {curl_cmd}")
-                self.logger.warning(f"  Stderr: {stderr}")
-                self.logger.warning(f"  Stdout: {stdout}")
-                return False, 0, stderr
-            
-            # Parse response - curl writes status code after HTTP_STATUS:
-            if "HTTP_STATUS:" in stdout:
-                parts = stdout.rsplit("HTTP_STATUS:", 1)
-                body = parts[0].strip()
-                try:
-                    status_code = int(parts[1].strip())
-                    self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes)")
-                except ValueError:
-                    self.logger.warning(f"Failed to parse status code from: {parts[1]}")
-                    status_code = 0
-                    body = stdout
-            else:
-                self.logger.warning(f"No HTTP_STATUS in response from {remote_host}:{remote_port}{path}")
-                self.logger.debug(f"Raw stdout: {stdout[:200]}")
-                body = stdout
-                status_code = 200 if success else 0
-            
-            return True, status_code, body
-            
+            return resp.ok, status_code, body
+        
+        except requests.ConnectionError as e:
+            self.logger.warning(f"Connection refused making HTTP request via SOCKS proxy to {remote_host}:{remote_port}{path}, likely service not running")
+            return False, 0, None
+        except requests.Timeout as e:
+            self.logger.exception(f"Timeout making HTTP request via SOCKS proxy to {remote_host}:{remote_port}{path}: {e}")
+            return False, 0, None
         except Exception as e:
-            self.logger.exception(f"Error making HTTP request via SSH: {e}")
-            return False, 0, str(e)
+            self.logger.exception(f"Error making HTTP request via SOCKS proxy to {remote_host}:{remote_port}{path}: {e}")
+            return False, 0, None
 

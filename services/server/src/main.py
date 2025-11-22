@@ -7,6 +7,7 @@ import os
 import logging
 import signal
 import sys
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -121,11 +122,12 @@ async def health():
 # Include API routes
 app.include_router(router, prefix="/api/v1")
 
-@app.on_event("shutdown")
-async def on_shutdown():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """FastAPI shutdown event handler."""
     global server_service_instance, logger
     
+    yield # Only interested in shutdown
     if logger:
         logger.info("FastAPI shutdown event triggered. Stopping all services...")
     else:
