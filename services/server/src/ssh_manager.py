@@ -213,9 +213,6 @@ class SSHManager:
             self.logger.warning(f"Error closing ControlMaster: {e}")
     
     def get_slurm_token(self) -> str:
-        self.logger.info(f"ControlMaster socket: {self._control_master_socket}")
-    
-    def get_slurm_token(self) -> str:
         """Fetch a fresh SLURM JWT token from MeluXina.
         
         Returns:
