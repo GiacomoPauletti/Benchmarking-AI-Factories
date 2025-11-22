@@ -163,42 +163,28 @@ class VllmService(InferenceService):
                 timeout=timeout
             )
             
-            # Create a mock response object that matches requests.Response interface
-            class MockResponse:
-                def __init__(self, status_code, text, ok):
-                    self.status_code = status_code
-                    self.text = text
-                    self.ok = ok
-                
-                def json(self):
-                    import json
-                    return json.loads(self.text)
-            
-            resp = MockResponse(status_code, body, status_code >= 200 and status_code < 300)
-            
-            if not resp.ok:
-                self.logger.warning("Model discovery for %s returned %s: %s", service_id, resp.status_code, resp.text)
+            if not success:
+                self.logger.warning("Model discovery for %s returned %s: %s", service_id, status_code, body)
                 return {
                     "success": False,
-                    "error": f"HTTP {resp.status_code} from models endpoint",
-                    "message": f"Failed to query models from vLLM service (HTTP {resp.status_code}).",
+                    "error": f"HTTP {status_code} from models endpoint",
+                    "message": f"Failed to query models from vLLM service (HTTP {status_code}).",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "models": []
                 }
 
-            self.logger.debug("Model discovery response for %s: %s", service_id, resp.text)
+            self.logger.debug("Model discovery response for %s: %s", service_id, body)
 
-            data = resp.json()
             models = []
             
             # vLLM returns {"object": "list", "data": [...]}
-            if isinstance(data, dict):
+            if isinstance(body, dict):
                 # Try standard OpenAI format (data field)
-                candidates = data.get('data', [])
+                candidates = body.get('data', [])
                 # Fallback to other possible formats
                 if not candidates:
-                    candidates = data.get('models') or data.get('served_models') or []
+                    candidates = body.get('models') or body.get('served_models') or []
                 
                 if isinstance(candidates, list):
                     for item in candidates:
@@ -208,9 +194,9 @@ class VllmService(InferenceService):
                             model_id = item.get('id') or item.get('model')
                             if model_id:
                                 models.append(model_id)
-            elif isinstance(data, list):
+            elif isinstance(body, list):
                 # Direct list format
-                for item in data:
+                for item in body:
                     if isinstance(item, str):
                         models.append(item)
                     elif isinstance(item, dict):
@@ -296,7 +282,7 @@ class VllmService(InferenceService):
             
             # Use SSH to make the HTTP request with short timeout
             ssh_manager = self.deployer.ssh_manager
-            success, status_code, body = ssh_manager.http_request_via_ssh(
+            success, status_code, data = ssh_manager.http_request_via_ssh(
                 remote_host=remote_host,
                 remote_port=remote_port,
                 method="GET",
@@ -305,13 +291,12 @@ class VllmService(InferenceService):
             )
             
             # Connection succeeded and got valid HTTP response
-            if status_code >= 200 and status_code < 300:
+            if success:
                 self.logger.debug(f"Service {service_id} is ready (HTTP {status_code})")
                 
                 # Parse model list from response
                 model = None
                 try:
-                    data = json.loads(body)
                     # vLLM returns {"object": "list", "data": [...]}
                     if isinstance(data, dict):
                         candidates = data.get('data', [])
@@ -521,18 +506,18 @@ class VllmService(InferenceService):
         
         try:
             # Try chat endpoint first (works for instruction-tuned models)
-            response = self._try_chat_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
+            ok, status_code, body = self._try_chat_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
             
             # Check if we got a chat template error
-            if self._is_chat_template_error(response):
+            if self._is_chat_template_error(ok, status_code, body):
                 self.logger.info("Chat template error detected, retrying with completions endpoint")
                 
                 # Retry with completions endpoint (works for base models)
-                response = self._try_completions_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
-                result = self._parse_completions_response(response, endpoint, service_id)
+                ok, status_code, body = self._try_completions_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
+                result = self._parse_completions_response(ok, status_code, body, endpoint, service_id)
             else:
                 # No chat template error - parse as chat response
-                result = self._parse_chat_response(response, endpoint, service_id)
+                result = self._parse_chat_response(ok, status_code, body, endpoint, service_id)
             
             # Mark service as healthy on successful response
             if result.get("success"):
@@ -605,7 +590,7 @@ class VllmService(InferenceService):
         # Default to base timeout
         return BASE_TIMEOUT
 
-    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
+    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Tuple[bool, int, Any]:
         """Try to send prompt using chat completions endpoint."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -627,9 +612,7 @@ class VllmService(InferenceService):
         
         self.logger.debug("Trying chat endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
-        # Use SSH to make the HTTP request
-        ssh_manager = self.deployer.ssh_manager
-        success, status_code, body = ssh_manager.http_request_via_ssh(
+        return self.deployer.ssh_manager.http_request_via_ssh(
             remote_host=remote_host,
             remote_port=remote_port,
             method="POST",
@@ -637,21 +620,8 @@ class VllmService(InferenceService):
             json_data=request_data,
             timeout=timeout
         )
-        
-        # Create a mock response object that matches requests.Response interface
-        class MockResponse:
-            def __init__(self, status_code, text, ok):
-                self.status_code = status_code
-                self.text = text
-                self.ok = ok
-            
-            def json(self):
-                import json
-                return json.loads(self.text)
-        
-        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
 
-    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Dict[str, Any]:
+    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> Tuple[bool, int, Any]:
         """Try to send prompt using completions endpoint (for base models)."""
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
@@ -673,9 +643,7 @@ class VllmService(InferenceService):
         
         self.logger.debug("Trying completions endpoint via SSH: %s:%s%s (timeout=%ds)", remote_host, remote_port, path, timeout)
         
-        # Use SSH to make the HTTP request
-        ssh_manager = self.deployer.ssh_manager
-        success, status_code, body = ssh_manager.http_request_via_ssh(
+        return self.deployer.ssh_manager.http_request_via_ssh(
             remote_host=remote_host,
             remote_port=remote_port,
             method="POST",
@@ -683,27 +651,13 @@ class VllmService(InferenceService):
             json_data=request_data,
             timeout=timeout
         )
-        
-        # Create a mock response object that matches requests.Response interface
-        class MockResponse:
-            def __init__(self, status_code, text, ok):
-                self.status_code = status_code
-                self.text = text
-                self.ok = ok
-            
-            def json(self):
-                import json
-                return json.loads(self.text)
-        
-        return MockResponse(status_code, body, status_code >= 200 and status_code < 300)
 
-    def _is_chat_template_error(self, response: requests.Response) -> bool:
+    def _is_chat_template_error(self, ok: bool, status_code: int, body: Any) -> bool:
         """Check if response indicates a chat template error."""
-        if response.status_code != 400:
+        if ok or status_code != 400:
             return False
         
         try:
-            body = response.json()
             if not isinstance(body, dict):
                 return False
             
@@ -716,75 +670,61 @@ class VllmService(InferenceService):
         except Exception:
             return False
 
-    def _parse_chat_response(self, response: requests.Response, endpoint: str, service_id: str) -> Dict[str, Any]:
+    def _parse_chat_response(self, ok: bool, status_code: int, body: Any, endpoint: str, service_id: str) -> Dict[str, Any]:
         """Parse response from chat completions endpoint."""
-        if not response.ok:
-            body = None
-            try:
-                body = response.json()
-            except Exception:
-                body = response.text
-            
+        if not ok:
             return {
                 "success": False,
-                "error": f"vLLM returned {response.status_code}",
+                "error": f"vLLM returned {status_code}",
                 "endpoint": endpoint,
-                "status_code": response.status_code,
+                "status_code": status_code,
                 "body": body
             }
         
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            content = result["choices"][0]["message"]["content"]
+        if "choices" in body and len(body["choices"]) > 0:
+            content = body["choices"][0]["message"]["content"]
             return {
                 "success": True,
                 "response": content,
                 "service_id": service_id,
                 "endpoint": endpoint,
                 "endpoint_used": "chat",
-                "usage": result.get("usage", {})
+                "usage": body.get("usage", {})
             }
         
         return {
             "success": False,
             "error": "No response generated",
-            "raw_response": result,
+            "raw_response": body,
             "endpoint": endpoint
         }
 
-    def _parse_completions_response(self, response: requests.Response, endpoint: str, service_id: str) -> Dict[str, Any]:
+    def _parse_completions_response(self, ok: bool, status_code: int, body: Any, endpoint: str, service_id: str) -> Dict[str, Any]:
         """Parse response from completions endpoint."""
-        if not response.ok:
-            body = None
-            try:
-                body = response.json()
-            except Exception:
-                body = response.text
-            
+        if not ok:
             return {
                 "success": False,
-                "error": f"vLLM completions returned {response.status_code}",
+                "error": f"vLLM completions returned {status_code}",
                 "endpoint": endpoint,
-                "status_code": response.status_code,
+                "status_code": status_code,
                 "body": body
             }
         
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            content = result["choices"][0]["text"]
+        if "choices" in body and len(body["choices"]) > 0:
+            content = body["choices"][0]["text"]
             return {
                 "success": True,
                 "response": content,
                 "service_id": service_id,
                 "endpoint": endpoint,
                 "endpoint_used": "completions",
-                "usage": result.get("usage", {})
+                "usage": body.get("usage", {})
             }
         
         return {
             "success": False,
             "error": "No response generated from completions endpoint",
-            "raw_response": result,
+            "raw_response": body,
             "endpoint": endpoint
         }
 
@@ -854,10 +794,11 @@ class VllmService(InferenceService):
                 remote_port=remote_port,
                 method="GET",
                 path=path,
-                timeout=timeout
+                timeout=timeout,
+                json_body=False
             )
             
-            if status_code < 200 or status_code >= 300:
+            if not success:
                 self.logger.warning("Metrics endpoint for %s returned %s: %s", service_id, status_code, body[:200])
                 return {
                     "success": False,
