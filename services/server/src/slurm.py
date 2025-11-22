@@ -129,12 +129,10 @@ class SlurmDeployer:
         # Ensure logs directory exists on remote before submitting job
         # (SLURM needs this directory to exist BEFORE job starts)
         remote_log_dir = f"{self.remote_base_path}/logs"
-        self.ssh_manager.create_remote_directory(remote_log_dir)
-        
         # Ensure persistent HuggingFace cache directory exists
         # This allows model weights to persist across jobs and be shared across nodes
         remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
-        self.ssh_manager.create_remote_directory(remote_hf_cache)
+        self.ssh_manager.create_remote_directories([remote_log_dir, remote_hf_cache])
         
         # Load recipe
         recipe_name, recipe_path = self._find_recipe(recipe_name)

@@ -257,13 +257,8 @@ class SSHManager:
             f"{remote_base_path}/logs"
         ]
         
-        cmd = f"mkdir -p {' '.join(dirs_to_create)}"
-        success, stdout, stderr = self.execute_remote_command(cmd, timeout=10)
-        
-        if not success:
-            self.logger.warning(f"Failed to create remote directories: {stderr}")
-        else:
-            self.logger.info("Remote directories ready")
+        self.create_remote_directories(dirs_to_create)
+        self.logger.info("Remote directories ready")
     
     def setup_slurm_rest_tunnel(self, local_port: int = 6820, 
                                 remote_host: str = "slurmrestd.meluxina.lxp.lu",
@@ -439,13 +434,7 @@ class SSHManager:
             return False
         
         try:
-            # Ensure remote directory exists using proper SSH command
-            mkdir_cmd = self.ssh_base_cmd + [self.ssh_target, f"mkdir -p {remote_dir}"]
-            
-            # Ensure SSH_AUTH_SOCK is available for SSH agent authentication
-            env = os.environ.copy()
-            
-            subprocess.run(mkdir_cmd, check=True, capture_output=True, timeout=10, env=env)
+            _ = self.create_remote_directories([remote_dir])
             
             # Build SSH command for rsync (no -i flag needed with SSH agent)
             rsync_ssh_cmd = "ssh"
@@ -547,7 +536,7 @@ class SSHManager:
         success, _, _ = self.execute_remote_command(f"test -d {remote_path}", timeout=10)
         return success
     
-    def create_remote_directory(self, remote_path: str) -> bool:
+    def create_remote_directories(self, remote_paths: List[str]) -> bool:
         """Create a directory on MeluXina (with parents).
         
         Args:
@@ -563,24 +552,28 @@ class SSHManager:
         attempt = 0
         while attempt < max_attempts:
             attempt += 1
-            success, _, stderr = self.execute_remote_command(f"mkdir -p {remote_path}", timeout=30)
+            dirs = "' '".join(remote_paths)
+            success, _, stderr = self.execute_remote_command(f"mkdir -p '{dirs}'", timeout=30)
             if success:
-                # Double-check directory exists
-                exists = self.check_remote_dir_exists(remote_path)
-                if exists:
-                    self.logger.debug(f"Remote directory ready: {remote_path} (attempt {attempt})")
+                # Double-check directories exist
+                all_ok = True
+                for remote_path in remote_paths:
+                    if self.check_remote_dir_exists(remote_path):
+                        self.logger.debug(f"Remote directory ready: {remote_path} (attempt {attempt})")
+                    else:
+                        self.logger.debug(f"mkdir returned but dir not visible yet: {remote_path} (attempt {attempt})")
+                        all_ok = False
+                if all_ok:
                     return True
-                else:
-                    self.logger.debug(f"mkdir returned but dir not visible yet: {remote_path} (attempt {attempt})")
             else:
-                self.logger.warning(f"Failed to create remote directory {remote_path} (attempt {attempt}): {stderr}")
+                self.logger.warning(f"Failed to create remote directories {remote_paths} (attempt {attempt}): {stderr}")
 
             if attempt < max_attempts:
                 sleep_seconds = 2 ** attempt
-                self.logger.debug(f"Waiting {sleep_seconds}s before retrying mkdir for {remote_path}")
+                self.logger.debug(f"Waiting {sleep_seconds}s before retrying mkdir for {remote_paths}")
                 time.sleep(sleep_seconds)
 
-        self.logger.warning(f"Exhausted attempts creating remote directory: {remote_path}")
+        self.logger.warning(f"Exhausted attempts creating remote directory: {remote_paths}")
         return False
     
     def http_request_via_ssh(self, remote_host: str, remote_port: int, method: str, path: str, 
