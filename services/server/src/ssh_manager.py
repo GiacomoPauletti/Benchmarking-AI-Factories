@@ -10,7 +10,8 @@ import logging
 import requests
 import time
 from pathlib import Path
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
+import requests
 
 
 class SSHManager:
@@ -24,7 +25,7 @@ class SSHManager:
     - Auto-fetching SLURM JWT tokens
     """
     
-    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None):
+    def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None, local_socks_port: int = 1080):
         """Initialize SSH manager with connection details.
         
         Authentication is handled via SSH agent forwarding (SSH_AUTH_SOCK).
@@ -72,9 +73,53 @@ class SSHManager:
         self._control_master_active = False
         self._last_control_check = 0
         self._control_check_interval = 30  # Check every 30s
+
+        self._local_socks_port = local_socks_port
+        self._establish_socks_proxy(local_port=local_socks_port)
+        self._establish_session(local_socks_port=local_socks_port)
         
         self.logger.info(f"SSH Manager initialized for {self.ssh_target}:{self.ssh_port} (using SSH agent)")
         self.logger.info(f"ControlMaster socket: {self._control_master_socket}")
+
+    def _establish_socks_proxy(self, local_port: int = 1080) -> bool:
+        """Establish a SOCKS5 proxy tunnel to MeluXina via SSH.
+        
+        Args:
+            local_port: Local port to bind the SOCKS5 proxy (default: 1080)
+        """
+        try:
+            # Build SSH command for SOCKS5 proxy
+            ssh_command = self._ssh_base_cmd + [
+                "-D", str(local_port),
+                "-N",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=60",
+                self.ssh_target
+            ]
+            
+            self.logger.debug(f"Establishing SOCKS5 proxy: {' '.join(ssh_command)}")
+            
+            self.socks_proxy = subprocess.Popen(ssh_command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            
+            self.logger.info(f"SOCKS5 proxy established on localhost:{local_port}, PID: {self.socks_proxy.pid}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to establish SOCKS5 proxy: {e}")
+            return False
+        
+    def _establish_session(self, local_socks_port: int = 1080) -> bool:
+        """Establish a requests session that uses the SOCKS5 proxy."""
+        try:
+            self._session = requests.Session()
+            self._session.proxies = {
+                "http": f"socks5h://localhost:{local_socks_port}",
+                "https": f"socks5h://localhost:{local_socks_port}"
+            }
+            self.logger.info("HTTP session established using SOCKS5 proxy")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to establish HTTP session via SOCKS5 proxy: {e}")
+            return False
     
     def _ensure_control_master(self) -> bool:
         """Ensure a ControlMaster connection is active.
@@ -541,8 +586,9 @@ class SSHManager:
         return False
     
     def http_request_via_ssh(self, remote_host: str, remote_port: int, method: str, path: str, 
-                             headers: dict = None, json_data: dict = None, timeout: int = 30) -> Tuple[bool, int, str]:
-        """Make an HTTP request to a remote host through SSH using curl.
+                             headers: dict = None, json_data: dict = None, timeout: int = 30,
+                             json_body: bool = True) -> Tuple[bool, int, str]:
+        """Make an HTTP request to a remote host through the SSH SOCKS proxy.
         
         This allows making HTTP requests to internal MeluXina nodes that aren't
         directly accessible from the Docker container.
@@ -555,71 +601,49 @@ class SSHManager:
             headers: Optional HTTP headers dict
             json_data: Optional JSON body for POST requests
             timeout: Request timeout in seconds
+            json_body: Whether the expected response is JSON (default: True)
             
         Returns:
             Tuple of (success: bool, status_code: int, response_body: str)
         """
-        import json as json_lib
-        import shlex
+        if (self.socks_proxy is None) or (self.socks_proxy.poll() is not None):
+            if self.socks_proxy is not None:
+                (stdout, stderr) = self.socks_proxy.communicate()
+                self.logger.warning(f"SOCKS5 proxy process not running, exited with code {self.socks_proxy.returncode}, restarting...")
+                self.logger.debug(f"SOCKS5 proxy stdout: {stdout.decode().strip()}")
+                self.logger.debug(f"SOCKS5 proxy stderr: {stderr.decode().strip()}")
+            else:
+                self.logger.warning("SOCKS5 proxy process not initialized, starting...")
+            self.socks_proxy = None
+            if not self._establish_socks_proxy(local_port=self._local_socks_port):
+                self.logger.error("Cannot make HTTP request via SSH: SOCKS5 proxy not available")
+                # Try even if SOCKS proxy failed to start, might be a leftover
         
         url = f"http://{remote_host}:{remote_port}{path}"
         
-        # Build curl command as a list (will be properly escaped)
-        curl_cmd_parts = ["curl", "-s", "-w", "\\nHTTP_STATUS:%{http_code}"]
-        
-        # Add method
-        if method != "GET":
-            curl_cmd_parts.extend(["-X", method])
-        
-        # Add headers
-        if headers:
-            for key, value in headers.items():
-                curl_cmd_parts.extend(["-H", f"{key}: {value}"])
-        
-        # Add JSON data for POST/PUT
-        if json_data:
-            curl_cmd_parts.extend(["-H", "Content-Type: application/json"])
-            # Use shlex.quote to properly escape the JSON string
-            json_str = json_lib.dumps(json_data)
-            curl_cmd_parts.extend(["-d", json_str])
-        
-        # Add URL and timeout
-        curl_cmd_parts.extend(["--max-time", str(timeout), url])
-        
-        curl_cmd = " ".join(shlex.quote(str(part)) for part in curl_cmd_parts)
-        
-        self.logger.debug(f"Executing HTTP request via SSH: {curl_cmd}")
-        
         try:
-            success, stdout, stderr = self.execute_remote_command(curl_cmd, timeout=timeout + 5)
+            resp = self._session.request(method, url, timeout=timeout, headers=headers, json=json_data)
+            status_code = resp.status_code
+            is_json = 'application/json' in resp.headers.get('Content-Type', '')
+            body = resp.json() if is_json else resp.text
+            self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes) took {resp.elapsed.total_seconds()/1000:.2f}ms")
+
+            if not resp.ok:
+                self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}: {status_code} - {body}")
+
+            if json_body and not is_json:
+                self.logger.warning(f"Expected JSON response but got non-JSON from {remote_host}:{remote_port}{path}")
+                return False, status_code, body
             
-            if not success:
-                self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}")
-                self.logger.warning(f"  Command: {curl_cmd}")
-                self.logger.warning(f"  Stderr: {stderr}")
-                self.logger.warning(f"  Stdout: {stdout}")
-                return False, 0, stderr
-            
-            # Parse response - curl writes status code after HTTP_STATUS:
-            if "HTTP_STATUS:" in stdout:
-                parts = stdout.rsplit("HTTP_STATUS:", 1)
-                body = parts[0].strip()
-                try:
-                    status_code = int(parts[1].strip())
-                    self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes)")
-                except ValueError:
-                    self.logger.warning(f"Failed to parse status code from: {parts[1]}")
-                    status_code = 0
-                    body = stdout
-            else:
-                self.logger.warning(f"No HTTP_STATUS in response from {remote_host}:{remote_port}{path}")
-                self.logger.debug(f"Raw stdout: {stdout[:200]}")
-                body = stdout
-                status_code = 200 if success else 0
-            
-            return True, status_code, body
-            
+            return resp.ok, status_code, body
+        
+        except requests.ConnectionError as e:
+            self.logger.warning(f"Connection refused making HTTP request via SOCKS proxy to {remote_host}:{remote_port}{path}, likely service not running")
+            return False, 0, None
+        except requests.Timeout as e:
+            self.logger.exception(f"Timeout making HTTP request via SOCKS proxy to {remote_host}:{remote_port}{path}: {e}")
+            return False, 0, None
         except Exception as e:
-            self.logger.exception(f"Error making HTTP request via SSH: {e}")
-            return False, 0, str(e)
+            self.logger.exception(f"Error making HTTP request via SOCKS proxy to {remote_host}:{remote_port}{path}: {e}")
+            return False, 0, None
 
