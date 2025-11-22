@@ -528,16 +528,7 @@ class SSHManager:
             dirs = "' '".join(remote_paths)
             success, _, stderr = self.execute_remote_command(f"mkdir -p '{dirs}'", timeout=30)
             if success:
-                # Double-check directories exist
-                all_ok = True
-                for remote_path in remote_paths:
-                    if self.check_remote_dir_exists(remote_path):
-                        self.logger.debug(f"Remote directory ready: {remote_path} (attempt {attempt})")
-                    else:
-                        self.logger.debug(f"mkdir returned but dir not visible yet: {remote_path} (attempt {attempt})")
-                        all_ok = False
-                if all_ok:
-                    return True
+                return True
             else:
                 self.logger.warning(f"Failed to create remote directories {remote_paths} (attempt {attempt}): {stderr}")
 
