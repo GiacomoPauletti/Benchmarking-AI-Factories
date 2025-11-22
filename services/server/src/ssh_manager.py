@@ -56,14 +56,14 @@ class SSHManager:
         self.ssh_target = f"{self.ssh_user}@{self.ssh_host}"
         
         # Build base SSH command with port (authentication via SSH agent)
-        self.ssh_base_cmd = ["ssh"]
+        self._ssh_base_cmd = ["ssh"]
         if self.ssh_port != 22:
-            self.ssh_base_cmd.extend(["-p", str(self.ssh_port)])
+            self._ssh_base_cmd.extend(["-p", str(self.ssh_port)])
         
         # Disable host key checking for container environments
         # In production, consider mounting known_hosts or using accept-new
-        self.ssh_base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
-        self.ssh_base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
+        self._ssh_base_cmd.extend(["-o", "StrictHostKeyChecking=no"])
+        self._ssh_base_cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
         
         # ControlMaster setup for persistent SSH connections
         self.control_socket_dir = Path("/tmp/ssh-control-sockets")
@@ -95,7 +95,7 @@ class SSHManager:
         if self._control_master_socket.exists():
             try:
                 # Test if control master is alive with a quick command
-                test_cmd = self.ssh_base_cmd + [
+                test_cmd = self._ssh_base_cmd + [
                     "-S", str(self._control_master_socket),
                     "-O", "check",
                     self.ssh_target
@@ -121,7 +121,7 @@ class SSHManager:
         try:
             self.logger.info("Creating ControlMaster connection...")
             
-            master_cmd = self.ssh_base_cmd + [
+            master_cmd = self._ssh_base_cmd + [
                 "-M",  # Master mode
                 "-S", str(self._control_master_socket),  # Control socket path
                 "-o", "ControlPersist=600",  # Keep connection alive for 10 minutes after last use
@@ -177,7 +177,7 @@ class SSHManager:
         Returns:
             List of command parts for subprocess
         """
-        cmd = self.ssh_base_cmd.copy()
+        cmd = self._ssh_base_cmd.copy()
         
         # Add ControlMaster socket if available
         if use_control_master and self._ensure_control_master():
@@ -199,7 +199,7 @@ class SSHManager:
         
         try:
             self.logger.info("Closing ControlMaster connection...")
-            exit_cmd = self.ssh_base_cmd + [
+            exit_cmd = self._ssh_base_cmd + [
                 "-S", str(self._control_master_socket),
                 "-O", "exit",
                 self.ssh_target
@@ -285,7 +285,7 @@ class SSHManager:
         
         # Create SSH tunnel in background
         try:
-            ssh_command = self.ssh_base_cmd + [
+            ssh_command = self._ssh_base_cmd + [
                 "-f", "-N",
                 "-L", f"{local_port}:{remote_host}:{remote_port}",
                 "-o", "ExitOnForwardFailure=yes",
