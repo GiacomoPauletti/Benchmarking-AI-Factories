@@ -21,7 +21,6 @@ class SSHManager:
     - Remote file fetching (logs, etc.)
     - Recipe synchronization to remote HPC
     - Remote command execution
-    - Auto-fetching SLURM JWT tokens
     """
     
     def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None, local_socks_port: int = 1080):
@@ -255,31 +254,6 @@ class SSHManager:
             self.logger.info("ControlMaster connection closed")
         except Exception as e:
             self.logger.warning(f"Error closing ControlMaster: {e}")
-    
-    def get_slurm_token(self) -> str:
-        """Fetch a fresh SLURM JWT token from MeluXina.
-        
-        Returns:
-            SLURM JWT token string
-            
-        Raises:
-            RuntimeError: If token fetch fails
-        """
-        self.logger.info("Fetching SLURM JWT token from MeluXina...")
-        success, stdout, stderr = self.execute_remote_command("scontrol token", timeout=10)
-        
-        if not success:
-            raise RuntimeError(f"Failed to fetch SLURM token: {stderr}")
-        
-        # Parse output: "SLURM_JWT=eyJhbGc..."
-        for line in stdout.strip().split('\n'):
-            if line.startswith('SLURM_JWT='):
-                token = line.split('=', 1)[1].strip()
-                self.logger.info("Successfully fetched SLURM JWT token")
-                return token
-        
-        raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
-
 
     def sync_directory_to_local(self, remote_dir: str, local_dir: Path) -> bool:
         """Sync a remote directory from MeluXina to local using rsync.
@@ -311,7 +285,6 @@ class SSHManager:
             subprocess.run(rsync_cmd, text=True, timeout=5, capture_output=True, check=True)
             self.logger.info(f"Synced directory: {remote_dir} -> {local_dir}, took {(time.time() - start)*1000:.2f}ms")
             return True
-
             
         except subprocess.TimeoutExpired:
             self.logger.warning(f"Timeout syncing directory: {remote_dir}")

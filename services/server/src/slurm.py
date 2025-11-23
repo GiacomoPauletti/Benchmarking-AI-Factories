@@ -3,6 +3,7 @@ SLURM job submission and management via REST API with SSH tunnel to MeluXina.
 Designed for local Docker development with remote job submission using SLURM REST API.
 """
 
+from threading import Timer
 import yaml
 import json
 import os
@@ -18,6 +19,7 @@ from job_cache_manager import JobCacheManager
 
 SLURM_HOSTNAME = "slurmrestd.meluxina.lxp.lu"
 SLURM_PORT = 6820
+SLURM_BASE_URL = "/slurm/v0.0.40"
 
 class SlurmDeployer:
     """Handles SLURM job submission and management via REST API over SSH tunnel.
@@ -35,24 +37,14 @@ class SlurmDeployer:
         
         # Initialize SSH manager for all remote operations
         self.ssh_manager = SSHManager()
-        self.ssh_user = self.ssh_manager.ssh_user
-        self.ssh_host = self.ssh_manager.ssh_host
         
         # Use SSH_USER as the username for SLURM operations
-        self.username = self.ssh_user
+        self.username = self.ssh_manager.ssh_user
         
-        # Get or fetch SLURM JWT token
-        self.token = os.getenv('SLURM_JWT')
-        if not self.token:
-            self.logger.info("SLURM_JWT not set, fetching fresh token from MeluXina...")
-            try:
-                self.token = self.ssh_manager.get_slurm_token()
-            except Exception as e:
-                raise RuntimeError(f"Failed to fetch SLURM token: {e}")
-        else:
-            self.logger.info("Using SLURM_JWT from environment")
+        # Get or fetch SLURM JWT token, with auto-renewal
+        self.authenticate_slurm(validity_secs=2 * 60 * 60)
         
-        self.logger.info(f"Initializing SLURM deployer with REST API via SSH tunnel to {self.ssh_user}@{self.ssh_host}")
+        self.logger.info("Initializing SLURM deployer with REST API")
         
         # Base path configuration
         # LOCAL_BASE_PATH: Where recipes/configs are stored locally (in Docker container)
@@ -85,14 +77,7 @@ class SlurmDeployer:
         self.logger.debug(f"Local base path (for recipes): {self.local_base_path}")
         self.logger.debug(f"Remote base path (for SLURM jobs): {self.remote_base_path}")
         
-        # SLURM REST API configuration (via SSH tunnel)
-        self.base_url = f"/slurm/v0.0.40"
-        self.headers = {
-            'X-SLURM-USER-NAME': self.username,
-            'X-SLURM-USER-TOKEN': self.token,
-        }
-        
-        self.logger.info(f"SLURM REST API: {self.base_url}")
+        self.logger.info(f"SLURM REST API: {SLURM_BASE_URL}")
         self.logger.info(f"Authenticating as user: {self.username}")
         
         # Load SLURM state normalization mapping from YAML file in server folder
@@ -116,6 +101,55 @@ class SlurmDeployer:
             fetch_details=self._fetch_job_details_uncached
         )
         self.cache_manager.start_background_updates()
+    
+    def authenticate_slurm(self, validity_secs: int = 60 * 60) -> None:
+        """Fetch a fresh SLURM JWT token from MeluXina.
+        
+        Returns:
+            SLURM JWT token string
+            
+        Raises:
+            RuntimeError: If token fetch fails
+        """
+
+        env_token = os.getenv('SLURM_JWT')
+        if env_token:
+            self.logger.info("Using SLURM_JWT from environment")
+            self.headers = {
+                'X-SLURM-USER-NAME': self.username,
+                'X-SLURM-USER-TOKEN': env_token,
+            }
+            return
+
+        self.logger.info("Fetching SLURM JWT token from MeluXina...")
+        success, stdout, stderr = self.ssh_manager.execute_remote_command(f"scontrol token lifespan={validity_secs}", timeout=10)
+        
+        if not success:
+            raise RuntimeError(f"Failed to fetch SLURM token: {stderr}")
+        
+        # Parse output: "SLURM_JWT=eyJhbGc..."
+        for line in stdout.strip().split('\n'):
+            if line.startswith('SLURM_JWT='):
+                token = line.split('=', 1)[1].strip()
+
+                # SLURM REST API configuration (via SSH tunnel)
+                self.headers = {
+                    'X-SLURM-USER-NAME': self.username,
+                    'X-SLURM-USER-TOKEN': token,
+                }
+                self.logger.info("Successfully fetched SLURM JWT token")
+
+                ok, status_code, result = self.ssh_manager.http_request_via_ssh(SLURM_HOSTNAME, SLURM_PORT, 'GET', f"{SLURM_BASE_URL}/ping", headers=self.headers)
+                if ok:
+                    self.logger.info("SLURM token validation successful")
+                else:
+                    raise RuntimeError(f"SLURM token validation failed with status {status_code}: {result}")
+                # Renew token automatically one minute before expiry
+                self.renew_timer = Timer(validity_secs - 60, lambda: self.authenticate_slurm(validity_secs))
+                self.renew_timer.start()
+                return
+        
+        raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
     
     def __del__(self):
         """Clean up background threads on deletion."""
@@ -144,7 +178,7 @@ class SlurmDeployer:
         
         ok, status_code, result = self.ssh_manager.http_request_via_ssh(
             SLURM_HOSTNAME, SLURM_PORT,
-            'POST', f"{self.base_url}/job/submit", 
+            'POST', f"{SLURM_BASE_URL}/job/submit", 
             headers=self.headers,
             json_data=job_payload
         )
@@ -193,7 +227,7 @@ class SlurmDeployer:
         try:
             ok, status_code, body = self.ssh_manager.http_request_via_ssh(
                 SLURM_HOSTNAME, SLURM_PORT,
-                'DELETE', f"{self.base_url}/job/{job_id}", 
+                'DELETE', f"{SLURM_BASE_URL}/job/{job_id}", 
                 headers=self.headers
             )
             if not ok:
@@ -240,7 +274,7 @@ class SlurmDeployer:
         try:
             ok, status_code, result = self.ssh_manager.http_request_via_ssh(
                 SLURM_HOSTNAME, SLURM_PORT,
-                'GET', f"{self.base_url}/job/{job_id}",
+                'GET', f"{SLURM_BASE_URL}/job/{job_id}",
                 headers=self.headers, timeout=5
             )
             if ok:
@@ -277,7 +311,7 @@ class SlurmDeployer:
             
             ok, status_code, result = self.ssh_manager.http_request_via_ssh(
                 SLURM_HOSTNAME, SLURM_PORT,
-                'GET', f"{self.base_url}/jobs", 
+                'GET', f"{SLURM_BASE_URL}/jobs", 
                 headers=self.headers,
                 timeout=10
             )
@@ -444,7 +478,7 @@ class SlurmDeployer:
         try:
             ok, status_code, result = self.ssh_manager.http_request_via_ssh(
                 SLURM_HOSTNAME, SLURM_PORT,
-                'GET', f"{self.base_url}/job/{job_id}",
+                'GET', f"{SLURM_BASE_URL}/job/{job_id}",
                 headers=self.headers,
                 timeout=10
             )
