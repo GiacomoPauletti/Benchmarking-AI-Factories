@@ -12,7 +12,6 @@ services:
       - ./services/server/tests:/app/tests
       - ./services/server/pytest.ini:/app/pytest.ini
       - ./services/server/logs:/app/logs
-      - ./services/server/huggingface_cache:/app/huggingface_cache
       # Mount server endpoint file so client can find it
       - ./services/server/.server-endpoint:/app/.server-endpoint
       # Mount SSH agent socket for secure authentication (no raw keys exposed)

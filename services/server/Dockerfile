@@ -20,7 +20,7 @@ COPY src/ ./src/
 RUN touch .server-endpoint
 
 # Create necessary directories
-RUN mkdir -p /app/logs /app/huggingface_cache /root/.ssh
+RUN mkdir -p /app/logs /root/.ssh
 
 # Set proper SSH directory permissions
 RUN chmod 700 /root/.ssh
