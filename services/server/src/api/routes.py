@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional
 
 from server_service import ServerService
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
-from api.metrics_proxy import router as metrics_router
 from services.inference.vllm_models_config import (
     get_architecture_info,
     search_hf_models,
@@ -15,9 +14,6 @@ from services.inference.vllm_models_config import (
 )
 
 router = APIRouter()
-
-# Include metrics proxy routes
-router.include_router(metrics_router)
 
 # Singleton instance of ServerService (created once, reused for all requests)
 _server_service_instance = None
