@@ -481,7 +481,7 @@ class SSHManager:
             status_code = resp.status_code
             is_json = 'application/json' in resp.headers.get('Content-Type', '')
             body = resp.json() if is_json else resp.text
-            self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes) took {resp.elapsed.total_seconds()/1000:.2f}ms")
+            self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes) took {resp.elapsed.total_seconds()*1000:.2f}ms")
 
             if not resp.ok:
                 self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}: {status_code} - {body}")
