@@ -18,7 +18,6 @@ class SSHManager:
     """Manages SSH connections and operations from local to MeluXina HPC cluster.
     
     Provides functionality for:
-    - SSH tunnel creation for SLURM REST API
     - Remote file fetching (logs, etc.)
     - Recipe synchronization to remote HPC
     - Remote command execution
@@ -319,84 +318,6 @@ class SSHManager:
             return False
         except Exception as e:
             self.logger.warning(f"Error syncing directory {remote_dir}: {e}")
-            return False
-    
-    def setup_slurm_rest_tunnel(self, local_port: int = 6820, 
-                                remote_host: str = "slurmrestd.meluxina.lxp.lu",
-                                remote_port: int = 6820) -> int:
-        """Establish SSH tunnel for SLURM REST API.
-        
-        Creates a port forward: localhost:local_port -> remote_host:remote_port
-        
-        Args:
-            local_port: Local port to bind to (default: 6820)
-            remote_host: Remote SLURM REST API host
-            remote_port: Remote SLURM REST API port
-            
-        Returns:
-            The local port number if successful
-            
-        Raises:
-            RuntimeError: If tunnel creation fails
-        """
-        # Check if tunnel already exists
-        if self._is_tunnel_active(local_port):
-            self.logger.info(f"SSH tunnel already active on port {local_port}")
-            return local_port
-        
-        # Create SSH tunnel in background
-        try:
-            ssh_command = self._ssh_base_cmd + [
-                "-f", "-N",
-                "-L", f"{local_port}:{remote_host}:{remote_port}",
-                "-o", "ExitOnForwardFailure=yes",
-                "-o", "ServerAliveInterval=60",
-                self.ssh_target
-            ]
-            
-            self.logger.debug(f"Creating SSH tunnel: {' '.join(ssh_command)}")
-            
-            result = subprocess.run(
-                ssh_command,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode != 0:
-                raise ConnectionError(f"Failed to create SSH tunnel: {result.stderr}")
-            
-            self.logger.info(f"SSH tunnel established: localhost:{local_port} -> {remote_host}:{remote_port}")
-            
-            # Wait a moment for tunnel to be ready
-            import time
-            time.sleep(1)
-            
-            return local_port
-            
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("SSH tunnel creation timed out")
-        except Exception as e:
-            self.logger.error(f"Failed to establish SSH tunnel: {e}")
-            raise RuntimeError(f"SSH tunnel setup failed: {str(e)}")
-    
-    def _is_tunnel_active(self, local_port: int) -> bool:
-        """Check if an SSH tunnel is already active on the given port.
-        
-        Args:
-            local_port: Port to check
-            
-        Returns:
-            True if tunnel is active, False otherwise
-        """
-        try:
-            test_response = requests.get(
-                f"http://localhost:{local_port}/slurm/v0.0.40/ping",
-                timeout=2
-            )
-            # API responding (even with auth errors) means tunnel is active
-            return test_response.status_code in [200, 401, 403]
-        except:
             return False
     
     def sync_directory_to_remote(self, local_dir: Path, remote_dir: str, 

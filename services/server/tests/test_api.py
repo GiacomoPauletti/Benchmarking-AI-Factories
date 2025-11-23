@@ -1023,12 +1023,10 @@ class TestSLURMDeployer:
         
         # Mock SSH Manager
         mock_ssh_instance = Mock()
-        mock_ssh_instance.setup_slurm_rest_tunnel.return_value = 6820
         mock_ssh.return_value = mock_ssh_instance
         
         deployer = SlurmDeployer()
         assert deployer.token == "test_token"
-        assert deployer.rest_api_port == 6820
     
     @patch.dict(os.environ, {'SLURM_JWT': 'test_token'})
     @patch('slurm.SSHManager')
@@ -1038,15 +1036,13 @@ class TestSLURMDeployer:
         
         # Mock SSH Manager
         mock_ssh_instance = Mock()
-        mock_ssh_instance.setup_slurm_rest_tunnel.return_value = 6820
         mock_ssh.return_value = mock_ssh_instance
         
         deployer = SlurmDeployer()
         
         # Verify deployer is properly configured for HTTP calls
-        assert deployer.base_url == f"http://localhost:6820/slurm/v0.0.40"
+        assert deployer.base_url == f"/slurm/v0.0.40"
         assert deployer.headers['X-SLURM-USER-TOKEN'] == 'test_token'
-        assert 'Content-Type' in deployer.headers
         
         # Test that submit_job would fail appropriately without a recipe file
         try:
@@ -1232,7 +1228,7 @@ class TestVllmServiceUnit:
             "status": "pending",  # Stale cached status
             "recipe_name": "inference/vllm-single-node"
         }
-        
+
         # Mock is_group to return False (this is a single service, not a group)
         mock_service_manager.is_group.return_value = False
         

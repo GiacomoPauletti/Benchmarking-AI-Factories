@@ -4,7 +4,6 @@ Designed for local Docker development with remote job submission using SLURM RES
 """
 
 import yaml
-import requests
 import json
 import os
 import logging
@@ -17,6 +16,8 @@ from ssh_manager import SSHManager
 from recipe_builders import BuilderRegistry, ScriptPaths
 from job_cache_manager import JobCacheManager
 
+SLURM_HOSTNAME = "slurmrestd.meluxina.lxp.lu"
+SLURM_PORT = 6820
 
 class SlurmDeployer:
     """Handles SLURM job submission and management via REST API over SSH tunnel.
@@ -53,9 +54,6 @@ class SlurmDeployer:
         
         self.logger.info(f"Initializing SLURM deployer with REST API via SSH tunnel to {self.ssh_user}@{self.ssh_host}")
         
-        # Setup SSH tunnel for SLURM REST API
-        self.rest_api_port = self.ssh_manager.setup_slurm_rest_tunnel()
-        
         # Base path configuration
         # LOCAL_BASE_PATH: Where recipes/configs are stored locally (in Docker container)
         # REMOTE_BASE_PATH: Where recipes/logs will be stored on MeluXina
@@ -88,11 +86,10 @@ class SlurmDeployer:
         self.logger.debug(f"Remote base path (for SLURM jobs): {self.remote_base_path}")
         
         # SLURM REST API configuration (via SSH tunnel)
-        self.base_url = f"http://localhost:{self.rest_api_port}/slurm/v0.0.40"
+        self.base_url = f"/slurm/v0.0.40"
         self.headers = {
             'X-SLURM-USER-NAME': self.username,
             'X-SLURM-USER-TOKEN': self.token,
-            'Content-Type': 'application/json'
         }
         
         self.logger.info(f"SLURM REST API: {self.base_url}")
@@ -145,27 +142,28 @@ class SlurmDeployer:
         self.logger.info("Submitting job payload")
         self.logger.debug(json.dumps(job_payload, indent=2))
         
-        response = requests.post(
-            f"{self.base_url}/job/submit", 
-            headers=self.headers, 
-            json=job_payload
+        ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+            SLURM_HOSTNAME, SLURM_PORT,
+            'POST', f"{self.base_url}/job/submit", 
+            headers=self.headers,
+            json_data=job_payload
         )
         
         # Debug: print the response for troubleshooting
-        self.logger.info(f"SLURM API Response Status: {response.status_code}")
-        self.logger.debug(f"SLURM API Response Body: {response.text}")
+        self.logger.info(f"SLURM API Response Status: {status_code}")
+        self.logger.debug(f"SLURM API Response Body: {result}")
         
-        response.raise_for_status()
+        if not ok:
+            raise RuntimeError(f"SLURM job submission failed with status {status_code}: {result}")
         
-        result = response.json()
         if result.get('errors'):
             raise RuntimeError(f"SLURM API errors: {result['errors']}")
         
         # Return job information directly from SLURM response
-        job_id = result.get('job_id', 0)
+        job_id = result.get('job_id')
         
         # Validate that we got a valid job ID
-        if job_id == 0:
+        if job_id is None:
             raise RuntimeError(f"SLURM job submission failed: received job_id=0. Response: {result}")
         
         # Track this job for background updates IMMEDIATELY
@@ -193,11 +191,14 @@ class SlurmDeployer:
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a running SLURM job by job ID via REST API."""
         try:
-            response = requests.delete(
-                f"{self.base_url}/job/{job_id}", 
+            ok, status_code, body = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'DELETE', f"{self.base_url}/job/{job_id}", 
                 headers=self.headers
             )
-            response.raise_for_status()
+            if not ok:
+                self.logger.error(f"Failed to cancel SLURM job {job_id}: {status_code} - {body}")
+                return False
             
             # Stop tracking this job
             self.cache_manager.untrack_job(str(job_id))
@@ -223,19 +224,26 @@ class SlurmDeployer:
         """
         return self.cache_manager.get_status(str(job_id))
     
+    def _sync_logs(self) -> None:
+        # Setup local and remote log directories
+        local_log_dir = self.local_base_path / "logs"
+        local_log_dir.mkdir(parents=True, exist_ok=True)
+        remote_log_dir = f"{self.remote_base_path}/logs"
+
+        self.ssh_manager.sync_directory_to_local(remote_log_dir, local_log_dir)
+    
     def _fetch_status_uncached(self, job_id: str) -> str:
         """Fetch status from SLURM API without using cache.
         
         This is used as a callback by the cache manager.
         """
         try:
-            response = requests.get(
-                f"{self.base_url}/job/{job_id}",
-                headers=self.headers,
-                timeout=5
+            ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'GET', f"{self.base_url}/job/{job_id}",
+                headers=self.headers, timeout=5
             )
-            if response.status_code == 200:
-                result = response.json()
+            if ok:
                 jobs = result.get('jobs', [])
                 if jobs:
                     job = jobs[0]
@@ -246,9 +254,12 @@ class SlurmDeployer:
                         status = job_state.lower()
                     else:
                         status = str(job_state).lower()
-                    return self._normalize_slurm_state(status)
+                    normalized_status = self._normalize_slurm_state(status)
+                    self.logger.debug(f"Fetched status for job {job_id}: raw='{status}', normalized='{normalized_status}'")
+                    return normalized_status
             
             # Job not found - mark as completed
+            self.logger.info(f"Job {job_id} not found in SLURM API, marking as completed")
             return "completed"
             
         except Exception as e:
@@ -259,21 +270,21 @@ class SlurmDeployer:
         """List all jobs from SLURM cluster via REST API, optionally filtered by user."""
         try:
             # Use the /jobs endpoint to get all jobs
-            params = {}
             if user_filter:
                 # Note: The official API may not support user filtering directly
                 # but we can filter the results after getting them
                 pass
             
-            response = requests.get(
-                f"{self.base_url}/jobs", 
+            ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'GET', f"{self.base_url}/jobs", 
                 headers=self.headers,
-                params=params,
                 timeout=10
             )
-            response.raise_for_status()
+            if not ok:
+                self.logger.error(f"Failed to list SLURM jobs: {status_code} - {result}")
+                raise RuntimeError(f"SLURM job listing failed with status {status_code}: {result}")
             
-            result = response.json()
             jobs = result.get('jobs', [])
             
             # Filter to current user's jobs and convert to our format
@@ -431,14 +442,14 @@ class SlurmDeployer:
     def _fetch_job_details_uncached(self, job_id: str) -> Dict[str, Any]:
         """Get detailed information about a SLURM job including allocated nodes via REST API."""
         try:
-            response = requests.get(
-                f"{self.base_url}/job/{job_id}",
+            ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'GET', f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
                 timeout=10
             )
             
-            if response.status_code == 200:
-                result = response.json()
+            if ok:
                 # DEBUG: emit raw job JSON for troubleshooting allocated node fields
                 try:
                     import logging
