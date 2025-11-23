@@ -396,6 +396,13 @@ class ServiceOrchestrator:
                 if current_status != service["status"]:
                     self.service_manager.update_service_status(service_id, current_status)
                     service["status"] = current_status
+            
+            # Resolve endpoint if running
+            if service["status"] in ["running", "RUNNING"]:
+                endpoint = self.endpoint_resolver.resolve(service_id)
+                if endpoint:
+                    service["endpoint"] = endpoint
+                    
         return service
     
     def get_service_status(self, service_id: str) -> Dict[str, str]:

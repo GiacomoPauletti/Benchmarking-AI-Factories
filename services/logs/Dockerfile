@@ -48,4 +48,4 @@ if [ -d /tmp/host-ssh ]; then \
 fi; \
 \
 echo 'Starting logs service on port 8004...'; \
-exec uvicorn src.main:app --host 0.0.0.0 --port 8004 --reload"]
+exec uvicorn src.main:app --host 0.0.0.0 --port 8004"]

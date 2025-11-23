@@ -25,10 +25,13 @@ import sys
 def check_client_service(client_url: str) -> bool:
     """Check if the client service is running and healthy."""
     try:
-        response = requests.get(f"{client_url}/api/v1/health", timeout=5)
+        # Health endpoint is at root /health, not /api/v1/health
+        response = requests.get(f"{client_url}/health", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            print(f"✓ Client Service is healthy (uptime: {data['uptime']:.1f}s)")
+            # Some health endpoints return uptime, some just status
+            uptime = data.get('uptime', 0.0)
+            print(f"✓ Client Service is healthy (uptime: {uptime:.1f}s)")
             return True
         return False
     except requests.RequestException as e:
@@ -36,41 +39,49 @@ def check_client_service(client_url: str) -> bool:
         return False
 
 
-def create_client_group(client_url: str, benchmark_id: int, num_clients: int, time_limit: int) -> bool:
+from typing import Optional
+
+def create_client_group(client_url: str, num_clients: int, time_limit: int) -> Optional[int]:
     """Create a new client group for benchmarking."""
     try:
-        print(f"\n[1/5] Creating client group {benchmark_id}...")
+        print(f"\n[1/5] Creating client group...")
         print(f"      - Number of clients: {num_clients}")
         print(f"      - Time limit: {time_limit} minutes")
         
+        # Default configuration for the example
+        payload = {
+            "target_url": "http://localhost:8000/v1/completions",  # Default target
+            "service_id": "example-service-1",  # Required field
+            "num_clients": num_clients,
+            "requests_per_second": 1.0,
+            "duration_seconds": 60,
+            "prompts": ["Hello, world!", "What is the capital of France?"],
+            "max_tokens": 50,
+            "time_limit": time_limit
+        }
+        
         response = requests.post(
-            f"{client_url}/api/v1/client-groups/{benchmark_id}",
-            json={
-                "num_clients": num_clients,
-                "time_limit": time_limit
-            },
+            f"{client_url}/api/v1/client-groups",
+            json=payload,
             timeout=30
         )
         
         if response.status_code == 201:
             data = response.json()
-            print(f"✓ Client group created: {data['message']}")
-            return True
-        elif response.status_code == 409:
-            print(f"✗ Client group {benchmark_id} already exists. Choose a different ID.")
-            return False
+            group_id = data.get("group_id")
+            print(f"✓ Client group created with ID: {group_id}")
+            return group_id
         else:
             print(f"✗ Failed to create client group: {response.status_code} - {response.text}")
-            return False
+            return None
     except requests.RequestException as e:
         print(f"✗ Request failed: {e}")
-        return False
+        return None
 
 
-def wait_for_clients_ready(client_url: str, benchmark_id: int, timeout: int = 300) -> bool:
-    """Wait for the client processes to register with the client service."""
-    print(f"\n[2/5] Waiting for client processes to register (timeout: {timeout}s)...")
-    print("      This may take a few minutes as the SLURM job starts...")
+def wait_for_completion(client_url: str, benchmark_id: int, timeout: int = 300) -> bool:
+    """Wait for the benchmark job to complete."""
+    print(f"\n[2/4] Waiting for benchmark to complete (timeout: {timeout}s)...")
     
     start_time = time.time()
     last_status = None
@@ -85,132 +96,64 @@ def wait_for_clients_ready(client_url: str, benchmark_id: int, timeout: int = 30
             if response.status_code == 200:
                 data = response.json()
                 info = data.get("info", {})
-                client_address = info.get("client_address")
                 status = info.get("status", "pending")
                 
                 if status != last_status:
                     print(f"      Status: {status}")
                     last_status = status
                 
-                if client_address:
-                    print(f"✓ Clients registered at: {client_address}")
+                if status == "stopped":
+                    print(f"✓ Benchmark completed")
                     return True
+                
+                if status == "running":
+                    # Job is running, just wait
+                    pass
             
-            time.sleep(10)  # Check every 10 seconds
+            time.sleep(5)
             
         except requests.RequestException as e:
             print(f"      Warning: {e}")
             time.sleep(10)
     
-    print(f"✗ Timeout: Clients did not register within {timeout}s")
+    print(f"✗ Timeout: Benchmark did not complete within {timeout}s")
     return False
 
-
-def run_benchmark(client_url: str, benchmark_id: int) -> bool:
-    """Trigger the benchmark execution."""
+def fetch_results(client_url: str, benchmark_id: int):
+    """Fetch and display benchmark results."""
+    print(f"\n[3/4] Fetching results...")
+    
+    # Sync logs to get the results file
     try:
-        print(f"\n[3/5] Triggering benchmark execution...")
-        
         response = requests.post(
-            f"{client_url}/api/v1/client-groups/{benchmark_id}/run",
-            timeout=30
+            f"{client_url}/api/v1/client-groups/{benchmark_id}/logs/sync",
+            timeout=60
         )
         
         if response.status_code == 200:
-            data = response.json()
-            print(f"✓ Benchmark started")
-            print(f"      Results: {data.get('results', [])}")
-            return True
-        elif response.status_code == 404:
-            print(f"✗ Client group not ready or not found")
-            return False
+            print(f"✓ Logs synced")
+            # In a real scenario, we would read the local file.
+            # But here we are running the script potentially on a different machine than the client service (if remote).
+            # However, the example assumes localhost access or shared FS?
+            # The sync endpoint syncs to the CLIENT SERVICE's local dir.
+            # If we want to see results here, we need an endpoint to GET the results JSON.
+            # The API doesn't seem to have a direct "get results" endpoint, only "get logs".
+            
+            # Let's try to get logs, maybe the results are printed there too?
+            log_response = requests.get(f"{client_url}/api/v1/client-groups/{benchmark_id}/logs")
+            if log_response.status_code == 200:
+                logs = log_response.json().get("logs", "")
+                print(f"\n=== Benchmark Logs ===\n{logs}\n======================")
         else:
-            print(f"✗ Failed to run benchmark: {response.status_code} - {response.text}")
-            return False
+            print(f"✗ Failed to sync logs: {response.status_code}")
+            
     except requests.RequestException as e:
-        print(f"✗ Request failed: {e}")
-        return False
-
-
-def monitor_metrics(client_url: str, benchmark_id: int, duration: int = 60):
-    """Monitor the benchmark metrics."""
-    print(f"\n[4/5] Monitoring metrics for {duration} seconds...")
-    print("      Press Ctrl+C to stop monitoring early\n")
-    
-    start_time = time.time()
-    
-    try:
-        while time.time() - start_time < duration:
-            try:
-                response = requests.get(
-                    f"{client_url}/api/v1/client-groups/{benchmark_id}/metrics",
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    # Parse Prometheus metrics for display
-                    metrics_text = response.text
-                    
-                    # Extract key metrics (simple parsing)
-                    lines = metrics_text.split('\n')
-                    metrics = {}
-                    for line in lines:
-                        if line and not line.startswith('#'):
-                            parts = line.split()
-                            if len(parts) >= 2:
-                                metric_name = parts[0].split('{')[0]
-                                try:
-                                    metric_value = float(parts[-1])
-                                    metrics[metric_name] = metric_value
-                                except ValueError:
-                                    pass
-                    
-                    # Display key metrics
-                    elapsed = time.time() - start_time
-                    print(f"\r      Elapsed: {elapsed:.0f}s | Metrics: {len(metrics)} total", end='', flush=True)
-                    
-                    time.sleep(5)  # Update every 5 seconds
-                else:
-                    print(f"\n      Warning: Could not fetch metrics ({response.status_code})")
-                    time.sleep(10)
-                    
-            except requests.RequestException as e:
-                print(f"\n      Warning: {e}")
-                time.sleep(10)
-    
-    except KeyboardInterrupt:
-        print("\n      Monitoring stopped by user")
-    
-    print(f"\n✓ Monitoring complete")
-
-
-def get_prometheus_targets(client_url: str):
-    """Get the Prometheus targets for all client groups."""
-    try:
-        print(f"\n[*] Prometheus targets:")
-        response = requests.get(
-            f"{client_url}/api/v1/client-groups/targets",
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            targets = response.json()
-            if targets:
-                for target in targets:
-                    labels = target.get("labels", {})
-                    print(f"      - Benchmark {labels.get('benchmark_id')}: {target.get('targets', [])[0]} ({labels.get('num_clients')} clients)")
-            else:
-                print("      No active targets")
-        else:
-            print(f"      Could not fetch targets: {response.status_code}")
-    except requests.RequestException as e:
-        print(f"      Error: {e}")
-
+        print(f"✗ Error fetching results: {e}")
 
 def cleanup_client_group(client_url: str, benchmark_id: int):
     """Delete the client group and clean up resources."""
     try:
-        print(f"\n[5/5] Cleaning up client group...")
+        print(f"\n[4/4] Cleaning up client group...")
         
         response = requests.delete(
             f"{client_url}/api/v1/client-groups/{benchmark_id}",
@@ -247,7 +190,6 @@ def list_all_groups(client_url: str):
     except requests.RequestException as e:
         print(f"\n[*] Error listing groups: {e}")
 
-
 def main():
     """Run the simple client service example."""
     print("=" * 70)
@@ -255,18 +197,15 @@ def main():
     print("=" * 70)
     
     # Configuration
-    client_url = os.getenv("CLIENT_URL", "http://localhost:8002")
-    benchmark_id = int(os.getenv("BENCHMARK_ID", str(int(time.time()))))  # Use timestamp as default
+    client_url = os.getenv("CLIENT_URL", "http://localhost:8003")
+    # benchmark_id is no longer needed for creation, but we'll use a variable to store the created ID
     num_clients = int(os.getenv("NUM_CLIENTS", "10"))
     time_limit = int(os.getenv("TIME_LIMIT", "10"))  # SLURM time limit in minutes
-    monitor_duration = int(os.getenv("MONITOR_DURATION", "60"))  # Monitor for 60 seconds
     
     print(f"\nConfiguration:")
     print(f"  - Client Service URL: {client_url}")
-    print(f"  - Benchmark ID: {benchmark_id}")
     print(f"  - Number of clients: {num_clients}")
     print(f"  - Time limit: {time_limit} minutes")
-    print(f"  - Monitor duration: {monitor_duration} seconds")
     print()
     
     # Step 0: Check if client service is running
@@ -278,48 +217,40 @@ def main():
     # List existing groups
     list_all_groups(client_url)
     
+    benchmark_id = None
+    
     try:
         # Step 1: Create client group
-        if not create_client_group(client_url, benchmark_id, num_clients, time_limit):
+        benchmark_id = create_client_group(client_url, num_clients, time_limit)
+        if benchmark_id is None:
             sys.exit(1)
         
-        # Step 2: Wait for clients to be ready
-        if not wait_for_clients_ready(client_url, benchmark_id, timeout=300):
-            print("\n[!] Clients failed to register. Check SLURM logs:")
-            print(f"    ssh meluxina 'squeue -u $USER'")
-            print(f"    ssh meluxina 'cat ~/slurm-*.out'")
-            cleanup_client_group(client_url, benchmark_id)
-            sys.exit(1)
+        # Step 2: Wait for completion
+        if wait_for_completion(client_url, benchmark_id, timeout=300):
+            # Step 3: Fetch results
+            fetch_results(client_url, benchmark_id)
+        else:
+            print("\n[!] Benchmark failed or timed out.")
+            # Try to get logs anyway
+            fetch_results(client_url, benchmark_id)
         
-        # Step 3: Run the benchmark
-        if not run_benchmark(client_url, benchmark_id):
-            cleanup_client_group(client_url, benchmark_id)
-            sys.exit(1)
-        
-        # Step 4: Monitor metrics
-        monitor_metrics(client_url, benchmark_id, duration=monitor_duration)
-        
-        # Show Prometheus targets
-        get_prometheus_targets(client_url)
-        
-        # Step 5: Cleanup
+        # Step 4: Cleanup
         cleanup_client_group(client_url, benchmark_id)
         
         print("\n" + "=" * 70)
         print("✓ Example completed successfully!")
         print("=" * 70)
         print("\nNext steps:")
-        print("  - View metrics in Grafana: http://localhost:3000")
-        print("  - Query Prometheus: http://localhost:9090")
-        print("  - Check OpenAPI docs: http://localhost:8002/docs")
-        
+        print("  - Check OpenAPI docs: http://localhost:8003/docs")    
     except KeyboardInterrupt:
         print("\n\n[!] Interrupted by user")
-        cleanup_client_group(client_url, benchmark_id)
+        if benchmark_id:
+            cleanup_client_group(client_url, benchmark_id)
         sys.exit(1)
     except Exception as e:
         print(f"\n[!] Unexpected error: {e}")
-        cleanup_client_group(client_url, benchmark_id)
+        if benchmark_id:
+            cleanup_client_group(client_url, benchmark_id)
         sys.exit(1)
 
 

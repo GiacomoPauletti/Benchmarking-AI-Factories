@@ -821,6 +821,24 @@ async def search_points(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/orchestrator/endpoint")
+async def get_orchestrator_endpoint(orchestrator = Depends(get_orchestrator_proxy)):
+    """Get the internal endpoint of the orchestrator service.
+    
+    This endpoint returns the internal URL of the orchestrator running on the compute node.
+    Clients can use this to communicate directly with the orchestrator if needed.
+    
+    **Returns:**
+    ```json
+    {
+      "endpoint": "http://mel1234:8003"
+    }
+    ```
+    """
+    endpoint = orchestrator.get_orchestrator_url()
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Orchestrator endpoint not available")
+    return {"endpoint": endpoint}
 
 
 @router.post("/vllm/{service_id}/prompt", summary="Send a prompt to a running vLLM service")

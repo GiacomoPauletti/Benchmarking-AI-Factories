@@ -3,6 +3,13 @@ services:
     build:
       context: ./services/server
       dockerfile: Dockerfile
+      ssh:
+        default: ${SSH_AUTH_SOCK}
+      args:
+        SSH_USER: ${SSH_USER}
+        SSH_HOST: ${SSH_HOST}
+        SSH_PORT: ${SSH_PORT}
+        REMOTE_BASE_PATH: ${REMOTE_BASE_PATH}
     container_name: benchmarking-ai-server
     ports:
       - "8001:8001"
@@ -12,8 +19,6 @@ services:
       - ./services/server/src:/app/src
       - ./services/server/tests:/app/tests
       - ./services/server/pytest.ini:/app/pytest.ini
-      - ./services/server/logs:/app/logs
-      - ./services/server/huggingface_cache:/app/huggingface_cache
       # Mount server endpoint file so client can find it
       - ./services/server/.server-endpoint:/app/.server-endpoint
       # Mount SSH agent socket for secure authentication (no raw keys exposed)
@@ -76,9 +81,16 @@ services:
     build:
       context: ./services/client
       dockerfile: Dockerfile
+      ssh:
+        default: ${SSH_AUTH_SOCK}
+      args:
+        SSH_USER: ${SSH_USER}
+        SSH_HOST: ${SSH_HOST}
+        SSH_PORT: ${SSH_PORT}
+        REMOTE_BASE_PATH: ${REMOTE_BASE_PATH}
     container_name: benchmarking-ai-client
-    ports:
-      - "8003:8003"
+    # ports:
+    #   - "8003:8003"  # Ignored when network_mode: host
     volumes:
       # Mount source code for hot-reload during development
       # TODO: Remove in production

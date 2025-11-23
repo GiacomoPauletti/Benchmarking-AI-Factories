@@ -18,11 +18,9 @@ class CreateClientGroupRequest(BaseModel):
     """Request to create a new client group for load testing."""
     
     # Load generation parameters
-    target_url: str = Field(
-        ...,
-        description="Server API URL (e.g., http://localhost:8001)",
-        example="http://localhost:8001"
-    )
+    # Note: `target_url` is no longer required. The client service should be
+    # provided a `service_id` and will resolve the orchestrator `prompt_url`
+    # internally when available.
     service_id: str = Field(
         ...,
         description="Service ID of the vLLM service to test",
@@ -82,7 +80,7 @@ class CreateClientGroupRequest(BaseModel):
         json_schema_extra = {
             "examples": [
                 {
-                    "target_url": "http://localhost:8000",
+                    "service_id": "3732769",
                     "num_clients": 5,
                     "requests_per_second": 5.0,
                     "duration_seconds": 60,
@@ -91,7 +89,7 @@ class CreateClientGroupRequest(BaseModel):
                     "time_limit": 10
                 },
                 {
-                    "target_url": "http://vllm-service:8000",
+                    "service_id": "3732769",
                     "num_clients": 100,
                     "requests_per_second": 100.0,
                     "duration_seconds": 300,

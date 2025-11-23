@@ -362,3 +362,114 @@ async def root():
             "log_content": "/logs/content"
         }
     }
+
+
+
+@app.post("/logs/delete")
+async def delete_log(path: str):
+    """Delete a single log file under the service data directory.
+
+    `path` must be a path relative to `/app/data` (for example:
+    - `logs/loadgen-951104.out`
+    - `categorized/client/loadgen-951104.out`)
+
+    This route is intentionally unprotected per request. Use with care.
+    """
+    # Construct full path
+    log_path = DATA_DIR / path
+
+    # Security check: ensure path is within DATA_DIR
+    try:
+        log_path = log_path.resolve()
+        if not str(log_path).startswith(str(DATA_DIR.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail="Log file not found")
+
+    if not log_path.is_file():
+        raise HTTPException(status_code=400, detail="Path is not a file")
+
+    try:
+        log_path.unlink()
+        return JSONResponse({"status": "deleted", "path": str(log_path.relative_to(DATA_DIR))})
+    except Exception as e:
+        logger.error(f"Failed to delete {log_path}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/logs/cleanup")
+async def cleanup_all_logs():
+    """Delete all log files under `LOGS_DIR` and `CATEGORIZED_DIR` while preserving directories.
+
+    Returns a summary with the number of deleted files. This endpoint is unprotected
+    and should be called only by trusted users.
+    """
+    deleted = []
+    errors = []
+
+    # Walk non-categorized logs
+    for root, dirs, files in os.walk(LOGS_DIR):
+        for fname in files:
+            fpath = Path(root) / fname
+            try:
+                if fpath.is_file():
+                    fpath.unlink()
+                    deleted.append(str(fpath.relative_to(DATA_DIR)))
+            except Exception as e:
+                logger.error(f"Failed to delete {fpath}: {e}")
+                errors.append({"file": str(fpath.relative_to(DATA_DIR)), "error": str(e)})
+
+    # Walk categorized logs
+    for root, dirs, files in os.walk(CATEGORIZED_DIR):
+        for fname in files:
+            fpath = Path(root) / fname
+            try:
+                if fpath.is_file():
+                    fpath.unlink()
+                    deleted.append(str(fpath.relative_to(DATA_DIR)))
+            except Exception as e:
+                logger.error(f"Failed to delete {fpath}: {e}")
+                errors.append({"file": str(fpath.relative_to(DATA_DIR)), "error": str(e)})
+    # Also attempt to delete remote logs on MeluXina if SSH manager is available.
+    # Remote path mirrors the one used for syncing: REMOTE_BASE_PATH/logs/
+    remote_deleted = []
+    remote_errors = []
+
+    try:
+        remote_logs_dir = f"{REMOTE_BASE_PATH}/logs"
+        if ssh_manager and ssh_manager.check_remote_dir_exists(remote_logs_dir):
+            # Use find to remove files but print names for reporting.
+            cmd = f"find {remote_logs_dir} -type f -print -delete"
+            success, stdout, stderr = ssh_manager.execute_remote_command(cmd, timeout=120)
+            if success:
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Convert remote path to a relative-like representation for the response
+                    try:
+                        remote_deleted.append(str(Path(line).relative_to(Path(remote_logs_dir).parent)))
+                    except Exception:
+                        remote_deleted.append(line)
+            else:
+                remote_errors.append({"error": stderr or 'remote delete failed'})
+        else:
+            remote_errors.append({"error": "ssh_manager unavailable or remote dir not found"})
+    except Exception as e:
+        remote_errors.append({"error": str(e)})
+
+    # Merge local and remote summary into response
+    return {
+        "status": "completed",
+        "deleted_count": len(deleted),
+        "deleted_sample": deleted[:200],
+        "errors": errors,
+        "remote_deleted_count": len(remote_deleted),
+        "remote_deleted_sample": remote_deleted[:200],
+        "remote_errors": remote_errors
+    }

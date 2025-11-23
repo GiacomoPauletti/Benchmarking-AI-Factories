@@ -5,8 +5,7 @@ Simple end-to-end example demonstrating vLLM load testing.
 This script:
 1. Starts a vLLM inference service via the server API
 2. Waits for the service to be ready
-3. Creates a client group that generates load through the Server API proxy
-4. Monitors the load test progress
+3. Creates a client group that generates load through the Server API proxy.
 
 The client sends requests to the Server API, which proxies them to the vLLM service.
 
@@ -44,18 +43,19 @@ def create_vllm_service() -> str:
     service = response.json()
     service_id = service["id"]
     
-    print(f"\n✓ Service created with ID: {service_id}")
+    print(f"\nService created with ID: {service_id}")
     print(f"  Status: {service['status']}")
     print(f"  Recipe: {service['recipe_name']}")
     
     return service_id
 
 
-def create_load_test_group(service_id: str) -> Optional[int]:
-    """Create a client group that generates load against a vLLM service via Server API proxy.
+def create_load_test_group(service_id: str, direct_url: str = None) -> Optional[int]:
+    """Create a client group that generates load against a vLLM service.
     
     Args:
         service_id: The vLLM service ID from the server
+        direct_url: Optional direct URL to the vLLM service (bypasses server proxy)
         
     Returns:
         The group ID if created successfully, None otherwise
@@ -64,10 +64,9 @@ def create_load_test_group(service_id: str) -> Optional[int]:
     
     # Configure a gentle load test
     payload = {
-        "target_url": SERVER_BASE,  # Server API URL
         "service_id": service_id,    # Service to test
-        "num_clients": 2,  # Small number of concurrent clients
-        "requests_per_second": 0.5,  # Low rate: 1 request every 2 seconds
+        "num_clients": 10,  # 10 concurrent clients
+        "requests_per_second": 0.2,  # Low rate: 1 request every 5 seconds
         "duration_seconds": 60,  # 1 minute test
         "prompts": [
             "Write a short poem about AI.",
@@ -98,12 +97,12 @@ def create_load_test_group(service_id: str) -> Optional[int]:
         result = response.json()
         group_id = result.get('group_id')
         
-        print(f"\n✓ Client group {group_id} created successfully")
+        print(f"\nClient group {group_id} created successfully")
         print(f"  Message: {result.get('message', 'Load generator job submitted')}")
         return group_id
         
     except requests.RequestException as e:
-        print(f"\n✗ Failed to create client group: {e}")
+        print(f"\nFailed to create client group: {e}")
         if hasattr(e, 'response') and e.response is not None:
             print(f"  Response: {e.response.text}")
         return None
@@ -136,7 +135,7 @@ def monitor_client_group(group_id: int, duration: int = 120):
             
             # Stop monitoring if the job has completed
             if status == 'stopped':
-                print(f"\n✓ Load test completed after {elapsed}s")
+                print(f"\nLoad test completed after {elapsed}s")
                 break
             
         except requests.RequestException as e:
@@ -145,25 +144,27 @@ def monitor_client_group(group_id: int, duration: int = 120):
         time.sleep(15)
     else:
         # Timeout reached without completion
-        print(f"\n⚠ Monitoring timeout reached after {duration}s")
+        print(f"\nMonitoring timeout reached after {duration}s")
     
-    # Sync logs after monitoring completes
-    print("\nSyncing logs from remote...")
+    print(f"\nCheck logs for detailed results (loadgen-{group_id}).")
+
+
+def cleanup_service(service_id: str):
+    """Stop a running vLLM service.
+    
+    Args:
+        service_id: The service ID to stop
+    """
+    print(f"\nStopping service {service_id}...")
     try:
-        response = requests.post(f"{CLIENT_API}/logs/sync")
+        response = requests.post(
+            f"{SERVER_API}/services/{service_id}/status",
+            json={"status": "cancelled"}
+        )
         response.raise_for_status()
-        result = response.json()
-        if result.get('success'):
-            print(f"✓ Logs synced successfully to {result.get('local_path', './logs')}")
-        else:
-            print(f"✗ Log sync failed: {result.get('message', 'Unknown error')}")
+        print(f"Service {service_id} stopped successfully")
     except requests.RequestException as e:
-        print(f"✗ Error syncing logs: {e}")
-    
-    print(f"\nCheck logs for detailed results:")
-    print(f"  - SLURM logs: ~/ai-factory-benchmarks/logs/loadgen-{group_id}-*.out")
-    print(f"  - Results JSON: ~/ai-factory-benchmarks/logs/loadgen-results-{group_id}.json")
-    print(f"  - Local synced logs: ./logs/loadgen-{group_id}-*.out")
+        print(f"Failed to stop service: {e}")
 
 
 def main():
@@ -173,7 +174,6 @@ def main():
     print("  1. Starting a vLLM inference service")
     print("  2. Waiting for the service to be ready")
     print("  3. Running a load test against the service")
-    print("  4. Collecting metrics")
     print()
     
     service_id = None
@@ -186,73 +186,57 @@ def main():
         print("=" * 80)
         
         if not wait_for_server(SERVER_BASE, max_wait=30):
-            print("✗ Server service not available. Is it running?")
+            print("Server service not available. Is it running?")
             print("  Start with: docker compose up server")
             return
         
         if not wait_for_client(CLIENT_BASE, max_wait=30):
-            print("✗ Client service not available. Is it running?")
+            print("Client service not available. Is it running?")
             print("  Start with: docker compose up client")
             return
         
         print()
         
         # Step 1: Create vLLM service
-        print("=" * 80)
         print("STEP 1: Creating vLLM Service")
-        print("=" * 80)
         service_id = create_vllm_service()
         print()
         
         # Step 2: Wait for service to be ready
-        print("=" * 80)
         print("STEP 2: Waiting for vLLM Service")
-        print("=" * 80)
         endpoint = wait_for_service_ready(SERVER_BASE, service_id, max_wait=600)
         
         if not endpoint:
-            print("\n✗ Failed to get service endpoint. Aborting.")
+            print("\nFailed to get service endpoint. Aborting.")
             return
         
         print()
         
         # Step 3: Create load test group (returns auto-generated group_id)
-        print("=" * 80)
         print("STEP 3: Creating Load Test Group")
-        print("=" * 80)
-        group_id = create_load_test_group(service_id)
+        # Pass the direct endpoint to the load generator
+        group_id = create_load_test_group(service_id, direct_url=endpoint)
         
         if not group_id:
-            print("\n✗ Failed to create load test group. Aborting.")
+            print("\nFailed to create load test group. Aborting.")
             return
         
         print()
         
         # Step 4: Monitor progress
-        print("=" * 80)
         print("STEP 4: Monitoring Load Test")
-        print("=" * 80)
         monitor_client_group(group_id, duration=300)
         
         print()
-        print("=" * 80)
         print("SUCCESS: Load Test Complete!")
-        print("=" * 80)
         print(f"Service ID: {service_id}")
         print(f"Client Group ID: {group_id}")
         print(f"Endpoint: {endpoint}")
-        print("\nNext steps:")
-        print(f"  1. SSH to MeluXina and check results:")
-        print(f"     cat ~/ai-factory-benchmarks/logs/loadgen-results-{group_id}.json")
-        print(f"  2. View SLURM logs:")
-        print(f"     tail ~/ai-factory-benchmarks/logs/loadgen-{group_id}-*.out")
-        print(f"  3. Check Grafana dashboards for metrics")
-        print("=" * 80 + "\n")
         
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\nError: {e}")
         import traceback
         traceback.print_exc()
     finally:

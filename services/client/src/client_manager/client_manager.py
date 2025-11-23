@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import os
 from typing import Dict, Any, Optional, List
 import requests
 import socket
@@ -24,8 +25,8 @@ class CMResponse:
 
 class ClientManager:
     """
-    Manages client groups. Each group has a unique group_id and runs
-    as a local Python process for load testing.
+    Manages client groups. Each group has a unique group_id and can contain
+    multiple client processes managed via SLURM.
     """
     _instance = None
 
@@ -51,7 +52,7 @@ class ClientManager:
 
         return cls._instance
 
-    def __init__(self) -> None:
+    def __init__(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None, use_container: Optional[bool] = None, account: Optional[str] = None) -> None:
         # mapping: group_id -> ClientGroup
         # Protect re-initialization in singleton pattern
         if hasattr(self, "_initialized") and self._initialized:
@@ -60,17 +61,55 @@ class ClientManager:
         self._client_groups: Dict[int, ClientGroup] = {}
         self._lock = threading.Lock()
         self._logger = logging.getLogger("client_manager")
-        # Default addresses - can be configured via environment or config file
-        self._server_addr = "http://localhost:8002"
-        self._client_service_addr = "http://localhost:8001"
+
+        self._server_addr = server_addr 
+        self._client_service_addr = client_service_addr 
+        self._use_container = use_container 
+        self._account = account 
+
+        # The orchestrator URL must be obtained from the Server API at runtime.
+        self._orchestrator_url = None
+        self._logger.info("Orchestrator will be discovered via Server API when needed")
+
         self._initialized = True
-    
-    def configure(self, server_addr: Optional[str] = None, client_service_addr: Optional[str] = None):
-        """Configure server and client service addresses after initialization"""
-        if server_addr:
-            self._server_addr = server_addr
-        if client_service_addr:
-            self._client_service_addr = client_service_addr
+
+    def set_orchestrator_url(self, server_addr: str, timeout: float = 2.0) -> bool:
+        """Query the Server API to obtain the orchestrator endpoint and set
+        ``self._orchestrator_url``.
+
+        Args:
+            server_addr: Base URL of the Server API.
+            timeout: HTTP request timeout in seconds.
+
+        Returns:
+            True if an orchestrator endpoint was discovered and set, False otherwise.
+        """
+        try:
+            if not server_addr:
+                self._logger.warning("set_orchestrator_url called with empty server_addr")
+                return False
+
+            base = server_addr.rstrip('/')
+            # Remember the server address for future calls
+            self._server_addr = base
+            url = f"{base}/api/v1/orchestrator/endpoint"
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code != 200:
+                self._logger.warning(f"Failed to query orchestrator endpoint from server {base}: status={resp.status_code}")
+                return False
+
+            data = resp.json()
+            endpoint = data.get('endpoint')
+            if not endpoint:
+                self._logger.warning(f"Server {base} returned no 'endpoint' field for orchestrator")
+                return False
+
+            self._orchestrator_url = endpoint
+            self._logger.info(f"Orchestrator URL set to: {endpoint}")
+            return True
+        except Exception as e:
+            self._logger.exception(f"Error while setting orchestrator URL from {server_addr}: {e}")
+            return False
 
     def add_client_group(self, group_id: int, load_config: dict) -> int:
         """
@@ -88,16 +127,29 @@ class ClientManager:
                 return ClientManagerResponseStatus.ALREADY_EXISTS
             
             try:
+                if not self._orchestrator_url:
+                    self.set_orchestrator_url(self._server_addr)
+                service_id = load_config.get('service_id')
+                if service_id:
+                    if self._orchestrator_url:
+                        prompt_url = f"{self._orchestrator_url.rstrip('/')}/api/services/vllm/{service_id}/prompt"
+                        load_config['prompt_url'] = prompt_url
+                        self._logger.info(f"Using orchestrator prompt endpoint for service {service_id}: {prompt_url}")
+                    else:
+                        self._logger.warning(f"Service {service_id} requested but _orchestrator_url is not set; leaving load_config unchanged")
+
                 # Create ClientGroup - it handles the dispatching internally
                 client_group = ClientGroup(
                     group_id=group_id,
-                    load_config=load_config
+                    load_config=load_config,
+                    account=self._account,
+                    use_container=self._use_container
                 )
                 self._client_groups[group_id] = client_group
                 self._logger.info(
                     f"Added client group {group_id}: {load_config['num_clients']} clients, "
                     f"{load_config['requests_per_second']} RPS, "
-                    f"targeting {load_config['target_url']}"
+                    f"targeting {load_config.get('prompt_url') }"
                 )
                 return ClientManagerResponseStatus.OK
             except Exception as e:
@@ -154,52 +206,3 @@ class ClientManager:
 
         return results
 
-    def sync_logs(self, group_id: Optional[int] = None, local_logs_dir: str = "./logs") -> Dict[str, Any]:
-        """Sync logs from local processes to specified directory.
-        
-        Args:
-            group_id: If specified, sync logs for specific group. If None, sync all logs.
-            local_logs_dir: Local directory to sync logs to
-            
-        Returns:
-            Dictionary with sync results
-        """
-        with self._lock:
-            if group_id is not None:
-                # Sync logs for specific group
-                group = self._client_groups.get(group_id)
-                if group is None:
-                    return {"error": f"Group {group_id} not found", "success": False}
-                
-                dispatcher = group.get_dispatcher()
-                # Pass group_id to sync function for specific file patterns
-                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, group_id=group_id)
-                
-                return {
-                    "group_id": group_id,
-                    "success": success,
-                    "message": message,
-                    "local_path": local_logs_dir
-                }
-            else:
-                # Sync all logs - create dispatcher if no groups exist
-                if self._client_groups:
-                    # Get dispatcher from existing group
-                    any_group = next(iter(self._client_groups.values()))
-                    dispatcher = any_group.get_dispatcher()
-                else:
-                    # No groups exist - create a standalone dispatcher just for syncing
-                    from deployment.client_dispatcher import LocalClientDispatcher
-                    dispatcher = LocalClientDispatcher(
-                        load_config={}  # Empty config, only used for syncing
-                    )
-                
-                success, message = dispatcher.sync_logs_from_remote(local_logs_dir, group_id=None)
-                
-                return {
-                    "group_id": "all",
-                    "success": success,
-                    "message": message,
-                    "local_path": local_logs_dir,
-                    "groups": list(self._client_groups.keys())
-                }

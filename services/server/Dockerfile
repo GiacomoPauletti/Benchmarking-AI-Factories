@@ -9,6 +9,23 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Build-time args (SSH info passed from docker-compose/.env)
+ARG SSH_USER
+ARG SSH_HOST
+ARG SSH_PORT=22
+ARG REMOTE_BASE_PATH
+
+# Always attempt to remove remote orchestrator.sif during image build when SSH info is provided.
+# If SSH_USER/SSH_HOST are not set, the step is skipped. This runs at build-time so the orchestrator
+# will be rebuilt on the cluster the next time it's started.
+# Note: BuildKit SSH forwarding is recommended so the build can use your SSH agent securely.
+RUN if [ -n "${SSH_USER}" ] && [ -n "${SSH_HOST}" ]; then \
+      echo "Attempting remote orchestrator.sif deletion on ${SSH_USER}@${SSH_HOST}:${SSH_PORT}"; \
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${SSH_PORT} ${SSH_USER}@${SSH_HOST} \"rm -f ${REMOTE_BASE_PATH}/src/service_orchestration/orchestrator.sif || true\" || true; \
+    else \
+      echo "Skipping remote orchestrator.sif deletion (SSH_USER/SSH_HOST not set)"; \
+    fi
+
 # Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -20,7 +37,7 @@ COPY src/ ./src/
 RUN touch .server-endpoint
 
 # Create necessary directories
-RUN mkdir -p /app/logs /app/huggingface_cache /root/.ssh
+RUN mkdir -p /root/.ssh
 
 # Set proper SSH directory permissions
 RUN chmod 700 /root/.ssh

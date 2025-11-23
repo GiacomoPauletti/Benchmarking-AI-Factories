@@ -4,6 +4,7 @@ MAIN:
 - Add more unit/api tests to orchestrator. 
 - Organize docs and add more details about architecture, orchestrator design decision.
 - Delete all files in meluxina. Then restart server to see if everything works smoothly.
+- Rebuild orchestrator image if server image is rebuilt.
 
 Optional:
 - VLLMEndpoint, LoadBalancer, register/unregister, forward_completion, and health checking are vllm_service specific. Refactor?

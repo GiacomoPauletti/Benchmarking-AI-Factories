@@ -300,6 +300,29 @@ class SSHManager:
             
             if result.returncode == 0:
                 self.logger.info("Log sync completed successfully")
+                
+                # Fix permissions on synced files so they're readable by all users
+                try:
+                    # Set directories to 755 (rwxr-xr-x)
+                    subprocess.run(
+                        ["find", str(local_logs_dir), "-type", "d", "-exec", "chmod", "755", "{}", "+"],
+                        check=True,
+                        capture_output=True,
+                        timeout=30
+                    )
+                    # Set files to 644 (rw-r--r--)
+                    subprocess.run(
+                        ["find", str(local_logs_dir), "-type", "f", "-exec", "chmod", "644", "{}", "+"],
+                        check=True,
+                        capture_output=True,
+                        timeout=30
+                    )
+                    self.logger.info("Fixed permissions on synced files")
+                except subprocess.CalledProcessError as e:
+                    self.logger.warning(f"Could not fix file permissions after sync: {e}")
+                except Exception as e:
+                    self.logger.warning(f"Error fixing file permissions: {e}")
+                
                 return True
             else:
                 self.logger.warning(f"Log sync failed: {result.stderr}")

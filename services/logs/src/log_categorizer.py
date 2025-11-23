@@ -19,11 +19,10 @@ class LogCategorizer:
         'server': [
             r'server[-_]',
             r'orchestrator',
-            r'slurm[-_]job',
         ],
         'client': [
             r'client[-_]',
-            r'benchmark[-_]',
+            r'loadgen[-_]',
         ],
         'monitoring': [
             r'monitor',

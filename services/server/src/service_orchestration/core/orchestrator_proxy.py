@@ -281,3 +281,7 @@ class OrchestratorProxy:
         except Exception as e:
             logger.error(f"Error cancelling orchestrator job: {e}")
             return False
+
+    def get_orchestrator_url(self) -> Optional[str]:
+        """Get the internal orchestrator URL."""
+        return self.orchestrator_url

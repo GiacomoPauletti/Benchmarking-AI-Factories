@@ -1,0 +1,11 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+%post
+    pip install --no-cache-dir aiohttp requests
+
+%environment
+    export PYTHONUNBUFFERED=1
+
+%runscript
+    exec python3 /app/main.py "$@"

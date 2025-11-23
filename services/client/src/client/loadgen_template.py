@@ -1,5 +1,5 @@
 """
-Load generator template for local load tests.
+Load generator template for SLURM jobs.
 This script is configured via environment variables and runs load tests.
 """
 import asyncio
@@ -19,78 +19,76 @@ class RequestMetrics:
     success: bool
     error: str = None
 
-async def send_request(session, url, prompt, config):
-    '''Send request to Server API proxy endpoint or direct vLLM endpoint.'''
+async def send_request(session, prompt, config):
+    """Send request to load balancer or vLLM endpoint.
+
+    Endpoint selection order:
+    - `prompt_url` (orchestrator data-plane)
+    - `direct_url` (direct vLLM endpoint)
+    - `target_url` (legacy)
+    """
     start = time.time()
     try:
-        # Determine endpoint and payload based on configuration
-        if config.get("direct_url"):
-            # Direct connection to vLLM
-            endpoint = config["direct_url"]
-            # vLLM /v1/completions format
-            payload = {
-                "model": config.get("model", "facebook/opt-125m"), # Default or configured model
-                "prompt": prompt,
-                "max_tokens": config["max_tokens"],
-                "temperature": config.get("temperature", 0.7)
-            }
-        else:
-            # Server API proxy
-            service_id = config.get("service_id")
-            if not service_id:
-                raise ValueError("service_id is required for proxy mode")
-            
-            endpoint = f"{url}/api/v1/vllm/{service_id}/prompt"
-            payload = {
-                "prompt": prompt,
-                "max_tokens": config["max_tokens"],
-                "temperature": config.get("temperature", 0.7)
-            }
-            
+        endpoint = config.get("prompt_url") or config.get("direct_url") or config.get("target_url")
+        if not endpoint:
+            return RequestMetrics(start, 0.0, 0, False, "No endpoint configured (prompt_url/direct_url/target_url)")
+
+        # vLLM /v1/completions or orchestrator proxy payload
+        payload = {
+            "model": config.get("model", "facebook/opt-125m"),
+            "prompt": prompt,
+            "max_tokens": config.get("max_tokens", 100),
+            "temperature": config.get("temperature", 0.7)
+        }
+
         async with session.post(endpoint, json=payload, timeout=60) as resp:
             latency = (time.time() - start) * 1000
             if resp.status == 200:
-                data = await resp.json()
-                
-                # Check success based on response format
+                # Try to parse JSON but tolerate plain text responses
+                try:
+                    data = await resp.json()
+                except Exception:
+                    data = None
+
+                # If using direct_url assume standard OpenAI-style success
                 if config.get("direct_url"):
-                    # vLLM direct response is standard OpenAI format
                     return RequestMetrics(start, latency, resp.status, True)
-                else:
-                    # Server proxy returns: {"success": true, "response": "...", "usage": {...}}
-                    success = data.get("success", False)
+
+                # For orchestrator/proxy, look for success flag if present
+                if data and isinstance(data, dict):
+                    success = data.get("success", True)
                     if not success:
                         return RequestMetrics(start, latency, resp.status, False, data.get("error", "Unknown error"))
                     return RequestMetrics(start, latency, resp.status, True)
+
+                # Default to success if we got HTTP 200 and can't parse body
+                return RequestMetrics(start, latency, resp.status, True)
             else:
                 text = await resp.text()
                 return RequestMetrics(start, latency, resp.status, False, f"HTTP {resp.status}: {text[:100]}")
     except Exception as e:
         latency = (time.time() - start) * 1000
-        error_msg = str(e)
-        if not error_msg:
-            error_msg = repr(e)
+        error_msg = str(e) or repr(e)
         return RequestMetrics(start, latency, 0, False, error_msg)
 
 async def worker(worker_id, session, config, end_time, results, semaphore):
-    prompts = config["prompts"]
-    url = config["target_url"]
+    prompts = config.get("prompts", ["Hello"])
     consecutive_errors = 0
-    
+
     while time.time() < end_time:
         async with semaphore:
             prompt = random.choice(prompts)
-            metric = await send_request(session, url, prompt, config)
+            metric = await send_request(session, prompt, config)
             results.append(metric)
-            
+
             if not metric.success:
                 consecutive_errors += 1
-                if consecutive_errors <= 5: # Print first few errors
+                if consecutive_errors <= 5:  # Print first few errors
                     print(f"Request failed: {metric.error}", flush=True)
             else:
                 consecutive_errors = 0
-                
-            if len(results) % 50 == 0:
+
+            if len(results) and len(results) % 50 == 0:
                 print(f"Sent {len(results)} requests", flush=True)
 
 async def rate_limiter_task(semaphore, rps, end_time):
@@ -116,7 +114,7 @@ async def run_load_test(config_dict=None):
             sys.exit(1)
     
     print(f"Starting load test with {config['num_clients']} clients")
-    print(f"Target: {config['target_url']}")
+    print(f"Target: {config['prompt_url']}")
     print(f"Service ID: {config['service_id']}")
     print(f"Target RPS: {config['requests_per_second']}")
     

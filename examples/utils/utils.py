@@ -51,7 +51,7 @@ def wait_for_client(client_url: str, max_wait: int = 30) -> bool:
     
     while time.time() - start < max_wait:
         try:
-            response = requests.get(f"{client_url}/health", timeout=2)
+            response = requests.get(f"{client_url}/health", timeout=5)
             if response.status_code == 200:
                 print("Client service is ready!")
                 return True
@@ -87,6 +87,7 @@ def wait_for_service_ready(
     start = time.time()
     last_status = None
     attempts = 0
+    endpoint_found = False
 
     time.sleep(2)  # Initial delay before first check
     while time.time() - start < max_wait:
@@ -109,30 +110,56 @@ def wait_for_service_ready(
                     print(f"  [{attempts}] Status: {current_status} | Elapsed: {elapsed:.1f}s")
                     last_status = current_status
                 
-                # Service is ready when status is "running"
-                if current_status == "running":
-                    print(f"[+] Service is ready! (took {elapsed:.1f}s, {attempts} checks)")
-                    
-                    # Get the endpoint from vllm/services
-                    try:
-                        vllm_response = requests.get(f"{api_base}/vllm/services", timeout=10)
-                        if vllm_response.status_code == 200:
-                            vllm_services = vllm_response.json().get("vllm_services", [])
-                            for svc in vllm_services:
-                                if svc["id"] == service_id:
-                                    endpoint = svc["endpoint"]
-                                    print(f"[+] Endpoint: {endpoint}")
-                                    return endpoint
-                        print(f"[-] Warning: Could not find endpoint for service {service_id}")
-                    except requests.exceptions.RequestException as e:
-                        print(f"[-] Error fetching endpoint: {e}")
-                    
-                    return None
-                
-                # Service failed
+                # Service failed - give up immediately
                 if current_status in ["failed", "cancelled", "timeout"]:
                     print(f"[-] Service failed with status: {current_status}")
                     return None
+                
+                # Service is running - try to get endpoint but keep waiting if not found yet
+                if current_status == "running" and not endpoint_found:
+                    # Try to get the endpoint - it may take time for vLLM to start
+                    try:
+                        # Try direct endpoint construction (job_id and known port)
+                        endpoint_response = requests.get(
+                            f"{api_base}/services/{service_id}",
+                            timeout=10
+                        )
+                        if endpoint_response.status_code == 200:
+                            service_data = endpoint_response.json()
+                            # The server should resolve the endpoint for us
+                            # For now, we know vLLM runs on port 8001
+                            # Try to query it via the orchestrator proxy
+                            try:
+                                # Test if we can reach vLLM through the proxy
+                                models_response = requests.get(
+                                    f"{api_base}/vllm/{service_id}/models",
+                                    timeout=10
+                                )
+                                if models_response.status_code == 200:
+                                    # Check if the response indicates success (vLLM is truly ready)
+                                    models_data = models_response.json()
+                                    if models_data.get("success") is True:
+                                        endpoint_found = True
+                                        print(f"[+] Service is ready! (took {elapsed:.1f}s, {attempts} checks)")
+                                        print(f"[+] Service accessible via: /api/v1/vllm/{service_id}")
+                                        return f"/api/v1/vllm/{service_id}"
+                                    else:
+                                        # vLLM server not ready yet (still starting/loading model)
+                                        error_msg = models_data.get("error", "loading")
+                                        if attempts % 3 == 0:  # Print every 3rd attempt
+                                            print(f"  [{attempts}] vLLM {error_msg}...")
+                                else:
+                                    # vLLM server not responding yet, keep waiting
+                                    if attempts % 3 == 0:  # Print every 3rd attempt
+                                        print(f"  [{attempts}] vLLM loading... (status: {models_response.status_code})")
+                            except requests.exceptions.RequestException:
+                                # vLLM not reachable yet, keep waiting
+                                if attempts % 3 == 0:
+                                    print(f"  [{attempts}] Waiting for vLLM to start...")
+                    except requests.exceptions.RequestException as e:
+                        if attempts % 3 == 0:
+                            print(f"  [{attempts}] Checking endpoint...")
+                            
         except requests.exceptions.RequestException:
             pass
         time.sleep(poll_interval)
@@ -170,12 +197,26 @@ def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: in
             if response.status_code == 200:
                 group_data = response.json()
                 
-                # Extract replica counts from group data
-                healthy_count = group_data.get("healthy_replicas", 0)
+                # Count replicas by status from node_jobs structure
+                node_jobs = group_data.get("node_jobs", [])
+                healthy_count = 0
+                starting_count = 0
+                pending_count = 0
+                failed_count = 0
+                
+                for node_job in node_jobs:
+                    for replica in node_job.get("replicas", []):
+                        status = replica.get("status", "unknown")
+                        if status in ["ready", "running", "healthy"]:
+                            healthy_count += 1
+                        elif status == "starting":
+                            starting_count += 1
+                        elif status == "pending":
+                            pending_count += 1
+                        elif status in ["failed", "error"]:
+                            failed_count += 1
+                
                 total_count = group_data.get("total_replicas", 0)
-                starting_count = group_data.get("starting_replicas", 0)
-                pending_count = group_data.get("pending_replicas", 0)
-                failed_count = group_data.get("failed_replicas", 0)
                 
                 print(f"  Status: {healthy_count}/{total_count} running, {starting_count} starting, {pending_count} pending, {failed_count} failed     ", end="\r")
                 
@@ -194,15 +235,17 @@ def wait_for_service_group_ready(server_url: str, group_id: str, min_healthy: in
     print(f"\n[-] Timeout waiting for service group after {timeout}s")
     return False
 
-def cleanup_service(service_id: str):
+def cleanup_service(service_id: str, server_url: str = "http://localhost:8001"):
     """Stop the vLLM service to free resources."""
     print("\n" + "=" * 80)
     print("STEP 5: Cleaning Up")
     print("=" * 80)
     
+    api_base = f"{server_url}/api/v1"
+    
     try:
         response = requests.post(
-            f"{SERVER_API}/services/{service_id}/status",
+            f"{api_base}/services/{service_id}/status",
             json={"status": "cancelled"}
         )
         response.raise_for_status()

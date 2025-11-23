@@ -1,4 +1,5 @@
-from deployment.client_dispatcher import AbstractClientDispatcher, LocalClientDispatcher
+from deployment.client_dispatcher import AbstractClientDispatcher, SlurmClientDispatcher
+from ssh_manager import SSHManager
 import time as time_module
 import logging
 import random
@@ -16,35 +17,45 @@ class ClientGroup:
     def __init__(
         self, 
         group_id: int, 
-        load_config: dict
+        load_config: dict,
+        account: str = "p200981", 
+        use_container: bool = False
     ):
         self._group_id = group_id
         self._load_config = load_config  # Store full load test configuration
         self._num_clients = load_config["num_clients"]
-        self._time_limit = load_config.get("time_limit", 5)  # Default 5 minutes
+        self._time_limit = load_config.get("time_limit", 5)  # Default 5 minutes for faster queue
         self._client_address: Optional[str] = None
         self._created_at = time_module.time()
+        self._use_container = use_container
         self._logger = logging.getLogger(f"client_manager.client_group.{group_id}")
+        self._ssh_manager = SSHManager()
         self._status = ClientGroupStatus.PENDING
-        self._job_id = None  # Process ID
+        self._job_id = None  # SLURM job ID
         
-        # Create and use dispatcher to start the local process
-        self._dispatcher = LocalClientDispatcher(
-            load_config=load_config
+        # Get signal file path for polling
+        import os
+        remote_base_path = os.environ.get('REMOTE_BASE_PATH', f'/project/home/{account}/ai-factory')
+        self._signal_file_path = f"{remote_base_path}/{group_id}_addr.txt"
+        
+        # Create and use dispatcher to start the SLURM job
+        self._dispatcher = SlurmClientDispatcher(
+            load_config=load_config,
+            account=account, 
+            use_container=use_container
         )
         try:
             self._job_id = self._dispatcher.dispatch(group_id, self._time_limit)
             if self._job_id:
-                self._logger.info(f"Started local load generator for client group {group_id} (PID: {self._job_id})")
-                self._status = ClientGroupStatus.RUNNING
+                self._logger.info(f"Dispatched SLURM job {self._job_id} for client group {group_id}")
             else:
-                self._logger.warning(f"Failed to start load generator for client group {group_id}")
+                self._logger.warning(f"Dispatched SLURM job for client group {group_id} but no job ID returned")
         except Exception as e:
-            self._logger.error(f"Failed to start load generator for client group {group_id}: {e}")
+            self._logger.error(f"Failed to dispatch SLURM job for client group {group_id}: {e}")
             raise
 
-    def get_dispatcher(self) -> LocalClientDispatcher:
-        """Get the local dispatcher for this group"""
+    def get_dispatcher(self) -> SlurmClientDispatcher:
+        """Get the SLURM dispatcher for this group"""
         return self._dispatcher
 
     def get_client_address(self) -> Optional[str]:
@@ -62,22 +73,49 @@ class ClientGroup:
         return self._created_at
 
     def get_status(self) -> ClientGroupStatus:
-        # For local load tests, check process status via dispatcher
+        # For containerized load tests, check SLURM job status
         if self._job_id and self._status != ClientGroupStatus.STOPPED:
             try:
-                process_status = self._dispatcher.get_process_status(self._group_id)
-                if process_status == 'running':
-                    self._status = ClientGroupStatus.RUNNING
-                elif process_status == 'completed':
-                    self._status = ClientGroupStatus.STOPPED
-                    self._logger.info(f"Process {self._job_id} completed")
+                # Query SLURM job state via SSH
+                # First try squeue (for running jobs), fallback to sacct (for completed jobs)
+                # Need to check if squeue has output, as it exits 0 even when no jobs found
+                cmd = f"squeue -j {self._job_id} -h -o %T 2>/dev/null | grep -q . && squeue -j {self._job_id} -h -o %T || sacct -j {self._job_id} -n -o State | head -1"
+                success, stdout, stderr = self._ssh_manager.execute_remote_command(cmd, timeout=5)
+                
+                if success and stdout:
+                    state = stdout.strip().upper()
+                    # SLURM states: PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, etc.
+                    if state in ['RUNNING', 'COMPLETING']:
+                        self._status = ClientGroupStatus.RUNNING
+                        self._logger.debug(f"Job {self._job_id} is running")
+                    elif state in ['COMPLETED']:
+                        self._status = ClientGroupStatus.STOPPED
+                        self._logger.info(f"Job {self._job_id} completed")
+                    elif state in ['FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'PREEMPTED']:
+                        self._status = ClientGroupStatus.STOPPED
+                        self._logger.warning(f"Job {self._job_id} stopped with state: {state}")
+                    # else: keep PENDING for queued jobs
             except Exception as e:
-                self._logger.error(f"Error checking process status for {self._job_id}: {e}")
+                self._logger.error(f"Error checking job status for {self._job_id}: {e}")
         
+        # Legacy: Check signal file for old architecture (backward compatibility)
+        if self._status == ClientGroupStatus.PENDING:
+            import os
+            if os.path.exists(self._signal_file_path):
+                try:
+                    with open(self._signal_file_path, 'r') as f:
+                        addr = f.read().strip()
+                        if addr:
+                            self._client_address = addr
+                            self._status = ClientGroupStatus.RUNNING
+                            self._logger.info(f"Client registered for group {self._group_id} at address {addr}")
+                except Exception as e:
+                    self._logger.error(f"Error reading signal file for group {self._group_id}: {e}")
+
         return self._status
 
     def get_job_id(self) -> Optional[str]:
-        """Get the process ID (PID)"""
+        """Get the SLURM job ID"""
         return self._job_id
 
     def get_info(self) -> dict:
