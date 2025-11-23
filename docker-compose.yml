@@ -42,7 +42,7 @@ services:
     build:
       context: ./services/prometheus
       dockerfile: Dockerfile
-    container_name: prometheus
+    container_name: benchmarking-ai-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -63,6 +63,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    depends_on:
+      server:
+        condition: service_started
 
   monitoring:
     build:
@@ -115,7 +118,7 @@ services:
     build:
       context: ./services/grafana
       dockerfile: Dockerfile
-    container_name: grafana
+    container_name: benchmarking-ai-grafana
     ports:
       - "3000:3000"
     environment:
@@ -132,7 +135,7 @@ services:
 
   loki:
     image: grafana/loki:2.8.0
-    container_name: loki
+    container_name: benchmarking-ai-loki
     ports:
       - "3100:3100"
     volumes:
