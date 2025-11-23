@@ -132,6 +132,17 @@ services:
         condition: service_healthy
       loki:
         condition: service_started
+      grafana-renderer:
+        condition: service_started
+
+  grafana-renderer:
+    image: grafana/grafana-image-renderer:3.10.0
+    container_name: benchmark-ai-grafana-renderer
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - ai-factory
 
   loki:
     build:
