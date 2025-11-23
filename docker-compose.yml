@@ -134,7 +134,9 @@ services:
         condition: service_started
 
   loki:
-    image: grafana/loki:2.8.0
+    build:
+      context: ./services/loki
+      dockerfile: Dockerfile
     container_name: benchmarking-ai-loki
     ports:
       - "3100:3100"
@@ -143,6 +145,21 @@ services:
     networks:
       - ai-factory
     restart: unless-stopped
+
+  alloy:
+    build:
+      context: ./services/alloy
+      dockerfile: Dockerfile
+    ports:
+      - 12345:12345
+      - 4318:4318
+    volumes:
+      - ./services/server/logs:/logs
+    networks:
+      - ai-factory
+    restart: unless-stopped
+    depends_on:
+      - loki
 
   # Documentation service
   docs:
