@@ -1,6 +1,6 @@
 """
 Job cache manager for SLURM jobs.
-Handles caching of logs, statuses, and job details with background updates.
+Handles caching of statuses, and job details with background updates.
 """
 
 import logging
@@ -14,7 +14,7 @@ class JobCacheManager:
     """Manages caching and background updates for SLURM job data.
     
     This class provides:
-    - In-memory caching with TTL for logs, statuses, and job details
+    - In-memory caching with TTL for statuses, and job details
     - Background thread that periodically updates active jobs
     - Thread-safe operations
     """
@@ -31,7 +31,6 @@ class JobCacheManager:
         self.logger = logging.getLogger(__name__)
         
         # Cache storage
-        self._log_cache: Dict[str, Tuple[float, str]] = {}  # {job_id: (timestamp, logs)}
         self._status_cache: Dict[str, Tuple[float, str]] = {}  # {job_id: (timestamp, status)}
         self._job_details_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}  # {job_id: (timestamp, details)}
         
@@ -47,22 +46,22 @@ class JobCacheManager:
         
         # Callbacks for fetching fresh data (set by SlurmDeployer)
         self._fetch_status_callback: Optional[Callable[[str], str]] = None
-        self._fetch_logs_callback: Optional[Callable[[str], str]] = None
         self._fetch_details_callback: Optional[Callable[[str], Dict[str, Any]]] = None
+        self._sync_logs: Optional[Callable[[], None]] = None
     
     def set_fetch_callbacks(self,
-                           fetch_status: Callable[[str], str],
-                           fetch_logs: Callable[[str], str],
-                           fetch_details: Callable[[str], Dict[str, Any]]):
+                            sync_logs: Callable[[], None],
+                            fetch_status: Callable[[str], str],
+                            fetch_details: Callable[[str], Dict[str, Any]]):
         """Set the callback functions for fetching fresh data.
         
         Args:
+            sync_logs: Function to sync log files from remote
             fetch_status: Function to fetch job status from SLURM API
-            fetch_logs: Function to fetch job logs from remote
             fetch_details: Function to fetch job details from SLURM API
         """
+        self._sync_logs = sync_logs
         self._fetch_status_callback = fetch_status
-        self._fetch_logs_callback = fetch_logs
         self._fetch_details_callback = fetch_details
     
     def start_background_updates(self):
@@ -86,7 +85,7 @@ class JobCacheManager:
             self.logger.info("Background update thread stopped")
     
     def _background_update_worker(self):
-        """Background worker that periodically updates logs and statuses for active jobs."""
+        """Background worker that periodically updates statuses for active jobs."""
         self.logger.info(f"Background updater started (interval: {self._update_interval}s)")
         
         while not self._stop_background.is_set():
@@ -94,6 +93,13 @@ class JobCacheManager:
                 # Get snapshot of active jobs (thread-safe)
                 with self._cache_lock:
                     jobs_to_update = list(self._active_jobs)
+
+                if self._sync_logs is not None:
+                    try:
+                        self.logger.debug("Syncing log files")
+                        self._sync_logs()
+                    except Exception as e:
+                        self.logger.warning(f"File sync failed: {e}")
                 
                 if jobs_to_update:
                     self.logger.debug(f"Updating {len(jobs_to_update)} active jobs in background")
@@ -107,11 +113,6 @@ class JobCacheManager:
                         if self._fetch_details_callback:
                             details = self._fetch_details_callback(job_id)
                             self._cache_details(job_id, details)
-                        
-                        # Update logs (this is the slow SSH operation)
-                        if self._fetch_logs_callback:
-                            logs = self._fetch_logs_callback(job_id)
-                            self._cache_logs(job_id, logs)
                         
                         # Update basic status from SLURM API
                         if self._fetch_status_callback:
@@ -172,16 +173,6 @@ class JobCacheManager:
         with self._cache_lock:
             self._status_cache[str(job_id)] = (time.time(), status)
     
-    def _cache_logs(self, job_id: str, logs: str):
-        """Cache job logs.
-        
-        Args:
-            job_id: The SLURM job ID
-            logs: The logs to cache
-        """
-        with self._cache_lock:
-            self._log_cache[str(job_id)] = (time.time(), logs)
-    
     def _cache_details(self, job_id: str, details: Dict[str, Any]):
         """Cache job details.
         
@@ -218,36 +209,6 @@ class JobCacheManager:
             status = self._fetch_status_callback(job_id)
             self._cache_status(job_id, status)
             return status
-        
-        return None
-    
-    def get_logs(self, job_id: str, fetch_if_missing: bool = True) -> Optional[str]:
-        """Get job logs from cache or fetch if needed.
-        
-        Args:
-            job_id: The SLURM job ID
-            fetch_if_missing: If True, fetch fresh data on cache miss (default: True)
-            
-        Returns:
-            The job logs, or None if not available and fetch_if_missing is False
-        """
-        job_id = str(job_id)
-        
-        # Check cache first
-        with self._cache_lock:
-            if job_id in self._log_cache:
-                timestamp, cached_logs = self._log_cache[job_id]
-                if self._is_cache_valid(timestamp):
-                    age = time.time() - timestamp
-                    self.logger.debug(f"Cache hit for logs of job {job_id} (age: {age:.1f}s)")
-                    return cached_logs
-        
-        # Cache miss or expired
-        if fetch_if_missing and self._fetch_logs_callback:
-            self.logger.debug(f"Cache miss for logs of job {job_id}, fetching fresh data")
-            logs = self._fetch_logs_callback(job_id)
-            self._cache_logs(job_id, logs)
-            return logs
         
         return None
     
@@ -290,7 +251,6 @@ class JobCacheManager:
             return {
                 "active_jobs": len(self._active_jobs),
                 "tracked_jobs": list(self._active_jobs),
-                "cached_logs": len(self._log_cache),
                 "cached_statuses": len(self._status_cache),
                 "cached_details": len(self._job_details_cache),
                 "cache_ttl_seconds": self._cache_ttl,
@@ -307,12 +267,10 @@ class JobCacheManager:
         with self._cache_lock:
             if job_id:
                 job_id = str(job_id)
-                self._log_cache.pop(job_id, None)
                 self._status_cache.pop(job_id, None)
                 self._job_details_cache.pop(job_id, None)
                 self.logger.debug(f"Cleared cache for job {job_id}")
             else:
-                self._log_cache.clear()
                 self._status_cache.clear()
                 self._job_details_cache.clear()
                 self.logger.info("Cleared all caches")

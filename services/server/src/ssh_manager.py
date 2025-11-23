@@ -280,24 +280,46 @@ class SSHManager:
                 return token
         
         raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
-    
-    def ensure_remote_directories(self, remote_base_path: str):
-        """Ensure required directories exist on MeluXina.
-        
-        Creates directories for recipes and logs if they don't exist.
+
+
+    def sync_directory_to_local(self, remote_dir: str, local_dir: Path) -> bool:
+        """Sync a remote directory from MeluXina to local using rsync.
         
         Args:
-            remote_base_path: Base path on MeluXina (e.g., /project/home/p200981/u103056/...)
+            remote_dir: Remote directory path on MeluXina
+            local_dir: Local directory path to sync to
         """
-        self.logger.info(f"Ensuring remote directories exist at {remote_base_path}")
+        if not local_dir.exists():
+            local_dir.mkdir(parents=True, exist_ok=True)
+
+        ssh_cmd = self._ssh_base_cmd.copy()
+
+        # Add ControlMaster socket if available
+        if self._ensure_control_master():
+            ssh_cmd.extend(["-S", str(self._control_master_socket)])
         
-        dirs_to_create = [
-            f"{remote_base_path}/src/recipes",
-            f"{remote_base_path}/logs"
-        ]
-        
-        self.create_remote_directories(dirs_to_create)
-        self.logger.info("Remote directories ready")
+        try:
+            # Build rsync command
+            rsync_cmd = [
+                "rsync", "--recursive", "--compress", "--inplace", "--quiet",
+                "--append", "--copy-unsafe-links", "--delete", "--chmod=444",
+                "--timeout=60", "-e", " ".join(ssh_cmd),
+                "--exclude=server.log",
+                f"{self.ssh_target}:{remote_dir}/", str(local_dir)]
+            
+            self.logger.debug(f"Running rsync: {' '.join(rsync_cmd)}")
+            start = time.time()
+            subprocess.run(rsync_cmd, text=True, timeout=5, capture_output=True, check=True)
+            self.logger.info(f"Synced directory: {remote_dir} -> {local_dir}, took {(time.time() - start)*1000:.2f}ms")
+            return True
+
+            
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"Timeout syncing directory: {remote_dir}")
+            return False
+        except Exception as e:
+            self.logger.warning(f"Error syncing directory {remote_dir}: {e}")
+            return False
     
     def setup_slurm_rest_tunnel(self, local_port: int = 6820, 
                                 remote_host: str = "slurmrestd.meluxina.lxp.lu",
@@ -376,69 +398,6 @@ class SSHManager:
             return test_response.status_code in [200, 401, 403]
         except:
             return False
-    
-    def fetch_remote_file(self, remote_path: str, local_path: Path) -> bool:
-        """Fetch a file from the remote MeluXina filesystem via SSH.
-        
-        Uses SSH to cat the remote file and save it locally.
-        Optimized to reduce retry attempts for faster log fetching.
-        
-        Args:
-            remote_path: Absolute path to the file on MeluXina
-            local_path: Local path where the file should be saved
-            
-        Returns:
-            True if file was successfully fetched, False otherwise
-        """
-        import time
-
-        # Reduced retry attempts for faster log fetching (was 3, now 1)
-        max_attempts = 1
-        attempt = 0
-        per_attempt_timeout = 20  # Reduced from 30 to 20
-
-        while attempt < max_attempts:
-            attempt += 1
-            # First check that the file exists and is non-empty
-            exists = False
-            non_empty = False
-            try:
-                exists, _, _ = self.execute_remote_command(f"test -f {remote_path}", timeout=5)
-                if exists:
-                    non_empty, _, _ = self.execute_remote_command(f"test -s {remote_path}", timeout=5)
-            except Exception:
-                exists = False
-                non_empty = False
-
-            if not exists:
-                self.logger.debug(f"Remote file does not exist yet (attempt {attempt}/{max_attempts}): {remote_path}")
-            elif not non_empty:
-                self.logger.debug(f"Remote file exists but is empty (attempt {attempt}/{max_attempts}): {remote_path}")
-            else:
-                # Safe to fetch
-                try:
-                    success, stdout, _ = self.execute_remote_command(f"cat {remote_path}", timeout=per_attempt_timeout)
-                    if success and stdout:
-                        local_path.parent.mkdir(parents=True, exist_ok=True)
-                        local_path.write_text(stdout)
-                        self.logger.debug(f"Fetched remote file: {remote_path} -> {local_path}")
-                        return True
-                    else:
-                        self.logger.debug(f"Failed to cat remote file (attempt {attempt}): {remote_path} -- rc={result.returncode}")
-
-                except subprocess.TimeoutExpired:
-                    self.logger.warning(f"Timeout fetching remote file (attempt {attempt}): {remote_path}")
-                except Exception as e:
-                    self.logger.warning(f"Error fetching remote file {remote_path} (attempt {attempt}): {e}")
-
-            # Backoff before retrying (though we typically only have 1 attempt now)
-            if attempt < max_attempts:
-                sleep_seconds = 2
-                self.logger.debug(f"Waiting {sleep_seconds}s before retrying fetch of {remote_path}")
-                time.sleep(sleep_seconds)
-
-        self.logger.debug(f"Could not fetch remote file after {max_attempts} attempt(s): {remote_path}")
-        return False
     
     def sync_directory_to_remote(self, local_dir: Path, remote_dir: str, 
                                  exclude_patterns: list = None) -> bool:
@@ -528,31 +487,6 @@ class SSHManager:
         except Exception as e:
             self.logger.warning(f"Error executing remote command: {e}")
             return False, "", str(e)
-    
-    def check_remote_file_exists(self, remote_path: str) -> bool:
-        """Check if a file exists on MeluXina.
-        
-        Args:
-            remote_path: Absolute path to check
-            
-        Returns:
-            True if file exists, False otherwise
-        """
-        success, _, _ = self.execute_remote_command(f"test -f {remote_path}", timeout=10)
-        return success
-    
-    def check_remote_dir_exists(self, remote_path: str) -> bool:
-        """Check if a directory exists on MeluXina.
-        
-        Args:
-            remote_path: Absolute path to check
-            
-            
-        Returns:
-            True if directory exists, False otherwise
-        """
-        success, _, _ = self.execute_remote_command(f"test -d {remote_path}", timeout=10)
-        return success
     
     def create_remote_directories(self, remote_paths: List[str]) -> bool:
         """Create a directory on MeluXina (with parents).

@@ -8,6 +8,7 @@ import requests
 import json
 import os
 import logging
+import glob
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from utils import parse_time_limit
@@ -72,10 +73,16 @@ class SlurmDeployer:
             self.logger.info(f"Using REMOTE_BASE_PATH: {self.remote_base_path}")
         
         # Ensure remote directories exist
-        try:
-            self.ssh_manager.ensure_remote_directories(self.remote_base_path)
-        except Exception as e:
-            self.logger.warning(f"Could not ensure remote directories: {e}")
+        self.logger.info(f"Ensuring remote directories exist at {self.remote_base_path}")
+        # Ensure logs directory exists on remote before submitting job
+        # (SLURM needs this directory to exist BEFORE job starts)
+        remote_log_dir = f"{self.remote_base_path}/logs"
+        remote_recipe_dir = f"{self.remote_base_path}/src/recipes"
+        # Ensure persistent HuggingFace cache directory exists
+        # This allows model weights to persist across jobs and be shared across nodes
+        remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
+        self.ssh_manager.create_remote_directories([remote_log_dir, remote_recipe_dir, remote_hf_cache])
+        self.logger.info("Remote directories ready")
             
         self.logger.debug(f"Local base path (for recipes): {self.local_base_path}")
         self.logger.debug(f"Remote base path (for SLURM jobs): {self.remote_base_path}")
@@ -104,11 +111,11 @@ class SlurmDeployer:
                 self._state_map = {}
         except Exception:
             self._state_map = {}
-        
+
         # Set up cache manager callbacks and start background updates
         self.cache_manager.set_fetch_callbacks(
+            sync_logs=self._sync_logs,
             fetch_status=self._fetch_status_uncached,
-            fetch_logs=self._fetch_job_logs_uncached,
             fetch_details=self._fetch_job_details_uncached
         )
         self.cache_manager.start_background_updates()
@@ -126,14 +133,6 @@ class SlurmDeployer:
         Note: Recipes should be synced to MeluXina before starting the server
         (handled by launch_local.sh). This method assumes recipes are already present.
         """
-        # Ensure logs directory exists on remote before submitting job
-        # (SLURM needs this directory to exist BEFORE job starts)
-        remote_log_dir = f"{self.remote_base_path}/logs"
-        # Ensure persistent HuggingFace cache directory exists
-        # This allows model weights to persist across jobs and be shared across nodes
-        remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
-        self.ssh_manager.create_remote_directories([remote_log_dir, remote_hf_cache])
-        
         # Load recipe
         recipe_name, recipe_path = self._find_recipe(recipe_name)
         with open(recipe_path, 'r') as f:
@@ -256,76 +255,6 @@ class SlurmDeployer:
             self.logger.warning(f"Failed to fetch status for job {job_id}: {e}")
             return "unknown"
     
-    def get_detailed_status_from_logs(self, job_id: str, ready_indicators: List[str] = None, 
-                                       starting_indicators: List[str] = None) -> str:
-        """Parse job logs to determine detailed status for running jobs.
-        
-        This is a helper method that services can use to implement their own
-        service-specific readiness detection.
-        
-        Args:
-            job_id: The SLURM job ID
-            ready_indicators: List of strings that indicate service is fully ready
-            starting_indicators: List of strings that indicate service is starting
-            
-        Returns:
-            One of: 'building', 'starting', 'running', 'completed'
-        """
-        job_id = str(job_id)
-        
-        # Ensure this job is being tracked for background updates
-        self.cache_manager.track_job(job_id)
-        
-        # Default indicators for backward compatibility (vLLM-specific)
-        if ready_indicators is None:
-            ready_indicators = ['Application startup complete', 'Uvicorn running on']
-        if starting_indicators is None:
-            starting_indicators = ['Starting container', 'Running vLLM container', 'Starting vLLM']
-        
-        logs = self.get_job_logs(job_id)
-        
-        # Check if log files don't exist yet or are empty
-        if 'File not found' in logs and logs.count('File not found') >= 2:
-            return 'starting'
-        
-        # Check if container exited
-        if 'Container exited' in logs:
-            # Job completed - stop tracking it
-            self.cache_manager.untrack_job(job_id)
-            return 'completed'
-        
-        # Check for building phase
-        if 'Building Apptainer image' in logs or 'apptainer build' in logs.lower():
-            if 'Container build successful' in logs or 'Starting container' in logs:
-                pass  # Build finished, continue checking
-            else:
-                return 'building'
-        
-        # Check if application is fully ready (using provided indicators)
-        found_ready = False
-        for indicator in ready_indicators:
-            if indicator in logs:
-                found_ready = True
-                break
-        
-        if found_ready:
-            return 'running'
-        
-        # Debug: Log what we're actually seeing if no ready indicators match
-        self.logger.debug(f"Job {job_id}: No ready indicators found. Checking starting indicators...")
-        self.logger.debug(f"Ready indicators checked: {ready_indicators}")
-        # Show a sample of the logs (last 500 chars)
-        log_sample = logs[-500:] if len(logs) > 500 else logs
-        self.logger.debug(f"Log sample (last 500 chars): {log_sample}")
-        
-        # Check for starting phase (using provided indicators)
-        for indicator in starting_indicators:
-            if indicator in logs:
-                return 'starting'
-        
-        # Default to starting for jobs without clear indicators
-        return 'starting'
-    
     def list_jobs(self, user_filter: str = None) -> list:
         """List all jobs from SLURM cluster via REST API, optionally filtered by user."""
         try:
@@ -415,159 +344,10 @@ class SlurmDeployer:
         if s.startswith("cancel") or s in ("ca", "cancelled", "canceled"):
             return 'cancelled'
         return 'unknown'
-    
-    def _fetch_remote_log_file(self, remote_path: str, local_path: Path) -> bool:
-        """Fetch a log file from the remote MeluXina filesystem via SSH.
-        
-        Args:
-            remote_path: Absolute path to the log file on MeluXina
-            local_path: Local path where the file should be saved
-            
-        Returns:
-            True if file was successfully fetched, False otherwise
-        """
-        return self.ssh_manager.fetch_remote_file(remote_path, local_path)
-    
-    def _fetch_remote_log_file_tail(self, remote_path: str, local_path: Path, lines: int = 200) -> bool:
-        """Fetch only the last N lines of a log file from remote using tail.
-        
-        This is much faster than fetching the entire file, especially for large logs.
-        
-        Args:
-            remote_path: Absolute path to the log file on MeluXina
-            local_path: Local path where the file should be saved
-            lines: Number of lines to fetch from the end of the file
-            
-        Returns:
-            True if file was successfully fetched, False otherwise
-        """
-        import subprocess
-        
-        try:
-            # Use tail to fetch only the last N lines
-            success, stdout, _ = self.ssh_manager.execute_remote_command(f"tail -n {lines} {remote_path}")
-            if success:
-                # Save the output to local file
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-                local_path.write_text(stdout)
-                self.logger.debug(f"Successfully fetched last {lines} lines from {remote_path}")
-                return True
-            else:
-                # Check if file exists on remote
-                exists = self.ssh_manager.check_remote_file_exists(remote_path)
-                
-                if not exists:
-                    self.logger.debug(f"Remote file does not exist: {remote_path}")
-                    return False
-                
-                self.logger.warning(f"Failed to fetch tail of {remote_path}: {result.stderr}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout fetching tail of remote file: {remote_path}")
-            return False
-        except Exception as e:
-            self.logger.warning(f"Error fetching tail of remote file {remote_path}: {e}")
-            return False
 
     def get_job_logs(self, job_id: str) -> str:
-        """Get logs from SLURM job.
-        
-        Uses cached logs if available and fresh, otherwise fetches from remote.
-        """
-        return self.cache_manager.get_logs(str(job_id))
-    
-    def _fetch_main_job_log(self, job_id: str, recipe_name: str, local_log_dir: Path, remote_log_dir: str) -> str:
-        """Fetch the main SLURM job stdout log.
-        
-        Args:
-            job_id: SLURM job ID
-            recipe_name: Recipe name used in log filename
-            local_log_dir: Local directory for cached logs
-            remote_log_dir: Remote directory containing logs
-            
-        Returns:
-            Formatted log content or error message
-        """
-        stdout_local = local_log_dir / f"{recipe_name}_{job_id}.out"
-        stdout_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.out"
-        
-        # Fetch only the last 200 lines of stdout using tail for faster retrieval
-        self._fetch_remote_log_file_tail(stdout_remote, stdout_local, lines=200)
-        
-        if stdout_local.exists():
-            try:
-                content = stdout_local.read_text()
-                return f"=== SLURM STDOUT (last 200 lines) ({stdout_local.name}) ===\n{content}"
-            except Exception as e:
-                return f"=== SLURM STDOUT ===\nError reading {stdout_local.name}: {e}"
-        else:
-            return f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)"
-    
-    def _fetch_replica_logs(self, job_id: str, local_log_dir: Path, remote_log_dir: str) -> List[str]:
-        """Fetch replica logs for distributed/multi-replica jobs.
-        
-        Searches for log files matching pattern: *_{job_id}_replica_*.log
-        This supports any service type (vllm, qdrant, etc.) that creates replica logs.
-        
-        Args:
-            job_id: SLURM job ID
-            local_log_dir: Local directory for cached logs
-            remote_log_dir: Remote directory containing logs
-            
-        Returns:
-            List of formatted replica log sections
-        """
-        replica_logs = []
-        
+        """Get logs from SLURM job."""
         try:
-            # General pattern: *_{job_id}_replica_*.log
-            # This matches: vllm_3713871_replica_0.log, qdrant_3713871_replica_1.log, etc.
-            replica_pattern = f"*_{job_id}_replica_*.log"
-            remote_replica_pattern = f"{remote_log_dir}/{replica_pattern}"
-            
-            # Use SSH to list replica log files
-            success, ls_output, stderr = self.ssh_manager.execute_remote_command(
-                f"ls {remote_replica_pattern} 2>/dev/null || true"
-            )
-            
-            if success and ls_output:
-                replica_files = [f.strip() for f in ls_output.split('\n') if f.strip()]
-                
-                if replica_files:
-                    replica_logs.append(f"\n=== REPLICA LOGS ({len(replica_files)} replicas) ===")
-                    
-                    for remote_replica_log in sorted(replica_files):
-                        replica_filename = remote_replica_log.split('/')[-1]
-                        local_replica_log = local_log_dir / replica_filename
-                        
-                        # Fetch last 100 lines of each replica log
-                        self._fetch_remote_log_file_tail(remote_replica_log, local_replica_log, lines=100)
-                        
-                        if local_replica_log.exists():
-                            try:
-                                content = local_replica_log.read_text()
-                                replica_logs.append(f"\n--- {replica_filename} (last 100 lines) ---\n{content}")
-                            except Exception as e:
-                                replica_logs.append(f"\n--- {replica_filename} ---\nError reading: {e}")
-        
-        except Exception as e:
-            self.logger.debug(f"No replica logs found for job {job_id}: {e}")
-        
-        return replica_logs
-    
-    def _fetch_job_logs_uncached(self, job_id: str) -> str:
-        """Get logs from SLURM job, fetching from remote if needed.
-        
-        Optimized to fetch only the last 200 lines using tail for faster retrieval.
-        Automatically discovers and includes replica logs for distributed jobs.
-        """
-        try:
-            # Setup local and remote log directories
-            local_log_dir = self.local_base_path / "logs"
-            local_log_dir.mkdir(parents=True, exist_ok=True)
-            remote_log_dir = f"{self.remote_base_path}/logs"
-
             # Get job details to find the recipe name
             job_details = self.get_job_details(job_id)
             recipe_name = job_details.get('name', 'unknown') if job_details else 'unknown'
@@ -576,17 +356,70 @@ class SlurmDeployer:
             logs = []
             
             # Fetch main SLURM stdout log
-            main_log = self._fetch_main_job_log(job_id, recipe_name, local_log_dir, remote_log_dir)
+            main_log = self._fetch_main_job_log(job_id, recipe_name, self.local_base_path / "logs")
             logs.append(main_log)
             
             # Fetch replica logs if they exist
-            replica_logs = self._fetch_replica_logs(job_id, local_log_dir, remote_log_dir)
+            replica_logs = self._fetch_replica_logs(job_id, self.local_base_path / "logs")
             logs.extend(replica_logs)
             
             return "\n\n".join(logs)
             
         except Exception as e:
             return f"Error retrieving logs for job {job_id}: {str(e)}"
+    
+    def _fetch_main_job_log(self, job_id: str, recipe_name: str, local_log_dir: Path) -> str:
+        """Fetch the main SLURM job stdout log.
+        
+        Args:
+            job_id: SLURM job ID
+            recipe_name: Recipe name used in log filename
+            local_log_dir: Local directory for cached logs
+            
+        Returns:
+            Formatted log content or error message
+        """
+        filename = local_log_dir / f"{recipe_name}_{job_id}.out"
+        try:
+            with open(filename) as f:
+                content = f.readlines()[-200:]  # Last 200 lines
+                return f"=== SLURM STDOUT (last 200 lines) ({filename}) ===\n{content}"
+        except FileNotFoundError:
+            return f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)"
+        except Exception as e:
+            return f"=== SLURM STDOUT ===\nError reading {filename}: {e}"
+    
+    def _fetch_replica_logs(self, job_id: str, local_log_dir: Path) -> List[str]:
+        """Fetch replica logs for distributed/multi-replica jobs.
+        
+        Searches for log files matching pattern: *_{job_id}_replica_*.log
+        This supports any service type (vllm, qdrant, etc.) that creates replica logs.
+        
+        Args:
+            job_id: SLURM job ID
+            local_log_dir: Local directory for cached logs
+            
+        Returns:
+            List of formatted replica log sections
+        """
+        replica_logs = []
+        
+        # General pattern: *_{job_id}_replica_*.log
+        # This matches: vllm_3713871_replica_0.log, qdrant_3713871_replica_1.log, etc.
+        replica_files = glob.glob(f"{local_log_dir}/*_{job_id}_replica_*.log")
+        replica_logs.append(f"\n=== REPLICA LOGS ({len(replica_files)} replicas) ===")
+        
+        for remote_replica_log in sorted(replica_files):
+            replica_filename = remote_replica_log.split('/')[-1]
+            local_replica_log = local_log_dir / replica_filename
+            
+            try:
+                content = local_replica_log.read_text()
+                replica_logs.append(f"\n--- {replica_filename} (last 100 lines) ---\n{content}")
+            except Exception as e:
+                replica_logs.append(f"\n--- {replica_filename} ---\nError reading: {e}")
+        
+        return replica_logs
     
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
         """Get detailed information about a SLURM job including allocated nodes.
