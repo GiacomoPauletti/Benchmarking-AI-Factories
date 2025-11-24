@@ -1,1 +1,0 @@
-# Client service tests package

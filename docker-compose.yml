@@ -3,15 +3,22 @@ services:
     build:
       context: ./services/server
       dockerfile: Dockerfile
+      ssh:
+        default: ${SSH_AUTH_SOCK}
+      args:
+        SSH_USER: ${SSH_USER}
+        SSH_HOST: ${SSH_HOST}
+        SSH_PORT: ${SSH_PORT}
+        REMOTE_BASE_PATH: ${REMOTE_BASE_PATH}
     container_name: benchmarking-ai-server
     ports:
       - "8001:8001"
     volumes:
-      # Mount source code for hot-reload during development
+      # Mount source code for hot-reload during development. 
+      # TODO: Remove in production
       - ./services/server/src:/app/src
       - ./services/server/tests:/app/tests
       - ./services/server/pytest.ini:/app/pytest.ini
-      - ./services/server/logs:/app/logs
       # Mount server endpoint file so client can find it
       - ./services/server/.server-endpoint:/app/.server-endpoint
       # Mount SSH agent socket for secure authentication (no raw keys exposed)
@@ -36,6 +43,12 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
 
   # Prometheus - Metrics storage and scraping
   prometheus:
@@ -66,6 +79,55 @@ services:
     depends_on:
       server:
         condition: service_started
+
+  client:
+    build:
+      context: ./services/client
+      dockerfile: Dockerfile
+      ssh:
+        default: ${SSH_AUTH_SOCK}
+      args:
+        SSH_USER: ${SSH_USER}
+        SSH_HOST: ${SSH_HOST}
+        SSH_PORT: ${SSH_PORT}
+        REMOTE_BASE_PATH: ${REMOTE_BASE_PATH}
+    container_name: benchmarking-ai-client
+    # ports:
+    #   - "8003:8003"  # Ignored when network_mode: host
+    volumes:
+      # Mount source code for hot-reload during development
+      # TODO: Remove in production
+      - ./services/client/src:/app/src
+      - ./services/client/tests:/app/tests
+      - ./services/client/logs:/app/logs
+      # Mount SSH agent socket for secure authentication (no raw keys exposed)
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+      
+      # Application Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    # Load additional service-specific variables
+    env_file:
+      - .env
+    network_mode: host
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    command: >
+      python -m main
+      http://localhost:8001
+      --host 0.0.0.0
+      --port 8003
+      --container
+
 
   monitoring:
     build:
@@ -101,17 +163,7 @@ services:
       prometheus:
         condition: service_healthy
       server:
-        condition: service_started
-
-  # TODO: Add other services when ready
-  # client:
-  #   build:
-  #     context: ./services/client
-  #     dockerfile: Dockerfile
-  #   container_name: benchmarking-ai-client
-  #   ...
-
-  # Logs
+        condition: service_healthy
 
   # Front-end
   grafana:
@@ -189,6 +241,43 @@ services:
     working_dir: /
     command: mkdocs serve --dev-addr=0.0.0.0:8000
     restart: unless-stopped
+
+  logs:
+    build:
+      context: ./services/logs
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-logs
+    ports:
+      - "8004:8004"  # Expose logs service API
+    volumes:
+      # Mount source code for hot-reload during development
+      - ./services/logs/src:/app/src
+      - ./services/logs/data:/app/data  # Persistent log storage
+      # Mount SSH keys from host (read-only) 
+      - ${HOME}/.ssh:/tmp/host-ssh:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      
+      # Logs Service Configuration
+      - SYNC_INTERVAL=60  # Seconds between syncs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    networks: 
+      - ai-factory
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
   ai-factory:

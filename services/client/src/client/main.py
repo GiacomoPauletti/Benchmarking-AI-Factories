@@ -1,96 +1,119 @@
-"""
-Client main module - manages individual clients and exposes FastAPI endpoints
-"""
+import asyncio
+import aiohttp
+import time
+import json
+import random
+from dataclasses import dataclass, asdict
 
-import sys
-import logging
-import socket
-from typing import List
-from fastapi import FastAPI
-import uvicorn
+# Embedded load generator (simplified version)
+@dataclass
+class RequestMetrics:
+    timestamp: float
+    latency_ms: float
+    status_code: int
+    success: bool
+    error: str = None
 
-from client.client import VLLMClient
-from client.api.client_service_router import client_service_router
-from client.api.monitor_router import monitor_proxy_router
-from client.client_group import ClientGroup
-
-# =================================== LOGGING CONFIG ====================================
-logging.basicConfig(level=logging.DEBUG)
-
-# Suppress some verbose logs
-logging.getLogger("asyncio").setLevel(logging.WARNING)
-logging.getLogger("uvicorn").setLevel(logging.INFO)
-
-# =================================== FASTAPI APP ====================================
-app = FastAPI(
-    title="AI Factory Client Process",
-    description="Individual client process that runs clients and handles commands from client_service",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-# Include routers
-app.include_router(client_service_router)
-app.include_router(monitor_proxy_router)
-
-# =================================== GLOBAL VARIABLES ====================================
-# No global variables needed anymore
-
-# ======================================== MAIN =========================================
-if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        logging.fatal("Invalid number of arguments. Required: num_clients server_addr client_service_addr benchmark_id")
-        sys.exit(1)
-
-    print("Starting Client Process...")
-
-    client_count = int(sys.argv[1])
-    server_addr = sys.argv[2]
-    client_service_addr = sys.argv[3]
-    benchmark_id = int(sys.argv[4])
-    
-    logging.debug(f"Command line parameters: {sys.argv[1]} {sys.argv[2]} {sys.argv[3]} {sys.argv[4]}")
-
-    logging.debug(f"Creating {client_count} clients for benchmark {benchmark_id}.")
-    # Create clients but don't start them yet
-    clients = []
-    for i in range(client_count):
-        client = VLLMClient()
-        clients.append(client)
-
-    # Get the local IP address for registration
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
-    local_addr = f"http://{local_ip}:8080"
-    
-    # Configure the client service router with all parameters
-    client_group = ClientGroup()
-    client_group.configure(
-        benchmark_id=benchmark_id,
-        clients=clients,
-        server_addr=server_addr,
-        client_service_addr=client_service_addr,
-        local_address=local_addr
-    )
-
-    logging.debug(f"Client service router configured with {len(clients)} clients for benchmark {benchmark_id}")
-    
-
-    # Register this client process with the client_service
-    import requests
+async def send_request(session, url, prompt, config):
+    start = time.time()
     try:
-        response = requests.post(
-            f"{client_service_addr}/api/v1/client-group/{benchmark_id}/connect",
-            json={"client_address": local_addr}
-        )
-        if response.status_code == 201:
-            logging.info(f"Successfully registered with client_service for benchmark {benchmark_id} at {local_addr}")
-        else:
-            logging.error(f"Failed to register with client_service: {response.status_code} - {response.text}")
+        payload = {{
+            "prompt": prompt,
+            "max_tokens": config["max_tokens"],
+            "temperature": config.get("temperature", 0.7)
+        }}
+        
+        async with session.post(f"{{url}}/v1/completions", json=payload, timeout=60) as resp:
+            latency = (time.time() - start) * 1000
+            if resp.status == 200:
+                await resp.json()
+                return RequestMetrics(start, latency, resp.status, True)
+            else:
+                text = await resp.text()
+                return RequestMetrics(start, latency, resp.status, False, text[:100])
     except Exception as e:
-        logging.error(f"Error registering with client_service: {e}")
+        latency = (time.time() - start) * 1000
+        return RequestMetrics(start, latency, 0, False, str(e))
 
-    # Start the FastAPI server
-    logging.info(f"Starting FastAPI server on port 8080 for benchmark {benchmark_id}")
-    uvicorn.run(app, host=local_ip, port=8080) # type: ignore
+async def worker(worker_id, session, config, end_time, results, semaphore):
+    prompts = config["prompts"]
+    url = config["target_url"]
+    while time.time() < end_time:
+        async with semaphore:
+            prompt = random.choice(prompts)
+            metric = await send_request(session, url, prompt, config)
+            results.append(metric)
+            if len(results) % 50 == 0:
+                print(f"Sent {{len(results)}} requests", flush=True)
+
+async def rate_limiter_task(semaphore, rps, end_time):
+    interval = 1.0 / rps
+    while time.time() < end_time:
+        semaphore.release()
+        await asyncio.sleep(interval)
+
+async def run_load_test():
+    config = {{
+        "target_url": "{self._load_config['target_url']}",
+        "num_clients": {self._load_config['num_clients']},
+        "requests_per_second": {self._load_config['requests_per_second']},
+        "duration_seconds": {self._load_config['duration_seconds']},
+        "prompts": {prompts_json},
+        "max_tokens": {self._load_config.get('max_tokens', 100)},
+        "temperature": {self._load_config.get('temperature', 0.7)}
+    }}
+    
+    print(f"Starting load test with {{config['num_clients']}} clients")
+    print(f"Target RPS: {{config['requests_per_second']}}")
+    
+    start_time = time.time()
+    end_time = start_time + config["duration_seconds"]
+    results = []
+    semaphore = asyncio.Semaphore(0)
+    
+    connector = aiohttp.TCPConnector(limit=config["num_clients"])
+    async with aiohttp.ClientSession(connector=connector) as session:
+        rate_task = asyncio.create_task(rate_limiter_task(semaphore, config["requests_per_second"], end_time))
+        workers = [
+            asyncio.create_task(worker(i, session, config, end_time, results, semaphore))
+            for i in range(config["num_clients"])
+        ]
+        await asyncio.gather(*workers, return_exceptions=True)
+        rate_task.cancel()
+        try:
+            await rate_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Calculate results
+    total = len(results)
+    successful = sum(1 for r in results if r.success)
+    latencies = sorted([r.latency_ms for r in results])
+    
+    print("\\n" + "="*80)
+    print("LOAD TEST RESULTS")
+    print("="*80)
+    print(f"Total Requests: {{total}}")
+    print(f"Successful: {{successful}}")
+    print(f"Failed: {{total - successful}}")
+    if latencies:
+        print(f"Avg Latency: {{sum(latencies)/len(latencies):.2f}}ms")
+        print(f"P50 Latency: {{latencies[len(latencies)//2]:.2f}}ms")
+        print(f"P95 Latency: {{latencies[int(len(latencies)*0.95)]:.2f}}ms")
+        print(f"P99 Latency: {{latencies[int(len(latencies)*0.99)]:.2f}}ms")
+    print(f"Actual RPS: {{total/(time.time()-start_time):.2f}}")
+    print("="*80)
+    
+    # Save detailed results
+    results_file = "{self._remote_logs_dir}/loadgen-results-{group_id}.json"
+    with open(results_file, 'w') as f:
+        json.dump({{
+            "total_requests": total,
+            "successful": successful,
+            "failed": total - successful,
+            "latencies": latencies,
+            "config": config
+        }}, f, indent=2)
+    print(f"Results saved to: {{results_file}}")
+
+asyncio.run(run_load_test())

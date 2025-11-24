@@ -1,0 +1,18 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+%files
+    requirements.txt /app/requirements.txt
+    ../../ /app/
+
+%post
+    apt-get update && apt-get install -y curl
+    pip install --no-cache-dir -r /app/requirements.txt
+
+%environment
+    export PYTHONPATH=/app/src
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
+%runscript
+    exec python3 /app/src/service_orchestration/main.py "$@"

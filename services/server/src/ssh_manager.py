@@ -10,7 +10,7 @@ import logging
 import requests
 import time
 from pathlib import Path
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict
 import requests
 
 
@@ -156,8 +156,20 @@ class SSHManager:
                     return True
                 else:
                     self.logger.debug("ControlMaster check failed, will recreate")
+                    # Force remove socket file if check failed
+                    try:
+                        if self._control_master_socket.exists():
+                            self._control_master_socket.unlink()
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove stale socket: {e}")
             except Exception as e:
                 self.logger.debug(f"ControlMaster check error: {e}")
+                # Force remove socket file if check error
+                try:
+                    if self._control_master_socket.exists():
+                        self._control_master_socket.unlink()
+                except Exception as ex:
+                    self.logger.warning(f"Failed to remove stale socket: {ex}")
         
         # Create new control master
         try:
@@ -254,102 +266,72 @@ class SSHManager:
             self.logger.info("ControlMaster connection closed")
         except Exception as e:
             self.logger.warning(f"Error closing ControlMaster: {e}")
-
-    def sync_directory_to_local(self, remote_dir: str, local_dir: Path) -> bool:
-        """Sync a remote directory from MeluXina to local using rsync.
-        
-        Args:
-            remote_dir: Remote directory path on MeluXina
-            local_dir: Local directory path to sync to
-        """
-        if not local_dir.exists():
-            local_dir.mkdir(parents=True, exist_ok=True)
-
-        ssh_cmd = self._ssh_base_cmd.copy()
-
-        # Add ControlMaster socket if available
-        if self._ensure_control_master():
-            ssh_cmd.extend(["-S", str(self._control_master_socket)])
-        
-        try:
-            # Build rsync command
-            rsync_cmd = [
-                "rsync", "--recursive", "--compress", "--inplace", "--quiet",
-                "--append", "--copy-unsafe-links", "--delete", "--chmod=444",
-                "--timeout=60", "-e", " ".join(ssh_cmd),
-                "--exclude=server.log",
-                f"{self.ssh_target}:{remote_dir}/", str(local_dir)]
-            
-            self.logger.debug(f"Running rsync: {' '.join(rsync_cmd)}")
-            start = time.time()
-            subprocess.run(rsync_cmd, text=True, timeout=5, capture_output=True, check=True)
-            self.logger.info(f"Synced directory: {remote_dir} -> {local_dir}, took {(time.time() - start)*1000:.2f}ms")
-            return True
-            
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout syncing directory: {remote_dir}")
-            return False
-        except Exception as e:
-            self.logger.warning(f"Error syncing directory {remote_dir}: {e}")
-            return False
     
-    def sync_directory_to_remote(self, local_dir: Path, remote_dir: str, 
-                                 exclude_patterns: list = None) -> bool:
-        """Sync a local directory to MeluXina using rsync.
+    def get_slurm_token(self) -> str:
+        """Fetch a fresh SLURM JWT token from MeluXina."""
+        self.logger.info("Fetching SLURM JWT token from MeluXina...")
+        success, stdout, stderr = self.execute_remote_command("scontrol token", timeout=10)
         
-        Args:
-            local_dir: Local directory path to sync
-            remote_dir: Remote directory path on MeluXina
-            exclude_patterns: List of patterns to exclude (e.g., ['*.pyc', '__pycache__/'])
-            
-        Returns:
-            True if sync successful, False otherwise
-        """
-        if not local_dir.exists():
-            self.logger.warning(f"Local directory not found: {local_dir}")
-            return False
+        if not success:
+            raise RuntimeError(f"Failed to fetch SLURM token: {stderr}")
+        
+        for line in stdout.strip().split('\n'):
+            if line.startswith('SLURM_JWT='):
+                token = line.split('=', 1)[1].strip()
+                self.logger.info("Successfully fetched SLURM JWT token")
+                return token
+        
+        raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
+    
+    def setup_slurm_rest_tunnel(self, local_port: int = 6820, 
+                                remote_host: str = "slurmrestd.meluxina.lxp.lu",
+                                remote_port: int = 6820) -> int:
+        """Establish an SSH tunnel for the SLURM REST API."""
+        if self._is_tunnel_active(local_port):
+            self.logger.info(f"SSH tunnel already active on port {local_port}")
+            return local_port
         
         try:
-            _ = self.create_remote_directories([remote_dir])
+            ssh_command = self._ssh_base_cmd + [
+                "-f", "-N",
+                "-L", f"{local_port}:{remote_host}:{remote_port}",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=60",
+                self.ssh_target
+            ]
             
-            # Build SSH command for rsync (no -i flag needed with SSH agent)
-            rsync_ssh_cmd = "ssh"
-            if self.ssh_port != 22:
-                rsync_ssh_cmd += f" -p {self.ssh_port}"
-            
-            # Build rsync command
-            rsync_cmd = ["rsync", "-az", "--delete", "-e", rsync_ssh_cmd]
-            
-            # Add exclude patterns
-            if exclude_patterns:
-                for pattern in exclude_patterns:
-                    rsync_cmd.extend(["--exclude", pattern])
-            
-            # Add source and destination (trailing slash important for rsync)
-            rsync_cmd.append(f"{local_dir}/")
-            rsync_cmd.append(f"{self.ssh_target}:{remote_dir}/")
-            
-            self.logger.debug(f"Running rsync: {' '.join(rsync_cmd)}")
-            
+            self.logger.debug(f"Creating SSH tunnel: {' '.join(ssh_command)}")
+            env = os.environ.copy()
             result = subprocess.run(
-                rsync_cmd, 
-                capture_output=True, 
-                text=True, 
-                timeout=60
+                ssh_command,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env
             )
             
-            if result.returncode == 0:
-                self.logger.info(f"Synced directory: {local_dir} -> {remote_dir}")
-                return True
-            else:
-                self.logger.warning(f"Failed to sync directory: {result.stderr}")
-                return False
-                
+            if result.returncode != 0:
+                raise ConnectionError(f"Failed to create SSH tunnel: {result.stderr}")
+            
+            self.logger.info(f"SSH tunnel established: localhost:{local_port} -> {remote_host}:{remote_port}")
+            time.sleep(1)
+            return local_port
+            
         except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout syncing directory: {local_dir}")
-            return False
+            raise RuntimeError("SSH tunnel creation timed out")
         except Exception as e:
-            self.logger.warning(f"Error syncing directory {local_dir}: {e}")
+            self.logger.error(f"Failed to establish SSH tunnel: {e}")
+            raise RuntimeError(f"SSH tunnel setup failed: {str(e)}")
+    
+    def _is_tunnel_active(self, local_port: int) -> bool:
+        """Check whether an SSH tunnel already listens on the given port."""
+        try:
+            response = requests.get(
+                f"http://localhost:{local_port}/slurm/v0.0.40/ping",
+                timeout=2
+            )
+            return response.status_code in (200, 401, 403)
+        except Exception:
             return False
     
     def execute_remote_command(self, command: str, timeout: int = 30) -> Tuple[bool, str, str]:
@@ -364,13 +346,36 @@ class SSHManager:
         """
         try:
             cmd = self._get_ssh_command(command, use_control_master=True)
+            env = os.environ.copy()
             
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                env=env
             )
+            
+            # Check for ControlMaster connection refused error and retry once
+            if result.returncode != 0 and "Control socket connect" in result.stderr and "Connection refused" in result.stderr:
+                self.logger.warning("ControlMaster connection refused. Retrying with fresh connection...")
+                # Force remove socket
+                try:
+                    if self._control_master_socket.exists():
+                        self._control_master_socket.unlink()
+                except:
+                    pass
+                self._control_master_active = False
+                
+                # Retry command
+                cmd = self._get_ssh_command(command, use_control_master=True)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=env
+                )
             
             success = result.returncode == 0
             return success, result.stdout, result.stderr
@@ -381,37 +386,6 @@ class SSHManager:
         except Exception as e:
             self.logger.warning(f"Error executing remote command: {e}")
             return False, "", str(e)
-    
-    def create_remote_directories(self, remote_paths: List[str]) -> bool:
-        """Create a directory on MeluXina (with parents).
-        
-        Args:
-            remote_path: Absolute path to create
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        # Run mkdir with retries because remote FS operations can be slow
-        import time
-
-        max_attempts = 3
-        attempt = 0
-        while attempt < max_attempts:
-            attempt += 1
-            dirs = "' '".join(remote_paths)
-            success, _, stderr = self.execute_remote_command(f"mkdir -p '{dirs}'", timeout=30)
-            if success:
-                return True
-            else:
-                self.logger.warning(f"Failed to create remote directories {remote_paths} (attempt {attempt}): {stderr}")
-
-            if attempt < max_attempts:
-                sleep_seconds = 2 ** attempt
-                self.logger.debug(f"Waiting {sleep_seconds}s before retrying mkdir for {remote_paths}")
-                time.sleep(sleep_seconds)
-
-        self.logger.warning(f"Exhausted attempts creating remote directory: {remote_paths}")
-        return False
     
     def http_request_via_ssh(self, remote_host: str, remote_port: int, method: str, path: str, 
                              headers: dict = None, json_data: dict = None, timeout: int = 30,
