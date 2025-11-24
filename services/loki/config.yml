@@ -5,9 +5,11 @@ server:
 
 ruler:
   alertmanager_url: http://localhost:9093
+  enable_alertmanager_discovery: true
+  enable_api: true
 
 common:
-  instance_addr: loki
+  instance_addr: 127.0.0.1
   path_prefix: /loki
   storage:
     filesystem:
@@ -17,6 +19,13 @@ common:
   ring:
     kvstore:
       store: inmemory
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
 
 # TODO: change to MinIO for production-worthy storage
 schema_config:
@@ -34,3 +43,13 @@ storage_config:
     active_index_directory: /loki/index
     cache_location: /loki/index_cache
     cache_ttl: 24h
+
+pattern_ingester:
+  enabled: true
+  metric_aggregation:
+    loki_address: localhost:3100
+
+compactor:
+  working_directory: /loki/retention
+  delete_request_store: filesystem
+  retention_enabled: true

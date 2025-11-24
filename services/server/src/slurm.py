@@ -3,11 +3,12 @@ SLURM job submission and management via REST API with SSH tunnel to MeluXina.
 Designed for local Docker development with remote job submission using SLURM REST API.
 """
 
+from threading import Timer
 import yaml
-import requests
 import json
 import os
 import logging
+import glob
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from utils import parse_time_limit
@@ -16,6 +17,9 @@ from ssh_manager import SSHManager
 from recipe_builders import BuilderRegistry, ScriptPaths
 from job_cache_manager import JobCacheManager
 
+SLURM_HOSTNAME = "slurmrestd.meluxina.lxp.lu"
+SLURM_PORT = 6820
+SLURM_BASE_URL = "/slurm/v0.0.40"
 
 class SlurmDeployer:
     """Handles SLURM job submission and management via REST API over SSH tunnel.
@@ -33,27 +37,14 @@ class SlurmDeployer:
         
         # Initialize SSH manager for all remote operations
         self.ssh_manager = SSHManager()
-        self.ssh_user = self.ssh_manager.ssh_user
-        self.ssh_host = self.ssh_manager.ssh_host
         
         # Use SSH_USER as the username for SLURM operations
-        self.username = self.ssh_user
+        self.username = self.ssh_manager.ssh_user
         
-        # Get or fetch SLURM JWT token
-        self.token = os.getenv('SLURM_JWT')
-        if not self.token:
-            self.logger.info("SLURM_JWT not set, fetching fresh token from MeluXina...")
-            try:
-                self.token = self.ssh_manager.get_slurm_token()
-            except Exception as e:
-                raise RuntimeError(f"Failed to fetch SLURM token: {e}")
-        else:
-            self.logger.info("Using SLURM_JWT from environment")
+        # Get or fetch SLURM JWT token, with auto-renewal
+        self.authenticate_slurm(validity_secs=2 * 60 * 60)
         
-        self.logger.info(f"Initializing SLURM deployer with REST API via SSH tunnel to {self.ssh_user}@{self.ssh_host}")
-        
-        # Setup SSH tunnel for SLURM REST API
-        self.rest_api_port = self.ssh_manager.setup_slurm_rest_tunnel()
+        self.logger.info("Initializing SLURM deployer with REST API")
         
         # Base path configuration
         # LOCAL_BASE_PATH: Where recipes/configs are stored locally (in Docker container)
@@ -72,23 +63,21 @@ class SlurmDeployer:
             self.logger.info(f"Using REMOTE_BASE_PATH: {self.remote_base_path}")
         
         # Ensure remote directories exist
-        try:
-            self.ssh_manager.ensure_remote_directories(self.remote_base_path)
-        except Exception as e:
-            self.logger.warning(f"Could not ensure remote directories: {e}")
+        self.logger.info(f"Ensuring remote directories exist at {self.remote_base_path}")
+        # Ensure logs directory exists on remote before submitting job
+        # (SLURM needs this directory to exist BEFORE job starts)
+        remote_log_dir = f"{self.remote_base_path}/logs"
+        remote_recipe_dir = f"{self.remote_base_path}/src/recipes"
+        # Ensure persistent HuggingFace cache directory exists
+        # This allows model weights to persist across jobs and be shared across nodes
+        remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
+        self.ssh_manager.create_remote_directories([remote_log_dir, remote_recipe_dir, remote_hf_cache])
+        self.logger.info("Remote directories ready")
             
         self.logger.debug(f"Local base path (for recipes): {self.local_base_path}")
         self.logger.debug(f"Remote base path (for SLURM jobs): {self.remote_base_path}")
         
-        # SLURM REST API configuration (via SSH tunnel)
-        self.base_url = f"http://localhost:{self.rest_api_port}/slurm/v0.0.40"
-        self.headers = {
-            'X-SLURM-USER-NAME': self.username,
-            'X-SLURM-USER-TOKEN': self.token,
-            'Content-Type': 'application/json'
-        }
-        
-        self.logger.info(f"SLURM REST API: {self.base_url}")
+        self.logger.info(f"SLURM REST API: {SLURM_BASE_URL}")
         self.logger.info(f"Authenticating as user: {self.username}")
         
         # Load SLURM state normalization mapping from YAML file in server folder
@@ -104,14 +93,63 @@ class SlurmDeployer:
                 self._state_map = {}
         except Exception:
             self._state_map = {}
-        
+
         # Set up cache manager callbacks and start background updates
         self.cache_manager.set_fetch_callbacks(
+            sync_logs=self._sync_logs,
             fetch_status=self._fetch_status_uncached,
-            fetch_logs=self._fetch_job_logs_uncached,
             fetch_details=self._fetch_job_details_uncached
         )
         self.cache_manager.start_background_updates()
+    
+    def authenticate_slurm(self, validity_secs: int = 60 * 60) -> None:
+        """Fetch a fresh SLURM JWT token from MeluXina.
+        
+        Returns:
+            SLURM JWT token string
+            
+        Raises:
+            RuntimeError: If token fetch fails
+        """
+
+        env_token = os.getenv('SLURM_JWT')
+        if env_token:
+            self.logger.info("Using SLURM_JWT from environment")
+            self.headers = {
+                'X-SLURM-USER-NAME': self.username,
+                'X-SLURM-USER-TOKEN': env_token,
+            }
+            return
+
+        self.logger.info("Fetching SLURM JWT token from MeluXina...")
+        success, stdout, stderr = self.ssh_manager.execute_remote_command(f"scontrol token lifespan={validity_secs}", timeout=10)
+        
+        if not success:
+            raise RuntimeError(f"Failed to fetch SLURM token: {stderr}")
+        
+        # Parse output: "SLURM_JWT=eyJhbGc..."
+        for line in stdout.strip().split('\n'):
+            if line.startswith('SLURM_JWT='):
+                token = line.split('=', 1)[1].strip()
+
+                # SLURM REST API configuration (via SSH tunnel)
+                self.headers = {
+                    'X-SLURM-USER-NAME': self.username,
+                    'X-SLURM-USER-TOKEN': token,
+                }
+                self.logger.info("Successfully fetched SLURM JWT token")
+
+                ok, status_code, result = self.ssh_manager.http_request_via_ssh(SLURM_HOSTNAME, SLURM_PORT, 'GET', f"{SLURM_BASE_URL}/ping", headers=self.headers)
+                if ok:
+                    self.logger.info("SLURM token validation successful")
+                else:
+                    raise RuntimeError(f"SLURM token validation failed with status {status_code}: {result}")
+                # Renew token automatically one minute before expiry
+                self.renew_timer = Timer(validity_secs - 60, lambda: self.authenticate_slurm(validity_secs))
+                self.renew_timer.start()
+                return
+        
+        raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
     
     def __del__(self):
         """Clean up background threads on deletion."""
@@ -126,14 +164,6 @@ class SlurmDeployer:
         Note: Recipes should be synced to MeluXina before starting the server
         (handled by launch_local.sh). This method assumes recipes are already present.
         """
-        # Ensure logs directory exists on remote before submitting job
-        # (SLURM needs this directory to exist BEFORE job starts)
-        remote_log_dir = f"{self.remote_base_path}/logs"
-        # Ensure persistent HuggingFace cache directory exists
-        # This allows model weights to persist across jobs and be shared across nodes
-        remote_hf_cache = f"{self.remote_base_path}/huggingface_cache"
-        self.ssh_manager.create_remote_directories([remote_log_dir, remote_hf_cache])
-        
         # Load recipe
         recipe_name, recipe_path = self._find_recipe(recipe_name)
         with open(recipe_path, 'r') as f:
@@ -146,27 +176,28 @@ class SlurmDeployer:
         self.logger.info("Submitting job payload")
         self.logger.debug(json.dumps(job_payload, indent=2))
         
-        response = requests.post(
-            f"{self.base_url}/job/submit", 
-            headers=self.headers, 
-            json=job_payload
+        ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+            SLURM_HOSTNAME, SLURM_PORT,
+            'POST', f"{SLURM_BASE_URL}/job/submit", 
+            headers=self.headers,
+            json_data=job_payload
         )
         
         # Debug: print the response for troubleshooting
-        self.logger.info(f"SLURM API Response Status: {response.status_code}")
-        self.logger.debug(f"SLURM API Response Body: {response.text}")
+        self.logger.info(f"SLURM API Response Status: {status_code}")
+        self.logger.debug(f"SLURM API Response Body: {result}")
         
-        response.raise_for_status()
+        if not ok:
+            raise RuntimeError(f"SLURM job submission failed with status {status_code}: {result}")
         
-        result = response.json()
         if result.get('errors'):
             raise RuntimeError(f"SLURM API errors: {result['errors']}")
         
         # Return job information directly from SLURM response
-        job_id = result.get('job_id', 0)
+        job_id = result.get('job_id')
         
         # Validate that we got a valid job ID
-        if job_id == 0:
+        if job_id is None:
             raise RuntimeError(f"SLURM job submission failed: received job_id=0. Response: {result}")
         
         # Track this job for background updates IMMEDIATELY
@@ -194,11 +225,14 @@ class SlurmDeployer:
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a running SLURM job by job ID via REST API."""
         try:
-            response = requests.delete(
-                f"{self.base_url}/job/{job_id}", 
+            ok, status_code, body = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'DELETE', f"{SLURM_BASE_URL}/job/{job_id}", 
                 headers=self.headers
             )
-            response.raise_for_status()
+            if not ok:
+                self.logger.error(f"Failed to cancel SLURM job {job_id}: {status_code} - {body}")
+                return False
             
             # Stop tracking this job
             self.cache_manager.untrack_job(str(job_id))
@@ -224,19 +258,26 @@ class SlurmDeployer:
         """
         return self.cache_manager.get_status(str(job_id))
     
+    def _sync_logs(self) -> None:
+        # Setup local and remote log directories
+        local_log_dir = self.local_base_path / "logs"
+        local_log_dir.mkdir(parents=True, exist_ok=True)
+        remote_log_dir = f"{self.remote_base_path}/logs"
+
+        self.ssh_manager.sync_directory_to_local(remote_log_dir, local_log_dir)
+    
     def _fetch_status_uncached(self, job_id: str) -> str:
         """Fetch status from SLURM API without using cache.
         
         This is used as a callback by the cache manager.
         """
         try:
-            response = requests.get(
-                f"{self.base_url}/job/{job_id}",
-                headers=self.headers,
-                timeout=5
+            ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'GET', f"{SLURM_BASE_URL}/job/{job_id}",
+                headers=self.headers, timeout=5
             )
-            if response.status_code == 200:
-                result = response.json()
+            if ok:
                 jobs = result.get('jobs', [])
                 if jobs:
                     job = jobs[0]
@@ -247,104 +288,37 @@ class SlurmDeployer:
                         status = job_state.lower()
                     else:
                         status = str(job_state).lower()
-                    return self._normalize_slurm_state(status)
+                    normalized_status = self._normalize_slurm_state(status)
+                    self.logger.debug(f"Fetched status for job {job_id}: raw='{status}', normalized='{normalized_status}'")
+                    return normalized_status
             
             # Job not found - mark as completed
+            self.logger.info(f"Job {job_id} not found in SLURM API, marking as completed")
             return "completed"
             
         except Exception as e:
             self.logger.warning(f"Failed to fetch status for job {job_id}: {e}")
             return "unknown"
     
-    def get_detailed_status_from_logs(self, job_id: str, ready_indicators: List[str] = None, 
-                                       starting_indicators: List[str] = None) -> str:
-        """Parse job logs to determine detailed status for running jobs.
-        
-        This is a helper method that services can use to implement their own
-        service-specific readiness detection.
-        
-        Args:
-            job_id: The SLURM job ID
-            ready_indicators: List of strings that indicate service is fully ready
-            starting_indicators: List of strings that indicate service is starting
-            
-        Returns:
-            One of: 'building', 'starting', 'running', 'completed'
-        """
-        job_id = str(job_id)
-        
-        # Ensure this job is being tracked for background updates
-        self.cache_manager.track_job(job_id)
-        
-        # Default indicators for backward compatibility (vLLM-specific)
-        if ready_indicators is None:
-            ready_indicators = ['Application startup complete', 'Uvicorn running on']
-        if starting_indicators is None:
-            starting_indicators = ['Starting container', 'Running vLLM container', 'Starting vLLM']
-        
-        logs = self.get_job_logs(job_id)
-        
-        # Check if log files don't exist yet or are empty
-        if 'File not found' in logs and logs.count('File not found') >= 2:
-            return 'starting'
-        
-        # Check if container exited
-        if 'Container exited' in logs:
-            # Job completed - stop tracking it
-            self.cache_manager.untrack_job(job_id)
-            return 'completed'
-        
-        # Check for building phase
-        if 'Building Apptainer image' in logs or 'apptainer build' in logs.lower():
-            if 'Container build successful' in logs or 'Starting container' in logs:
-                pass  # Build finished, continue checking
-            else:
-                return 'building'
-        
-        # Check if application is fully ready (using provided indicators)
-        found_ready = False
-        for indicator in ready_indicators:
-            if indicator in logs:
-                found_ready = True
-                break
-        
-        if found_ready:
-            return 'running'
-        
-        # Debug: Log what we're actually seeing if no ready indicators match
-        self.logger.debug(f"Job {job_id}: No ready indicators found. Checking starting indicators...")
-        self.logger.debug(f"Ready indicators checked: {ready_indicators}")
-        # Show a sample of the logs (last 500 chars)
-        log_sample = logs[-500:] if len(logs) > 500 else logs
-        self.logger.debug(f"Log sample (last 500 chars): {log_sample}")
-        
-        # Check for starting phase (using provided indicators)
-        for indicator in starting_indicators:
-            if indicator in logs:
-                return 'starting'
-        
-        # Default to starting for jobs without clear indicators
-        return 'starting'
-    
     def list_jobs(self, user_filter: str = None) -> list:
         """List all jobs from SLURM cluster via REST API, optionally filtered by user."""
         try:
             # Use the /jobs endpoint to get all jobs
-            params = {}
             if user_filter:
                 # Note: The official API may not support user filtering directly
                 # but we can filter the results after getting them
                 pass
             
-            response = requests.get(
-                f"{self.base_url}/jobs", 
+            ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'GET', f"{SLURM_BASE_URL}/jobs", 
                 headers=self.headers,
-                params=params,
                 timeout=10
             )
-            response.raise_for_status()
+            if not ok:
+                self.logger.error(f"Failed to list SLURM jobs: {status_code} - {result}")
+                raise RuntimeError(f"SLURM job listing failed with status {status_code}: {result}")
             
-            result = response.json()
             jobs = result.get('jobs', [])
             
             # Filter to current user's jobs and convert to our format
@@ -415,159 +389,10 @@ class SlurmDeployer:
         if s.startswith("cancel") or s in ("ca", "cancelled", "canceled"):
             return 'cancelled'
         return 'unknown'
-    
-    def _fetch_remote_log_file(self, remote_path: str, local_path: Path) -> bool:
-        """Fetch a log file from the remote MeluXina filesystem via SSH.
-        
-        Args:
-            remote_path: Absolute path to the log file on MeluXina
-            local_path: Local path where the file should be saved
-            
-        Returns:
-            True if file was successfully fetched, False otherwise
-        """
-        return self.ssh_manager.fetch_remote_file(remote_path, local_path)
-    
-    def _fetch_remote_log_file_tail(self, remote_path: str, local_path: Path, lines: int = 200) -> bool:
-        """Fetch only the last N lines of a log file from remote using tail.
-        
-        This is much faster than fetching the entire file, especially for large logs.
-        
-        Args:
-            remote_path: Absolute path to the log file on MeluXina
-            local_path: Local path where the file should be saved
-            lines: Number of lines to fetch from the end of the file
-            
-        Returns:
-            True if file was successfully fetched, False otherwise
-        """
-        import subprocess
-        
-        try:
-            # Use tail to fetch only the last N lines
-            success, stdout, _ = self.ssh_manager.execute_remote_command(f"tail -n {lines} {remote_path}")
-            if success:
-                # Save the output to local file
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-                local_path.write_text(stdout)
-                self.logger.debug(f"Successfully fetched last {lines} lines from {remote_path}")
-                return True
-            else:
-                # Check if file exists on remote
-                exists = self.ssh_manager.check_remote_file_exists(remote_path)
-                
-                if not exists:
-                    self.logger.debug(f"Remote file does not exist: {remote_path}")
-                    return False
-                
-                self.logger.warning(f"Failed to fetch tail of {remote_path}: {result.stderr}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout fetching tail of remote file: {remote_path}")
-            return False
-        except Exception as e:
-            self.logger.warning(f"Error fetching tail of remote file {remote_path}: {e}")
-            return False
 
     def get_job_logs(self, job_id: str) -> str:
-        """Get logs from SLURM job.
-        
-        Uses cached logs if available and fresh, otherwise fetches from remote.
-        """
-        return self.cache_manager.get_logs(str(job_id))
-    
-    def _fetch_main_job_log(self, job_id: str, recipe_name: str, local_log_dir: Path, remote_log_dir: str) -> str:
-        """Fetch the main SLURM job stdout log.
-        
-        Args:
-            job_id: SLURM job ID
-            recipe_name: Recipe name used in log filename
-            local_log_dir: Local directory for cached logs
-            remote_log_dir: Remote directory containing logs
-            
-        Returns:
-            Formatted log content or error message
-        """
-        stdout_local = local_log_dir / f"{recipe_name}_{job_id}.out"
-        stdout_remote = f"{remote_log_dir}/{recipe_name}_{job_id}.out"
-        
-        # Fetch only the last 200 lines of stdout using tail for faster retrieval
-        self._fetch_remote_log_file_tail(stdout_remote, stdout_local, lines=200)
-        
-        if stdout_local.exists():
-            try:
-                content = stdout_local.read_text()
-                return f"=== SLURM STDOUT (last 200 lines) ({stdout_local.name}) ===\n{content}"
-            except Exception as e:
-                return f"=== SLURM STDOUT ===\nError reading {stdout_local.name}: {e}"
-        else:
-            return f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)"
-    
-    def _fetch_replica_logs(self, job_id: str, local_log_dir: Path, remote_log_dir: str) -> List[str]:
-        """Fetch replica logs for distributed/multi-replica jobs.
-        
-        Searches for log files matching pattern: *_{job_id}_replica_*.log
-        This supports any service type (vllm, qdrant, etc.) that creates replica logs.
-        
-        Args:
-            job_id: SLURM job ID
-            local_log_dir: Local directory for cached logs
-            remote_log_dir: Remote directory containing logs
-            
-        Returns:
-            List of formatted replica log sections
-        """
-        replica_logs = []
-        
+        """Get logs from SLURM job."""
         try:
-            # General pattern: *_{job_id}_replica_*.log
-            # This matches: vllm_3713871_replica_0.log, qdrant_3713871_replica_1.log, etc.
-            replica_pattern = f"*_{job_id}_replica_*.log"
-            remote_replica_pattern = f"{remote_log_dir}/{replica_pattern}"
-            
-            # Use SSH to list replica log files
-            success, ls_output, stderr = self.ssh_manager.execute_remote_command(
-                f"ls {remote_replica_pattern} 2>/dev/null || true"
-            )
-            
-            if success and ls_output:
-                replica_files = [f.strip() for f in ls_output.split('\n') if f.strip()]
-                
-                if replica_files:
-                    replica_logs.append(f"\n=== REPLICA LOGS ({len(replica_files)} replicas) ===")
-                    
-                    for remote_replica_log in sorted(replica_files):
-                        replica_filename = remote_replica_log.split('/')[-1]
-                        local_replica_log = local_log_dir / replica_filename
-                        
-                        # Fetch last 100 lines of each replica log
-                        self._fetch_remote_log_file_tail(remote_replica_log, local_replica_log, lines=100)
-                        
-                        if local_replica_log.exists():
-                            try:
-                                content = local_replica_log.read_text()
-                                replica_logs.append(f"\n--- {replica_filename} (last 100 lines) ---\n{content}")
-                            except Exception as e:
-                                replica_logs.append(f"\n--- {replica_filename} ---\nError reading: {e}")
-        
-        except Exception as e:
-            self.logger.debug(f"No replica logs found for job {job_id}: {e}")
-        
-        return replica_logs
-    
-    def _fetch_job_logs_uncached(self, job_id: str) -> str:
-        """Get logs from SLURM job, fetching from remote if needed.
-        
-        Optimized to fetch only the last 200 lines using tail for faster retrieval.
-        Automatically discovers and includes replica logs for distributed jobs.
-        """
-        try:
-            # Setup local and remote log directories
-            local_log_dir = self.local_base_path / "logs"
-            local_log_dir.mkdir(parents=True, exist_ok=True)
-            remote_log_dir = f"{self.remote_base_path}/logs"
-
             # Get job details to find the recipe name
             job_details = self.get_job_details(job_id)
             recipe_name = job_details.get('name', 'unknown') if job_details else 'unknown'
@@ -576,17 +401,70 @@ class SlurmDeployer:
             logs = []
             
             # Fetch main SLURM stdout log
-            main_log = self._fetch_main_job_log(job_id, recipe_name, local_log_dir, remote_log_dir)
+            main_log = self._fetch_main_job_log(job_id, recipe_name, self.local_base_path / "logs")
             logs.append(main_log)
             
             # Fetch replica logs if they exist
-            replica_logs = self._fetch_replica_logs(job_id, local_log_dir, remote_log_dir)
+            replica_logs = self._fetch_replica_logs(job_id, self.local_base_path / "logs")
             logs.extend(replica_logs)
             
             return "\n\n".join(logs)
             
         except Exception as e:
             return f"Error retrieving logs for job {job_id}: {str(e)}"
+    
+    def _fetch_main_job_log(self, job_id: str, recipe_name: str, local_log_dir: Path) -> str:
+        """Fetch the main SLURM job stdout log.
+        
+        Args:
+            job_id: SLURM job ID
+            recipe_name: Recipe name used in log filename
+            local_log_dir: Local directory for cached logs
+            
+        Returns:
+            Formatted log content or error message
+        """
+        filename = local_log_dir / f"{recipe_name}_{job_id}.out"
+        try:
+            with open(filename) as f:
+                content = f.readlines()[-200:]  # Last 200 lines
+                return f"=== SLURM STDOUT (last 200 lines) ({filename}) ===\n{content}"
+        except FileNotFoundError:
+            return f"=== SLURM STDOUT ===\nLog not yet available (job may not have started)"
+        except Exception as e:
+            return f"=== SLURM STDOUT ===\nError reading {filename}: {e}"
+    
+    def _fetch_replica_logs(self, job_id: str, local_log_dir: Path) -> List[str]:
+        """Fetch replica logs for distributed/multi-replica jobs.
+        
+        Searches for log files matching pattern: *_{job_id}_replica_*.log
+        This supports any service type (vllm, qdrant, etc.) that creates replica logs.
+        
+        Args:
+            job_id: SLURM job ID
+            local_log_dir: Local directory for cached logs
+            
+        Returns:
+            List of formatted replica log sections
+        """
+        replica_logs = []
+        
+        # General pattern: *_{job_id}_replica_*.log
+        # This matches: vllm_3713871_replica_0.log, qdrant_3713871_replica_1.log, etc.
+        replica_files = glob.glob(f"{local_log_dir}/*_{job_id}_replica_*.log")
+        replica_logs.append(f"\n=== REPLICA LOGS ({len(replica_files)} replicas) ===")
+        
+        for remote_replica_log in sorted(replica_files):
+            replica_filename = remote_replica_log.split('/')[-1]
+            local_replica_log = local_log_dir / replica_filename
+            
+            try:
+                content = local_replica_log.read_text()
+                replica_logs.append(f"\n--- {replica_filename} (last 100 lines) ---\n{content}")
+            except Exception as e:
+                replica_logs.append(f"\n--- {replica_filename} ---\nError reading: {e}")
+        
+        return replica_logs
     
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
         """Get detailed information about a SLURM job including allocated nodes.
@@ -598,14 +476,14 @@ class SlurmDeployer:
     def _fetch_job_details_uncached(self, job_id: str) -> Dict[str, Any]:
         """Get detailed information about a SLURM job including allocated nodes via REST API."""
         try:
-            response = requests.get(
-                f"{self.base_url}/job/{job_id}",
+            ok, status_code, result = self.ssh_manager.http_request_via_ssh(
+                SLURM_HOSTNAME, SLURM_PORT,
+                'GET', f"{SLURM_BASE_URL}/job/{job_id}",
                 headers=self.headers,
                 timeout=10
             )
             
-            if response.status_code == 200:
-                result = response.json()
+            if ok:
                 # DEBUG: emit raw job JSON for troubleshooting allocated node fields
                 try:
                     import logging

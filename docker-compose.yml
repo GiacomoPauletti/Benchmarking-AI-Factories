@@ -12,7 +12,6 @@ services:
       - ./services/server/tests:/app/tests
       - ./services/server/pytest.ini:/app/pytest.ini
       - ./services/server/logs:/app/logs
-      - ./services/server/huggingface_cache:/app/huggingface_cache
       # Mount server endpoint file so client can find it
       - ./services/server/.server-endpoint:/app/.server-endpoint
       # Mount SSH agent socket for secure authentication (no raw keys exposed)
@@ -43,7 +42,7 @@ services:
     build:
       context: ./services/prometheus
       dockerfile: Dockerfile
-    container_name: prometheus
+    container_name: benchmarking-ai-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -64,6 +63,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    depends_on:
+      server:
+        condition: service_started
 
   monitoring:
     build:
@@ -116,7 +118,7 @@ services:
     build:
       context: ./services/grafana
       dockerfile: Dockerfile
-    container_name: grafana
+    container_name: benchmarking-ai-grafana
     ports:
       - "3000:3000"
     environment:
@@ -130,10 +132,23 @@ services:
         condition: service_healthy
       loki:
         condition: service_started
+      grafana-renderer:
+        condition: service_started
+
+  grafana-renderer:
+    image: grafana/grafana-image-renderer:3.10.0
+    container_name: benchmark-ai-grafana-renderer
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - ai-factory
 
   loki:
-    image: grafana/loki:2.8.0
-    container_name: loki
+    build:
+      context: ./services/loki
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-loki
     ports:
       - "3100:3100"
     volumes:
@@ -141,6 +156,21 @@ services:
     networks:
       - ai-factory
     restart: unless-stopped
+
+  alloy:
+    build:
+      context: ./services/alloy
+      dockerfile: Dockerfile
+    ports:
+      - 12345:12345
+      - 4318:4318
+    volumes:
+      - ./services/server/logs:/logs
+    networks:
+      - ai-factory
+    restart: unless-stopped
+    depends_on:
+      - loki
 
   # Documentation service
   docs:

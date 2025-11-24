@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 4,
+  "id": 6,
   "links": [
     {
       "asDropdown": false,
@@ -240,14 +240,16 @@
       "id": 2,
       "options": {
         "dedupStrategy": "none",
+        "detailsMode": "inline",
         "enableInfiniteScrolling": false,
         "enableLogDetails": true,
         "prettifyLogMessage": false,
         "showCommonLabels": false,
-        "showControls": false,
+        "showControls": true,
         "showLabels": false,
-        "showTime": true,
-        "sortOrder": "Descending",
+        "showTime": false,
+        "sortOrder": "Ascending",
+        "syntaxHighlighting": true,
         "wrapLogMessage": false
       },
       "pluginVersion": "12.3.0",
@@ -257,14 +259,61 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "direction": "backward",
-          "editorMode": "builder",
-          "expr": "",
+          "direction": "forward",
+          "editorMode": "code",
+          "expr": "{service_name=\"slurm-stderr\", filename=~\"/logs/.*${service}.*\"}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Logs",
+      "title": "STDERR",
+      "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 14,
+      "options": {
+        "dedupStrategy": "none",
+        "detailsMode": "inline",
+        "enableInfiniteScrolling": false,
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showControls": true,
+        "showLabels": false,
+        "showTime": false,
+        "sortOrder": "Ascending",
+        "syntaxHighlighting": true,
+        "wrapLogMessage": false
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "direction": "forward",
+          "editorMode": "code",
+          "expr": "{service_name=\"slurm-stdout\", filename=~\"/logs/.*${service}.*\"}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "STDOUT",
       "type": "logs"
     },
     {
@@ -334,7 +383,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 21
+        "y": 33
       },
       "id": 10,
       "options": {
@@ -430,7 +479,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 21
+        "y": 33
       },
       "id": 11,
       "options": {
@@ -521,7 +570,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 40
       },
       "id": 12,
       "options": {
@@ -653,7 +702,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 40
       },
       "id": 13,
       "options": {
@@ -729,7 +778,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 47
       },
       "id": 5,
       "panels": [],
@@ -763,7 +812,7 @@
         "h": 2,
         "w": 3,
         "x": 0,
-        "y": 36
+        "y": 48
       },
       "id": 9,
       "options": {
@@ -893,7 +942,7 @@
         "h": 8,
         "w": 5,
         "x": 3,
-        "y": 36
+        "y": 48
       },
       "id": 6,
       "options": {
@@ -997,7 +1046,7 @@
         "h": 8,
         "w": 5,
         "x": 8,
-        "y": 36
+        "y": 48
       },
       "id": 7,
       "options": {
@@ -1101,7 +1150,7 @@
         "h": 8,
         "w": 5,
         "x": 13,
-        "y": 36
+        "y": 48
       },
       "id": 8,
       "options": {
@@ -1135,6 +1184,99 @@
       ],
       "title": "Number of total collections",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 48
+      },
+      "id": 15,
+      "options": {
+        "calculate": false,
+        "calculation": {
+          "xBuckets": {
+            "mode": "size",
+            "value": ""
+          },
+          "yBuckets": {
+            "scale": {
+              "log": 2,
+              "type": "log"
+            }
+          }
+        },
+        "cellGap": 1,
+        "cellValues": {
+          "unit": "s"
+        },
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "max": 1,
+          "min": 0,
+          "mode": "scheme",
+          "reverse": true,
+          "scale": "exponential",
+          "scheme": "Magma",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-9
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto",
+          "value": "Latency"
+        },
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": false,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "reverse": false,
+          "unit": "percent"
+        }
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "editorMode": "builder",
+          "expr": "sum by(le) (rate(http_request_duration_highr_seconds_bucket[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Heatmap request latency",
+      "type": "heatmap"
     }
   ],
   "preload": false,
@@ -1216,8 +1358,8 @@
     ]
   },
   "time": {
-    "from": "2025-10-27T03:39:40.460Z",
-    "to": "2025-10-27T09:23:25.291Z"
+    "from": "now-3h",
+    "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
