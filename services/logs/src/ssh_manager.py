@@ -257,82 +257,45 @@ class SSHManager:
         Returns:
             True if sync successful, False otherwise
         """
+        remote_dir = remote_logs_path.rstrip('/')
+        local_dir = Path(local_logs_dir)
+        local_dir.mkdir(parents=True, exist_ok=True)
+
         try:
-            # Ensure local directory exists
-            local_logs_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Build SSH command for rsync
-            ssh_cmd = " ".join(self.ssh_base_cmd)
-            
-            # Build rsync command
-            rsync_cmd = [
-                "rsync",
-                "-avz",
-                "--partial",
-                "--progress",
-                "-e", ssh_cmd
+            ssh_cmd = self.ssh_base_cmd.copy()
+            if self._ensure_control_master():
+                ssh_cmd.extend(["-S", str(self._control_master_socket)])
+            ssh_cmd_str = " ".join(ssh_cmd)
+
+            rsync_cmd: List[str] = [
+                "rsync", "--recursive", "--compress", "--inplace", "--quiet",
+                "--append", "--copy-unsafe-links", "--chmod=444",
+                "--timeout=60", "-e", ssh_cmd_str,
+                "--exclude=server.log",
             ]
-            
+
             if delete:
                 rsync_cmd.append("--delete")
             if dry_run:
                 rsync_cmd.append("--dry-run")
-            
-            # Ensure remote path ends with / for rsync
-            if not remote_logs_path.endswith('/'):
-                remote_logs_path += '/'
-            
-            rsync_cmd.extend([
-                f"{self.ssh_target}:{remote_logs_path}",
-                str(local_logs_dir)
-            ])
-            
-            self.logger.info(f"Syncing logs: {remote_logs_path} -> {local_logs_dir}")
-            self.logger.debug(f"Running: {' '.join(rsync_cmd)}")
-            
-            result = subprocess.run(
-                rsync_cmd,
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minute timeout for large log syncs
-                env=os.environ.copy()
-            )
-            
-            if result.returncode == 0:
-                self.logger.info("Log sync completed successfully")
-                
-                # Fix permissions on synced files so they're readable by all users
-                try:
-                    # Set directories to 755 (rwxr-xr-x)
-                    subprocess.run(
-                        ["find", str(local_logs_dir), "-type", "d", "-exec", "chmod", "755", "{}", "+"],
-                        check=True,
-                        capture_output=True,
-                        timeout=30
-                    )
-                    # Set files to 644 (rw-r--r--)
-                    subprocess.run(
-                        ["find", str(local_logs_dir), "-type", "f", "-exec", "chmod", "644", "{}", "+"],
-                        check=True,
-                        capture_output=True,
-                        timeout=30
-                    )
-                    self.logger.info("Fixed permissions on synced files")
-                except subprocess.CalledProcessError as e:
-                    self.logger.warning(f"Could not fix file permissions after sync: {e}")
-                except Exception as e:
-                    self.logger.warning(f"Error fixing file permissions: {e}")
-                
-                return True
-            else:
-                self.logger.warning(f"Log sync failed: {result.stderr}")
-                return False
-                
+
+            rsync_cmd.extend([f"{self.ssh_target}:{remote_dir}/", str(local_dir)])
+
+            self.logger.debug(f"Running rsync: {' '.join(rsync_cmd)}")
+            start = time.time()
+            subprocess.run(rsync_cmd, text=True, timeout=120, capture_output=True, check=True)
+            duration_ms = (time.time() - start) * 1000
+            self.logger.info(f"Synced directory: {remote_dir} -> {local_dir}, took {duration_ms:.2f}ms")
+            return True
+
         except subprocess.TimeoutExpired:
-            self.logger.warning("Timeout during log sync")
+            self.logger.warning(f"Timeout syncing directory: {remote_dir}")
+            return False
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(f"rsync failed for {remote_dir}: {e.stderr.strip() if e.stderr else e}")
             return False
         except Exception as e:
-            self.logger.error(f"Error syncing logs: {e}")
+            self.logger.warning(f"Error syncing directory {remote_dir}: {e}")
             return False
     
     def list_remote_directory(self, remote_path: str) -> List[str]:

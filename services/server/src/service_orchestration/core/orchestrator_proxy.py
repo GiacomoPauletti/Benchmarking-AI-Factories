@@ -3,6 +3,7 @@ Manages the ServiceOrchestrator running on Meluxina.
 Server communicates with it via SSH API calls.
 """
 
+import json
 import logging
 from typing import Dict, Any, Optional, List
 from ssh_manager import SSHManager
@@ -71,12 +72,23 @@ class OrchestratorProxy:
                 logger.error(f"HTTP error {status} from orchestrator: {body}")
                 raise RuntimeError(f"HTTP error {status}: {body}")
             
-            import json
-            return json.loads(body)
+            if isinstance(body, (dict, list)):
+                return body
+
+            if isinstance(body, bytes):
+                body_text = body.decode("utf-8", errors="replace")
+            else:
+                body_text = body
+
+            if isinstance(body_text, str):
+                return json.loads(body_text)
+
+            logger.error(f"Unexpected response type from orchestrator: {type(body).__name__}")
+            raise RuntimeError("Invalid response type from orchestrator")
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse orchestrator response as JSON: {e}")
-            logger.error(f"Raw body: {body}")
+            logger.error(f"Raw body: {body_text if 'body_text' in locals() else body}")
             raise RuntimeError(f"Invalid JSON response from orchestrator: {str(e)}")
         except Exception as e:
             logger.error(f"Request to orchestrator failed: {e}")

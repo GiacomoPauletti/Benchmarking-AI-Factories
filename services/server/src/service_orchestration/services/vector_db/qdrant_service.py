@@ -1,8 +1,6 @@
 """Qdrant-specific vector database service implementation."""
 
 from typing import Dict, List, Optional, Any
-import requests
-import json
 from .vector_db_service import VectorDbService
 
 DEFAULT_QDRANT_PORT = 6333
@@ -180,8 +178,8 @@ class QdrantService(VectorDbService):
             
             # Qdrant returns {"result": {"collections": [...]}}
             collections = []
-            if "result" in data and "collections" in data["result"]:
-                collections = [col["name"] for col in data["result"]["collections"]]
+            if "result" in body and "collections" in body["result"]:
+                collections = [col["name"] for col in body["result"]["collections"]]
             
             return {
                 "success": True,
@@ -265,7 +263,7 @@ class QdrantService(VectorDbService):
             
             return {
                 "success": True,
-                "collection_info": data.get("result", {}),
+                "collection_info": body.get("result", {}),
                 "service_id": service_id,
                 "endpoint": endpoint,
                 "collection_name": collection_name

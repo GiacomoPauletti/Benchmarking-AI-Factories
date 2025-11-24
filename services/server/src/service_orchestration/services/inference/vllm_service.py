@@ -187,12 +187,12 @@ class VllmService(InferenceService):
             models = []
             
             # vLLM returns {"object": "list", "data": [...]}
-            if isinstance(data, dict):
+            if isinstance(body, dict):
                 # Try standard OpenAI format (data field)
-                candidates = data.get('data', [])
+                candidates = body.get('data', [])
                 # Fallback to other possible formats
                 if not candidates:
-                    candidates = data.get('models') or data.get('served_models') or []
+                    candidates = body.get('models') or body.get('served_models') or []
                 
                 if isinstance(candidates, list):
                     for item in candidates:
@@ -202,9 +202,9 @@ class VllmService(InferenceService):
                             model_id = item.get('id') or item.get('model')
                             if model_id:
                                 models.append(model_id)
-            elif isinstance(data, list):
+            elif isinstance(body, list):
                 # Direct list format
-                for item in data:
+                for item in body:
                     if isinstance(item, str):
                         models.append(item)
                     elif isinstance(item, dict):
@@ -307,7 +307,6 @@ class VllmService(InferenceService):
                 # Parse model list from response
                 model = None
                 try:
-                    data = json.loads(body)
                     # vLLM returns {"object": "list", "data": [...]}
                     if isinstance(data, dict):
                         candidates = data.get('data', [])
@@ -517,18 +516,18 @@ class VllmService(InferenceService):
         
         try:
             # Try chat endpoint first (works for instruction-tuned models)
-            response = self._try_chat_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
+            ok, status_code, body = self._try_chat_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
             
             # Check if we got a chat template error
-            if self._is_chat_template_error(response):
+            if self._is_chat_template_error(ok, status_code, body):
                 self.logger.info("Chat template error detected, retrying with completions endpoint")
                 
                 # Retry with completions endpoint (works for base models)
-                response = self._try_completions_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
-                result = self._parse_completions_response(response, endpoint, service_id)
+                ok, status_code, body = self._try_completions_endpoint(endpoint, model, prompt, service_id=service_id, **kwargs)
+                result = self._parse_completions_response(ok, status_code, body, endpoint, service_id)
             else:
                 # No chat template error - parse as chat response
-                result = self._parse_chat_response(response, endpoint, service_id)
+                result = self._parse_chat_response(ok, status_code, body, endpoint, service_id)
             
             # Mark service as healthy on successful response
             if result.get("success"):
@@ -663,13 +662,12 @@ class VllmService(InferenceService):
         
         return response
 
-    def _is_chat_template_error(self, response: requests.Response) -> bool:
+    def _is_chat_template_error(self, ok: bool, status_code: int, body: Any) -> bool:
         """Check if response indicates a chat template error."""
-        if response.status_code != 400:
+        if ok or status_code != 400:
             return False
         
         try:
-            body = response.json()
             if not isinstance(body, dict):
                 return False
             
@@ -682,75 +680,61 @@ class VllmService(InferenceService):
         except Exception:
             return False
 
-    def _parse_chat_response(self, response: requests.Response, endpoint: str, service_id: str) -> Dict[str, Any]:
+    def _parse_chat_response(self, ok: bool, status_code: int, body: Any, endpoint: str, service_id: str) -> Dict[str, Any]:
         """Parse response from chat completions endpoint."""
-        if not response.ok:
-            body = None
-            try:
-                body = response.json()
-            except Exception:
-                body = response.text
-            
+        if not ok:
             return {
                 "success": False,
-                "error": f"vLLM returned {response.status_code}",
+                "error": f"vLLM returned {status_code}",
                 "endpoint": endpoint,
-                "status_code": response.status_code,
+                "status_code": status_code,
                 "body": body
             }
         
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            content = result["choices"][0]["message"]["content"]
+        if "choices" in body and len(body["choices"]) > 0:
+            content = body["choices"][0]["message"]["content"]
             return {
                 "success": True,
                 "response": content,
                 "service_id": service_id,
                 "endpoint": endpoint,
                 "endpoint_used": "chat",
-                "usage": result.get("usage", {})
+                "usage": body.get("usage", {})
             }
         
         return {
             "success": False,
             "error": "No response generated",
-            "raw_response": result,
+            "raw_response": body,
             "endpoint": endpoint
         }
 
-    def _parse_completions_response(self, response: requests.Response, endpoint: str, service_id: str) -> Dict[str, Any]:
+    def _parse_completions_response(self, ok: bool, status_code: int, body: Any, endpoint: str, service_id: str) -> Dict[str, Any]:
         """Parse response from completions endpoint."""
-        if not response.ok:
-            body = None
-            try:
-                body = response.json()
-            except Exception:
-                body = response.text
-            
+        if not ok:
             return {
                 "success": False,
-                "error": f"vLLM completions returned {response.status_code}",
+                "error": f"vLLM completions returned {status_code}",
                 "endpoint": endpoint,
-                "status_code": response.status_code,
+                "status_code": status_code,
                 "body": body
             }
         
-        result = response.json()
-        if "choices" in result and len(result["choices"]) > 0:
-            content = result["choices"][0]["text"]
+        if "choices" in body and len(body["choices"]) > 0:
+            content = body["choices"][0]["text"]
             return {
                 "success": True,
                 "response": content,
                 "service_id": service_id,
                 "endpoint": endpoint,
                 "endpoint_used": "completions",
-                "usage": result.get("usage", {})
+                "usage": body.get("usage", {})
             }
         
         return {
             "success": False,
             "error": "No response generated from completions endpoint",
-            "raw_response": result,
+            "raw_response": body,
             "endpoint": endpoint
         }
 

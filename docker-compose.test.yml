@@ -10,7 +10,6 @@ services:
     volumes:
       - ./services/server/src:/app/src
       - ./services/server/logs:/app/logs
-      - ./services/server/huggingface_cache:/app/huggingface_cache
       # Mount .server-endpoint file location
       - ./services/server/.server-endpoint:/app/services/server/.server-endpoint
       # Mount SSH agent socket for secure authentication (no raw keys exposed)

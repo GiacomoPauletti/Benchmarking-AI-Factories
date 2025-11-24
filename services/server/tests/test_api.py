@@ -887,16 +887,6 @@ class TestVLLMServiceLogic:
         """
         from service_orchestration.services.inference import VllmService
         
-        # Mock response with chat template error
-        mock_response = Mock()
-        mock_response.status_code = 400
-        mock_response.json.return_value = {
-            "error": {
-                "message": "default chat template is no longer allowed",
-                "type": "BadRequestError"
-            }
-        }
-        
         # Create VllmService with mocked dependencies
         mock_deployer = Mock()
         mock_service_manager = Mock()
@@ -904,22 +894,30 @@ class TestVLLMServiceLogic:
         mock_logger = Mock()
         
         vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        is_error = vllm_service._is_chat_template_error(mock_response)
+        is_error = vllm_service._is_chat_template_error(False, 400, {
+            "error": {
+                "message": "default chat template is no longer allowed",
+                "type": "BadRequestError"
+            }
+        })
         assert is_error is True
         
         # Test with different error
-        mock_response.json.return_value = {
+        is_error = vllm_service._is_chat_template_error(False, 400, {
             "error": {
                 "message": "Invalid parameters",
                 "type": "BadRequestError"
             }
-        }
-        is_error = vllm_service._is_chat_template_error(mock_response)
+        })
         assert is_error is False
         
         # Test with non-400 status
-        mock_response.status_code = 500
-        is_error = vllm_service._is_chat_template_error(mock_response)
+        is_error = vllm_service._is_chat_template_error(False, 500, {
+            "error": {
+                "message": "Invalid parameters",
+                "type": "BadRequestError"
+            }
+        })
         assert is_error is False
     
     @patch('service_orchestration.services.inference.vllm_service.requests')
@@ -965,9 +963,13 @@ class TestVLLMServiceLogic:
         """
         from service_orchestration.services.inference import VllmService
         
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        # Create VllmService with mocked dependencies
+        mock_deployer = Mock()
+        mock_service_manager = Mock()
+        mock_endpoint_resolver = Mock()
+        mock_logger = Mock()
+
+        response_body = {
             "choices": [
                 {
                     "message": {
@@ -983,14 +985,8 @@ class TestVLLMServiceLogic:
             }
         }
         
-        # Create VllmService with mocked dependencies
-        mock_deployer = Mock()
-        mock_service_manager = Mock()
-        mock_endpoint_resolver = Mock()
-        mock_logger = Mock()
-        
         vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        result = vllm_service._parse_chat_response(mock_response, "http://test:8001", "test-123")
+        result = vllm_service._parse_chat_response(True, 200, response_body, "http://test:8001", "test-123")
         
         assert result["success"] is True
         assert result["response"] == "This is a test response"
@@ -1005,9 +1001,13 @@ class TestVLLMServiceLogic:
         """
         from service_orchestration.services.inference import VllmService
         
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        # Create VllmService with mocked dependencies
+        mock_deployer = Mock()
+        mock_service_manager = Mock()
+        mock_endpoint_resolver = Mock()
+        mock_logger = Mock()
+
+        response_body = {
             "choices": [
                 {
                     "text": "This is a completion",
@@ -1021,14 +1021,8 @@ class TestVLLMServiceLogic:
             }
         }
         
-        # Create VllmService with mocked dependencies
-        mock_deployer = Mock()
-        mock_service_manager = Mock()
-        mock_endpoint_resolver = Mock()
-        mock_logger = Mock()
-        
         vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        result = vllm_service._parse_completions_response(mock_response, "http://test:8001", "test-123")
+        result = vllm_service._parse_completions_response(True, 200, response_body, "http://test:8001", "test-123")
         
         assert result["success"] is True
         assert result["response"] == "This is a completion"
@@ -1198,15 +1192,18 @@ class TestVllmServiceUnit:
             "status": "pending",  # Stale cached status
             "recipe_name": "inference/vllm-single-node"
         }
-        
+
         # Mock is_group to return False (this is a single service, not a group)
         mock_service_manager.is_group.return_value = False
         
         # Mock the check method to return not ready
         vllm_service._check_ready_and_discover_model = Mock(return_value=(False, "starting", None))
+
+        # Don't go through fast path
+        mock_service_manager.is_service_recently_healthy.return_value = False
         
         # Mock endpoint resolver
-        mock_endpoint_resolver.resolve.return_value = None
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
         
         # Call prompt
         result = vllm_service.prompt("123", "test prompt")
@@ -1215,6 +1212,7 @@ class TestVllmServiceUnit:
         assert result["success"] is False
         assert "initializing" in result["message"].lower() or "starting" in result["message"].lower()
         assert result["status"] == "starting"
+        assert "starting" in result["message"].lower()
     
     @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_prompt_uses_correct_endpoint_resolver_method(self, mock_requests, vllm_service, mock_service_manager, mock_deployer, mock_endpoint_resolver, mock_logger):

@@ -412,29 +412,84 @@ async def cleanup_all_logs():
     deleted = []
     errors = []
 
-    # Walk non-categorized logs
-    for root, dirs, files in os.walk(LOGS_DIR):
-        for fname in files:
-            fpath = Path(root) / fname
-            try:
-                if fpath.is_file():
-                    fpath.unlink()
-                    deleted.append(str(fpath.relative_to(DATA_DIR)))
-            except Exception as e:
-                logger.error(f"Failed to delete {fpath}: {e}")
-                errors.append({"file": str(fpath.relative_to(DATA_DIR)), "error": str(e)})
+    # (cleanup logic only) Remove files and symlinks under LOGS_DIR and CATEGORIZED_DIR
 
-    # Walk categorized logs
-    for root, dirs, files in os.walk(CATEGORIZED_DIR):
+    # Walk non-categorized logs (handle files, symlinks and symlinked directories)
+    for root, dirs, files in os.walk(LOGS_DIR, topdown=True):
+        # Remove symlinked directories so os.walk doesn't try to descend into them
+        for d in list(dirs):
+            dpath = Path(root) / d
+            try:
+                if dpath.is_symlink():
+                    logger.debug(f"Removing symlinked directory: {dpath}")
+                    dpath.unlink()
+                    try:
+                        deleted.append(str(dpath.relative_to(DATA_DIR)))
+                    except Exception:
+                        deleted.append(str(dpath))
+                    dirs.remove(d)
+            except Exception as e:
+                logger.error(f"Failed to delete symlinked directory {dpath}: {e}")
+                try:
+                    errors.append({"file": str(dpath.relative_to(DATA_DIR)), "error": str(e)})
+                except Exception:
+                    errors.append({"file": str(dpath), "error": str(e)})
+
         for fname in files:
             fpath = Path(root) / fname
             try:
-                if fpath.is_file():
+                # Remove regular files and symlinks (including broken symlinks)
+                if fpath.is_file() or fpath.is_symlink():
+                    logger.debug(f"Removing file/symlink: {fpath}")
                     fpath.unlink()
-                    deleted.append(str(fpath.relative_to(DATA_DIR)))
+                    try:
+                        deleted.append(str(fpath.relative_to(DATA_DIR)))
+                    except Exception:
+                        deleted.append(str(fpath))
             except Exception as e:
                 logger.error(f"Failed to delete {fpath}: {e}")
-                errors.append({"file": str(fpath.relative_to(DATA_DIR)), "error": str(e)})
+                try:
+                    errors.append({"file": str(fpath.relative_to(DATA_DIR)), "error": str(e)})
+                except Exception:
+                    errors.append({"file": str(fpath), "error": str(e)})
+
+    # Walk categorized logs (handle files, symlinks and symlinked directories)
+    for root, dirs, files in os.walk(CATEGORIZED_DIR, topdown=True):
+        # Remove symlinked directories first
+        for d in list(dirs):
+            dpath = Path(root) / d
+            try:
+                if dpath.is_symlink():
+                    logger.debug(f"Removing symlinked directory: {dpath}")
+                    dpath.unlink()
+                    try:
+                        deleted.append(str(dpath.relative_to(DATA_DIR)))
+                    except Exception:
+                        deleted.append(str(dpath))
+                    dirs.remove(d)
+            except Exception as e:
+                logger.error(f"Failed to delete symlinked directory {dpath}: {e}")
+                try:
+                    errors.append({"file": str(dpath.relative_to(DATA_DIR)), "error": str(e)})
+                except Exception:
+                    errors.append({"file": str(dpath), "error": str(e)})
+
+        for fname in files:
+            fpath = Path(root) / fname
+            try:
+                if fpath.is_file() or fpath.is_symlink():
+                    logger.debug(f"Removing file/symlink: {fpath}")
+                    fpath.unlink()
+                    try:
+                        deleted.append(str(fpath.relative_to(DATA_DIR)))
+                    except Exception:
+                        deleted.append(str(fpath))
+            except Exception as e:
+                logger.error(f"Failed to delete {fpath}: {e}")
+                try:
+                    errors.append({"file": str(fpath.relative_to(DATA_DIR)), "error": str(e)})
+                except Exception:
+                    errors.append({"file": str(fpath), "error": str(e)})
     # Also attempt to delete remote logs on MeluXina if SSH manager is available.
     # Remote path mirrors the one used for syncing: REMOTE_BASE_PATH/logs/
     remote_deleted = []
@@ -464,6 +519,8 @@ async def cleanup_all_logs():
         remote_errors.append({"error": str(e)})
 
     # Merge local and remote summary into response
+    # (no-op) periodic sync continues to run as configured by the application lifecycle
+
     return {
         "status": "completed",
         "deleted_count": len(deleted),

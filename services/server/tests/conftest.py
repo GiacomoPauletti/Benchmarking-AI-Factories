@@ -30,12 +30,31 @@ def mock_ssh_and_slurm():
         ssh_instance.ssh_host = "test.example.com"
         ssh_instance.ssh_port = 22
         ssh_instance.get_slurm_token.return_value = "test-token-12345"
-        ssh_instance.setup_slurm_rest_tunnel.return_value = 6820
         ssh_instance.fetch_remote_file.return_value = True
         ssh_instance.execute_remote_command.return_value = (0, "output", "")
         mock_ssh.return_value = ssh_instance
         
+<<<<<<< HEAD
         yield {"ssh": ssh_instance}
+=======
+        # Configure SLURM Deployer mock
+        slurm_instance = MagicMock()
+        slurm_instance.submit_job.return_value = {
+            "job_id": 12345,
+            "name": "test-job",
+            "state": "PENDING"
+        }
+        slurm_instance.get_job_status.return_value = {
+            "job_id": 12345,
+            "state": "RUNNING"
+        }
+        slurm_instance.list_jobs.return_value = []
+        slurm_instance.ssh_manager = ssh_instance
+        slurm_instance.token = "test-token-12345"
+        mock_slurm.return_value = slurm_instance
+        
+        yield {"ssh": ssh_instance, "slurm": slurm_instance}
+>>>>>>> dev
 
 
 @pytest.fixture
@@ -48,7 +67,6 @@ def mock_ssh_manager():
         mock_instance.ssh_host = "test_host"
         mock_instance.ssh_port = 22
         mock_instance.get_slurm_token.return_value = "test-token"
-        mock_instance.setup_slurm_rest_tunnel.return_value = 6820
         mock_instance.fetch_remote_file.return_value = True
         mock_instance.execute_remote_command.return_value = (0, "output", "")
         mock.return_value = mock_instance

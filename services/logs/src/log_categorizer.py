@@ -115,14 +115,16 @@ class LogCategorizer:
             relative_path = log_file.relative_to(self.source_dir)
             dest_file = self.categorized_dir / category / relative_path
             
-            # Copy file to categorized location
+            # Create symlink in categorized location
             try:
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(log_file, dest_file)
+                if dest_file.exists() or dest_file.is_symlink():
+                    dest_file.unlink()
+                dest_file.symlink_to(log_file)
                 stats[category] += 1
-                self.logger.debug(f"Categorized {log_file.name} -> {category}")
+                self.logger.debug(f"Categorized {log_file.name} -> {category} (symlink)")
             except Exception as e:
-                self.logger.error(f"Failed to copy {log_file} to {dest_file}: {e}")
+                self.logger.error(f"Failed to link {log_file} to {dest_file}: {e}")
         
         # Log summary
         total = sum(stats.values())
