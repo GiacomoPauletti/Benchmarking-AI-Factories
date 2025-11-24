@@ -163,6 +163,37 @@ class TestOrchestratorInternalAPI:
         assert groups[0]["id"] == "sg-123"
         mock_core_orchestrator.list_service_groups.assert_called_once()
 
+    def test_get_service_group_status(self, client, mock_core_orchestrator):
+        """Internal service group status endpoint should surface orchestrator summary"""
+        mock_core_orchestrator.get_service_group_status.return_value = {
+            "group_id": "sg-1",
+            "overall_status": "healthy"
+        }
+
+        response = client.get("/api/service-groups/sg-1/status")
+
+        assert response.status_code == 200
+        assert response.json()["overall_status"] == "healthy"
+        mock_core_orchestrator.get_service_group_status.assert_called_once_with("sg-1")
+
+    def test_get_service_group_status_not_found(self, client, mock_core_orchestrator):
+        """Internal service group status returns 404 when orchestrator has no group"""
+        mock_core_orchestrator.get_service_group_status.return_value = None
+
+        response = client.get("/api/service-groups/missing/status")
+
+        assert response.status_code == 404
+
+    def test_stop_service_group(self, client, mock_core_orchestrator):
+        """Stopping a service group should call orchestrator.stop_service_group"""
+        mock_core_orchestrator.stop_service_group.return_value = {"status": "success"}
+
+        response = client.post("/api/service-groups/sg-1/stop")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_core_orchestrator.stop_service_group.assert_called_once_with("sg-1")
+
     def test_forward_completion(self, client, mock_core_orchestrator):
         """Test completion request forwarding to vLLM via data plane"""
         # Mock the vLLM service wrapper
@@ -202,3 +233,87 @@ class TestOrchestratorInternalAPI:
         assert len(recipes) == 1
         assert recipes[0]["name"] == "vllm"
         mock_core_orchestrator.list_recipes.assert_called_once()
+
+    def test_vector_db_listing(self, client, mock_core_orchestrator):
+        """Vector DB discovery endpoint should call qdrant_service.find_services"""
+        mock_core_orchestrator.qdrant_service.find_services.return_value = [
+            {"id": "qdrant-1", "status": "running"}
+        ]
+
+        response = client.get("/api/services/vector-db")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["vector_db_services"][0]["id"] == "qdrant-1"
+        mock_core_orchestrator.qdrant_service.find_services.assert_called_once()
+
+    def test_vector_db_collections(self, client, mock_core_orchestrator):
+        """Collections route should delegate to qdrant_service.get_collections"""
+        mock_core_orchestrator.qdrant_service.get_collections.return_value = {
+            "collections": ["docs"]
+        }
+
+        response = client.get("/api/services/vector-db/qdrant-1/collections")
+
+        assert response.status_code == 200
+        assert response.json()["collections"] == ["docs"]
+        mock_core_orchestrator.qdrant_service.get_collections.assert_called_once_with("qdrant-1", 5)
+
+    def test_vector_db_create_collection(self, client, mock_core_orchestrator):
+        """Collection creation should send vector size to qdrant service"""
+        mock_core_orchestrator.qdrant_service.create_collection.return_value = {"success": True}
+
+        response = client.put(
+            "/api/services/vector-db/qdrant-1/collections/new",
+            json={"vector_size": 384}
+        )
+
+        assert response.status_code == 200
+        mock_core_orchestrator.qdrant_service.create_collection.assert_called_once_with(
+            "qdrant-1", "new", 384, "Cosine", 10
+        )
+
+    def test_management_configure_load_balancer(self, client, mock_core_orchestrator):
+        """Management configure route should invoke orchestrator.configure_load_balancer"""
+        mock_core_orchestrator.configure_load_balancer.return_value = {
+            "status": "configured",
+            "strategy": "least_loaded"
+        }
+
+        response = client.post("/api/configure", params={"strategy": "least_loaded"})
+
+        assert response.status_code == 200
+        assert response.json()["strategy"] == "least_loaded"
+        mock_core_orchestrator.configure_load_balancer.assert_called_once_with("least_loaded")
+
+    def test_management_metrics(self, client, mock_core_orchestrator):
+        """Management metrics endpoint should return orchestrator metrics blob"""
+        mock_core_orchestrator.get_metrics.return_value = {"global": {"total_requests": 5}}
+
+        response = client.get("/api/metrics")
+
+        assert response.status_code == 200
+        assert response.json()["global"]["total_requests"] == 5
+        mock_core_orchestrator.get_metrics.assert_called_once()
+
+    def test_service_metrics_plain_text(self, client, mock_core_orchestrator):
+        """Internal metrics endpoint should return Prometheus text when successful"""
+        mock_core_orchestrator.get_service_metrics.return_value = {
+            "success": True,
+            "metrics": "# TYPE requests_total counter"
+        }
+
+        response = client.get("/api/services/svc-1/metrics")
+
+        assert response.status_code == 200
+        assert response.text.startswith("# TYPE")
+        assert response.headers["content-type"].startswith("text/plain")
+
+    def test_client_completions_runtime_error(self, client, mock_core_orchestrator):
+        """Client completion route should map orchestrator runtime errors to HTTP"""
+        mock_core_orchestrator.forward_completion.side_effect = RuntimeError("No healthy vLLM services available")
+
+        response = client.post("/v1/completions", json={"prompt": "hi"})
+
+        assert response.status_code == 503
+        assert "No healthy" in response.json()["detail"]

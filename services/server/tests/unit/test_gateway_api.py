@@ -302,6 +302,185 @@ class TestGatewayAPI:
         assert data["success"] is True
         assert "gpt2" in data["models"]
     
+    def test_get_service_targets(self, mock_proxy, client):
+        """Service targets endpoint should emit Prometheus discovery format"""
+        mock_proxy.list_services.return_value = [
+            {"id": "svc-1", "recipe_name": "inference/vllm", "status": "running"}
+        ]
+
+        response = client.get("/api/v1/services/targets")
+
+        assert response.status_code == 200
+        targets = response.json()
+        assert targets[0]["targets"] == ["svc-1"]
+        assert targets[0]["labels"]["status"] == "running"
+        mock_proxy.list_services.assert_called_once()
+
+    def test_get_service_group_status(self, mock_proxy, client):
+        """Service-group status should proxy orchestrator summary"""
+        mock_proxy.get_service_group_status.return_value = {
+            "group_id": "sg-1",
+            "overall_status": "healthy"
+        }
+
+        response = client.get("/api/v1/service-groups/sg-1/status")
+
+        assert response.status_code == 200
+        assert response.json()["overall_status"] == "healthy"
+        mock_proxy.get_service_group_status.assert_called_once_with("sg-1")
+
+    def test_get_service_group_status_not_found(self, mock_proxy, client):
+        """Service-group status returns 404 when orchestrator has no record"""
+        mock_proxy.get_service_group_status.return_value = None
+
+        response = client.get("/api/v1/service-groups/sg-missing/status")
+
+        assert response.status_code == 404
+        assert "sg-missing" in response.json()["detail"]
+
+    def test_get_service_metrics_vllm(self, mock_proxy, client):
+        """Service metrics route should return text when vLLM metrics succeed"""
+        mock_proxy.get_service.return_value = {
+            "id": "svc-1",
+            "recipe_name": "inference/vllm-single-node"
+        }
+        mock_proxy.get_vllm_metrics.return_value = {
+            "success": True,
+            "metrics": "# HELP\nmetric 1"
+        }
+
+        response = client.get("/api/v1/services/svc-1/metrics")
+
+        assert response.status_code == 200
+        assert "metric" in response.text
+        assert response.headers["content-type"].startswith("text/plain")
+        mock_proxy.get_vllm_metrics.assert_called_once_with("svc-1")
+
+    def test_get_service_metrics_qdrant(self, mock_proxy, client):
+        """Service metrics route should handle vector DB recipes"""
+        mock_proxy.get_service.return_value = {
+            "id": "svc-2",
+            "recipe_name": "vector-db/qdrant"
+        }
+        mock_proxy.get_qdrant_metrics.return_value = {
+            "success": True,
+            "metrics": "# TYPE qdrant"
+        }
+
+        response = client.get("/api/v1/services/svc-2/metrics")
+
+        assert response.status_code == 200
+        assert "qdrant" in response.text
+        mock_proxy.get_qdrant_metrics.assert_called_once_with("svc-2")
+
+    def test_get_service_metrics_unsupported_recipe(self, mock_proxy, client):
+        """Service metrics returns 400 for unknown recipes"""
+        mock_proxy.get_service.return_value = {
+            "id": "svc-3",
+            "recipe_name": "monitoring/prometheus"
+        }
+
+        response = client.get("/api/v1/services/svc-3/metrics")
+
+        assert response.status_code == 400
+        assert "Metrics not available" in response.json()["detail"]
+
+    def test_generic_metrics_success(self, mock_proxy, client):
+        """Generic metrics endpoint should emit Prometheus text on success"""
+        mock_proxy.get_service_metrics.return_value = {
+            "success": True,
+            "metrics": "# TYPE requests_total counter"
+        }
+
+        response = client.get("/api/v1/metrics/svc-99")
+
+        assert response.status_code == 200
+        assert "requests_total" in response.text
+        mock_proxy.get_service_metrics.assert_called_once_with("svc-99")
+
+    def test_generic_metrics_error(self, mock_proxy, client):
+        """Generic metrics endpoint surfaces orchestrator errors"""
+        mock_proxy.get_service_metrics.return_value = {
+            "success": False,
+            "error": "Not found",
+            "status_code": 404
+        }
+
+        response = client.get("/api/v1/metrics/missing")
+
+        assert response.status_code == 404
+        assert "Not found" in response.json()["detail"]
+
+    def test_list_vector_db_services(self, mock_proxy, client):
+        """List vector DB services should proxy orchestrator discovery"""
+        mock_proxy.find_vector_db_services.return_value = [{"id": "qdrant-1"}]
+
+        response = client.get("/api/v1/vector-db/services")
+
+        assert response.status_code == 200
+        assert response.json()["vector_db_services"][0]["id"] == "qdrant-1"
+        mock_proxy.find_vector_db_services.assert_called_once()
+
+    def test_get_vector_db_collections(self, mock_proxy, client):
+        """Collections endpoint should call orchestrator helper"""
+        mock_proxy.get_collections.return_value = {"collections": ["docs"]}
+
+        response = client.get("/api/v1/vector-db/qdrant-1/collections")
+
+        assert response.status_code == 200
+        assert response.json()["collections"] == ["docs"]
+        mock_proxy.get_collections.assert_called_once_with("qdrant-1")
+
+    def test_create_vector_db_collection_requires_vector_size(self, client):
+        """Creating a collection without vector_size should 400"""
+        response = client.put(
+            "/api/v1/vector-db/qdrant-1/collections/new",
+            json={"distance": "Cosine"}
+        )
+
+        assert response.status_code == 400
+        assert "vector_size" in response.json()["detail"]
+
+    def test_upsert_points_validates_payload(self, client):
+        """Upsert endpoint should enforce non-empty point list"""
+        response = client.put(
+            "/api/v1/vector-db/qdrant-1/collections/docs/points",
+            json={"points": []}
+        )
+
+        assert response.status_code == 400
+        assert "points" in response.json()["detail"]
+
+    def test_search_points_requires_query_vector(self, client):
+        """Search endpoint validates query vector"""
+        response = client.post(
+            "/api/v1/vector-db/qdrant-1/collections/docs/points/search",
+            json={"limit": 5}
+        )
+
+        assert response.status_code == 400
+        assert "query_vector" in response.json()["detail"]
+
+    def test_orchestrator_endpoint(self, mock_proxy, client):
+        """Orchestrator endpoint should surface URL when available"""
+        mock_proxy.get_orchestrator_url.return_value = "http://meluxina:8003"
+
+        response = client.get("/api/v1/orchestrator/endpoint")
+
+        assert response.status_code == 200
+        assert response.json()["endpoint"].startswith("http://meluxina")
+
+    @patch('api.routes.get_architecture_info')
+    def test_list_available_vllm_models(self, mock_arch, client):
+        """Available models endpoint relays architecture catalog"""
+        mock_arch.return_value = {"supported_architectures": {"text-generation": ["LlamaForCausalLM"]}}
+
+        response = client.get("/api/v1/vllm/available-models")
+
+        assert response.status_code == 200
+        assert "supported_architectures" in response.json()
+        mock_arch.assert_called_once()
+
     def test_list_service_groups(self, mock_proxy, client):
         """Test listing service groups"""
         mock_proxy.list_service_groups.return_value = [

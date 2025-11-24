@@ -42,28 +42,36 @@ logger = logging.getLogger(__name__)
 def cleanup_logs():
     """Clean up synced logs on service shutdown."""
     log_dir = "/app/logs"
-    logger.info(f"Cleaning up logs in {log_dir}...")
-    
+    # Avoid using the module logger here because the logging system may have
+    # already been torn down at interpreter exit (handlers closed). Use
+    # stdout/stderr prints as a safe fallback to avoid "I/O operation on closed file.".
     try:
+        print(f"[cleanup] Cleaning up logs in {log_dir}...", file=sys.stderr)
+
         # Remove all loadgen log files
         for pattern in ["loadgen-*.out", "loadgen-*.err", "loadgen-*-container.log", "loadgen-results-*.json"]:
             for file in glob.glob(os.path.join(log_dir, pattern)):
                 try:
                     os.remove(file)
-                    logger.debug(f"Removed {file}")
+                    print(f"[cleanup] Removed {file}", file=sys.stderr)
                 except Exception as e:
-                    logger.warning(f"Could not remove {file}: {e}")
-        
+                    print(f"[cleanup] Could not remove {file}: {e}", file=sys.stderr)
+
         # Remove snapshot directories
         snapshots_dir = os.path.join(log_dir, "snapshots")
         if os.path.exists(snapshots_dir):
             import shutil
             shutil.rmtree(snapshots_dir, ignore_errors=True)
-            logger.debug(f"Removed {snapshots_dir}")
-        
-        logger.info("Log cleanup complete")
+            print(f"[cleanup] Removed {snapshots_dir}", file=sys.stderr)
+
+        print("[cleanup] Log cleanup complete", file=sys.stderr)
     except Exception as e:
-        logger.error(f"Error during log cleanup: {e}")
+        # Best-effort: avoid calling logger here since handlers may be closed.
+        try:
+            print(f"[cleanup] Error during log cleanup: {e}", file=sys.stderr)
+        except Exception:
+            # Nothing else we can do during shutdown
+            pass
 
 # Register cleanup handler
 atexit.register(cleanup_logs)

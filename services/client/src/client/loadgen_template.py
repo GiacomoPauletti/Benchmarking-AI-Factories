@@ -35,7 +35,6 @@ async def send_request(session, prompt, config):
 
         # vLLM /v1/completions or orchestrator proxy payload
         payload = {
-            "model": config.get("model", "facebook/opt-125m"),
             "prompt": prompt,
             "max_tokens": config.get("max_tokens", 100),
             "temperature": config.get("temperature", 0.7)

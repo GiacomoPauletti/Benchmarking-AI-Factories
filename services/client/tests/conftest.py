@@ -11,6 +11,9 @@ import sys
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
+from fastapi.testclient import TestClient
+from main import app
+
 # Add src to path so tests can import modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -18,11 +21,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 @pytest.fixture(autouse=True)
 def mock_ssh_and_slurm():
     """
-    Auto-use fixture that mocks SSH and SLURM for ALL tests.
-    This prevents tests from trying to make real SSH connections.
+    Auto-use fixture that mocks the SSH manager used by the SLURM dispatcher.
+    This prevents tests from making real SSH connections while allowing
+    tests that import the real `ssh_manager.SSHManager` class to exercise
+    its behavior explicitly when needed.
     """
-    with patch('client_service.ssh_manager.SSHManager') as mock_ssh:
-        
+    # Patch the SSHManager used by the dispatcher so that
+    # SlurmClientDispatcher instantiations in tests use a mock.
+    with patch('deployment.client_dispatcher.SSHManager') as mock_ssh:
         # Configure SSH Manager mock
         ssh_instance = MagicMock()
         ssh_instance.ssh_user = "testuser"
@@ -38,20 +44,23 @@ def mock_ssh_and_slurm():
         ssh_instance.create_remote_directory.return_value = True
         ssh_instance.sync_directory_to_remote.return_value = True
         mock_ssh.return_value = ssh_instance
-        
+
         yield {"ssh": ssh_instance}
 
 
 @pytest.fixture
 def mock_ssh_manager():
     """Mock SSHManager to avoid real SSH connections in tests."""
-    with patch('client_service.ssh_manager.SSHManager') as mock:
+    # Patch both the implementation and the dispatcher import so that
+    # the same mock instance is used whether code references
+    # `ssh_manager.SSHManager` or `deployment.client_dispatcher.SSHManager`.
+    with patch('ssh_manager.SSHManager') as mock_impl, patch('deployment.client_dispatcher.SSHManager') as mock:
         # Configure mock to return sensible defaults
         mock_instance = MagicMock()
-        mock_instance.ssh_user = "test_user"
-        mock_instance.ssh_host = "test_host"
+        mock_instance.ssh_user = "testuser"
+        mock_instance.ssh_host = "test.example.com"
         mock_instance.ssh_port = 22
-        mock_instance.ssh_target = "test_user@test_host"
+        mock_instance.ssh_target = "testuser@test.example.com"
         mock_instance.get_slurm_token.return_value = "test-token"
         mock_instance.setup_slurm_rest_tunnel.return_value = 6820
         mock_instance.fetch_remote_file.return_value = True
@@ -61,13 +70,14 @@ def mock_ssh_manager():
         mock_instance.create_remote_directory.return_value = True
         mock_instance.sync_directory_to_remote.return_value = True
         mock.return_value = mock_instance
+        mock_impl.return_value = mock_instance
         yield mock_instance
 
 
 @pytest.fixture
 def mock_slurm_dispatcher():
     """Mock SlurmClientDispatcher to avoid real SLURM API calls in tests."""
-    with patch('client_service.deployment.client_dispatcher.SlurmClientDispatcher') as mock:
+    with patch('deployment.client_dispatcher.SlurmClientDispatcher') as mock:
         mock_instance = MagicMock()
         mock_instance.dispatch.return_value = None
         mock_instance._submit_slurm_job_via_ssh.return_value = (True, {
@@ -101,7 +111,7 @@ def test_env():
 @pytest.fixture
 def mock_client_manager():
     """Mock ClientManager for testing."""
-    with patch('client_service.client_manager.client_manager.ClientManager') as mock:
+    with patch('client_manager.client_manager.ClientManager') as mock:
         mock_instance = MagicMock()
         mock_instance.add_client_group.return_value = 0  # OK status
         mock_instance.remove_client_group.return_value = None
@@ -125,3 +135,9 @@ def docker_compose_command():
         return ["docker", "compose"]
     except (subprocess.CalledProcessError, FileNotFoundError):
         return ["docker-compose"]
+
+
+@pytest.fixture
+def client():
+    """Module-level TestClient fixture for integration/stress tests."""
+    return TestClient(app)

@@ -200,6 +200,19 @@ class TestServiceOrchestratorCore:
             
         asyncio.run(run_test())
 
+    def test_list_services_refreshes_status(self, orchestrator, mock_service_manager, mock_slurm_client):
+        """list_services should refresh non-terminal statuses from SLURM"""
+        mock_service_manager.list_services.return_value = [
+            {"id": "svc-1", "status": "pending"}
+        ]
+        mock_slurm_client.get_job_status.return_value = "running"
+        orchestrator.service_manager = mock_service_manager
+
+        result = orchestrator.list_services()
+
+        assert result["services"][0]["status"] == "running"
+        mock_service_manager.update_service_status.assert_called_once_with("svc-1", "running")
+
     def test_start_replica_group(self, orchestrator, mock_slurm_client, mock_service_manager, mock_recipe_loader, mock_job_builder):
         """Test starting a replica group"""
         recipe_name = "test-replica-recipe"
@@ -244,6 +257,15 @@ class TestServiceOrchestratorCore:
         mock_slurm_client.cancel_job.assert_any_call("job1")
         mock_slurm_client.cancel_job.assert_any_call("job2")
 
+    def test_stop_service_group_missing(self, orchestrator, mock_service_manager):
+        """stop_service_group should return error when group not found"""
+        mock_service_manager.group_manager.get_group.return_value = None
+
+        result = orchestrator.stop_service_group("sg-missing")
+
+        assert result["status"] == "error"
+        assert "sg-missing" in result["message"]
+
     @pytest.mark.asyncio
     async def test_check_endpoint_healthy(self, orchestrator):
         """Test health check for healthy endpoint"""
@@ -272,6 +294,46 @@ class TestServiceOrchestratorCore:
         await orchestrator._check_endpoint(endpoint)
         
         assert endpoint.status == "unhealthy"
+
+    def test_get_service_group_status_counts(self, orchestrator, mock_service_manager):
+        """Group status summary should aggregate replica states"""
+        mock_service_manager.get_group_info.return_value = {"id": "sg-1"}
+        mock_service_manager.group_manager.get_all_replicas_flat.return_value = [
+            {"id": "r1", "status": "running"},
+            {"id": "r2", "status": "starting"},
+            {"id": "r3", "status": "failed"}
+        ]
+        orchestrator.service_manager = mock_service_manager
+
+        result = orchestrator.get_service_group_status("sg-1")
+
+        assert result["overall_status"] == "degraded"
+        assert result["healthy_replicas"] == 1
+        assert result["failed_replicas"] == 1
+
+    def test_get_service_group_status_not_found(self, orchestrator, mock_service_manager):
+        """Group status should return None when group info missing"""
+        mock_service_manager.get_group_info.return_value = None
+        orchestrator.service_manager = mock_service_manager
+
+        result = orchestrator.get_service_group_status("sg-unknown")
+
+        assert result is None
+
+    def test_get_service_metrics_not_ready(self, orchestrator, mock_service_manager):
+        """get_service_metrics should report pending services as unavailable"""
+        mock_service_manager.is_group.return_value = False
+        mock_service_manager.get_service.return_value = {
+            "id": "svc-1",
+            "recipe_name": "inference/vllm-single-node",
+            "status": "starting"
+        }
+        orchestrator.service_manager = mock_service_manager
+
+        result = orchestrator.get_service_metrics("svc-1")
+
+        assert result["success"] is False
+        assert "starting" in result["error"] or "starting" in result.get("message", "")
 
     def test_get_metrics(self, orchestrator):
         """Test getting aggregated metrics"""

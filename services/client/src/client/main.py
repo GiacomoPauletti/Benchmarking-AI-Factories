@@ -22,9 +22,7 @@ async def send_request(session, url, prompt, config):
             "max_tokens": config["max_tokens"],
             "temperature": config.get("temperature", 0.7)
         }}
-        if config.get("model"):
-            payload["model"] = config["model"]
-            
+        
         async with session.post(f"{{url}}/v1/completions", json=payload, timeout=60) as resp:
             latency = (time.time() - start) * 1000
             if resp.status == 200:
@@ -62,8 +60,7 @@ async def run_load_test():
         "duration_seconds": {self._load_config['duration_seconds']},
         "prompts": {prompts_json},
         "max_tokens": {self._load_config.get('max_tokens', 100)},
-        "temperature": {self._load_config.get('temperature', 0.7)},
-        "model": {json.dumps(self._load_config.get('model'))}
+        "temperature": {self._load_config.get('temperature', 0.7)}
     }}
     
     print(f"Starting load test with {{config['num_clients']}} clients")
