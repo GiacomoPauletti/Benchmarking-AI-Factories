@@ -12,7 +12,7 @@ This script demonstrates the basic workflow:
 import requests
 import time
 import os
-from utils.server_utils import wait_for_server, wait_for_service_ready
+from utils.utils import wait_for_server, wait_for_service_ready
 
 
 def main():
@@ -51,7 +51,9 @@ def main():
         print(f"Service created with ID: {service_id}")
         
         # Step 3: Wait for service to be ready
-        if not wait_for_service_ready(server_url, service_id):
+        endpoint_path = wait_for_service_ready(server_url, service_id, max_wait=3000)
+        if not endpoint_path:
+            print("[-] Service did not become ready")
             return
         
         # Step 4: Prepare and send a prompt
@@ -59,7 +61,7 @@ def main():
         print(f"\n Sending prompt: '{prompt}'")
         
         response = requests.post(
-            f"{api_base}/vllm/{service_id}/prompt",
+            f"{server_url}{endpoint_path}/prompt",
             json={
                 "prompt": prompt,
                 "max_tokens": 100,

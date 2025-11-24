@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLIENT_DIR="$SCRIPT_DIR/.."
 TESTS_DIR="$SCRIPT_DIR"
 SRC_DIR="$CLIENT_DIR/src"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Function to print colored output
 print_status() {
@@ -57,6 +58,7 @@ OPTIONS:
     --pattern PATTERN   Run only tests matching pattern
     --container         Run tests in Apptainer container (includes integration tests)
     --integration       Run integration tests only (requires services)
+    --skip-integration  Skip tests marked as integration (for container mode)
 
 EXAMPLES:
     $0                              # Run all unit tests locally
@@ -64,6 +66,7 @@ EXAMPLES:
     $0 --coverage                   # Run tests with coverage report
     $0 --container                  # Run all tests in container (unit + integration)
     $0 --integration                # Run integration tests only
+    $0 --skip-integration           # Run tests but skip integration-marked tests
     $0 --module client              # Run only client module tests
     $0 --module client_service      # Run only client_service module tests
     $0 --pattern "*test_client*"    # Run tests matching pattern
@@ -155,53 +158,39 @@ run_module_tests() {
     local failfast=$4
     local pattern=$5
     
-    local test_path=""
-    local module_name=""
-    
-    case $module in
-        "client")
-            test_path="$TESTS_DIR/client"
-            module_name="Client Core Components"
-            ;;
-        "client.api")
-            test_path="$TESTS_DIR/client/api"
-            module_name="Client API Components"
-            ;;
-        "client_service")
-            test_path="$TESTS_DIR/client_service"
-            module_name="Client Service Components"
-            ;;
-        "client_service.api")
-            test_path="$TESTS_DIR/client_service/api"
-            module_name="Client Service API Components"
-            ;;
-        "client_service.client_manager")
-            test_path="$TESTS_DIR/client_service/client_manager"
-            module_name="Client Manager Components"
-            ;;
-        "client_service.deployment")
-            test_path="$TESTS_DIR/client_service/deployment"
-            module_name="Deployment Components"
-            ;;
-        "main")
-            test_path="$TESTS_DIR/test_main.py"
-            module_name="Main Application"
-            ;;
-        "integration")
-            test_path="$TESTS_DIR/integration"
-            module_name="Integration Tests"
-            ;;
-        *)
-            print_error "Unknown module: $module"
-            print_warning "Use --list-modules to see available modules"
-            exit 1
-            ;;
-    esac
-    
-    if [[ ! -e "$test_path" ]]; then
-        print_error "Test path not found: $test_path"
+    # Always use flat-file testing mode: map module names to test file patterns
+    local module_short="${module##*.}"
+    local module_underscored="${module//./_}"
+    local module_plain="${module//./-}"
+
+    # Candidate patterns to search for matching test files (ordered)
+    candidates=(
+        "$TESTS_DIR/test_${module_short}.py"
+        "$TESTS_DIR/test_${module_underscored}.py"
+        "$TESTS_DIR/*${module_short}*.py"
+        "$TESTS_DIR/*${module_underscored}*.py"
+        "$TESTS_DIR/*${module_plain}*.py"
+        "$TESTS_DIR/${module_underscored}.py"
+    )
+
+    found_files=()
+    for p in "${candidates[@]}"; do
+        for f in $p; do
+            if [[ -f "$f" ]]; then
+                found_files+=("$f")
+            fi
+        done
+    done
+
+    if [[ ${#found_files[@]} -eq 0 ]]; then
+        print_error "No flat test files found for module: $module"
+        print_error "Tried patterns: ${candidates[*]}"
         return 1
     fi
+
+    test_path="${found_files[*]}"
+    module_name="Flat-file test mode (${module})"
+    print_status "Found flat test files for module '$module': $test_path"
     
     # Special handling for integration tests
     if [[ "$module" == "integration" ]]; then
@@ -213,7 +202,7 @@ run_module_tests() {
     print_status "Running tests for: $module_name"
     
     # Build Python command using pytest for better compatibility
-    local python_cmd="python3 -m pytest \"$test_path\""
+    local python_cmd="python3 -m pytest $test_path"
     
     if [[ "$verbose" == "true" ]]; then
         python_cmd="$python_cmd -v"
@@ -313,111 +302,42 @@ run_all_tests() {
 
 # Function to run tests in container
 run_container_tests() {
-    print_status "Running tests in Apptainer container..."
-    print_warning "This will build a container and request Slurm resources"
-    
-    # Check if we have the container definition
-    local container_def="$TESTS_DIR/test-container.def"
-    if [[ ! -f "$container_def" ]]; then
-        print_error "Container definition not found: $container_def"
-        print_error "Make sure test-container.def exists in $TESTS_DIR"
+    print_status "Running tests using docker compose (docker-compose.test.yml)..."
+
+    # Ensure docker compose is available
+    if ! command -v docker &> /dev/null; then
+        print_error "docker not found. Please install Docker to run container tests."
         return 1
     fi
-    
-    print_status "Starting container-based testing..."
-    print_status "This will:"
-    print_status "  1. Build test container with Apptainer"
-    print_status "  2. Request Slurm compute resources"
-    print_status "  3. Run unit tests in container"
-    print_status "  4. Start client service and mock AI server"
-    print_status "  5. Run integration tests"
-    print_status "  6. Generate coverage reports"
-    print_status "  7. Clean up services"
-    
-    # Run container tests using salloc
-    print_status "Requesting Slurm compute resources..."
-    
-    # Find the project root (Benchmarking-AI-Factories directory)
-    # SCRIPT_DIR is /path/to/Benchmarking-AI-Factories/services/client/tests
-    # We need /path/to/Benchmarking-AI-Factories
-    PROJECT_ROOT=$(dirname $(dirname $(dirname "$SCRIPT_DIR")))
+
+    # Use the project root and docker-compose.test.yml to run the client-test service
     print_status "Project root: $PROJECT_ROOT"
-    print_status "Client directory: $CLIENT_DIR"
-    
-    # Change to client directory for container operations
-    cd "$CLIENT_DIR"
-    
-    if salloc -A p200981 -t 00:30:00 -p cpu -q short -N 1 --ntasks-per-node=1 --mem=8G << EOF
-        
-        # Load required modules
-        module load env/release/2023.1
-        module load Apptainer/1.2.4-GCCcore-12.3.0 || { 
-            echo "ERROR: Apptainer module not available"; 
-            exit 1; 
-        }
-        
-        # Check for existing container first
-        echo "Checking for existing container..."
-        cd tests
-        
-        if [ -f test-container.sif ]; then
-            echo "Using existing container: test-container.sif"
-            echo "Container size: \$(ls -lh test-container.sif | awk '{print \$5}')"
-        else
-            echo "Building new client test container..."
-            # Try to build container (first without fakeroot, then with if needed)
-            if apptainer build --force test-container.sif test-container.def 2>/dev/null; then
-                echo "Container built successfully (without fakeroot)"
-            elif apptainer build --fakeroot --force test-container.sif test-container.def; then
-                echo "Container built successfully (with fakeroot)"
-            else
-                echo "Container build failed with both methods"
-                echo "Check network connectivity and Apptainer configuration"
-                exit 1
-            fi
-        fi
-        
-        # Navigate back to client directory
-        cd ..
-        
-        # Get SLURM JWT token
-        echo "Getting SLURM JWT token..."
-        export SLURM_JWT=\$(scontrol token | grep SLURM_JWT | cut -d= -f2)
-        echo "Token obtained: \${SLURM_JWT:0:20}..."
-        
-        # Change to project root for proper binding
-        cd "$PROJECT_ROOT"
-        echo "Running container from: \$(pwd)"
-        echo "Binding \$(pwd) to /app"
-        
-        # Run the container with proper bindings (project root -> /app)
-        if apptainer run \
-            --env SLURM_JWT="\${SLURM_JWT}" \
-            --env CLIENT_SERVICE_HOST="localhost" \
-            --env CLIENT_SERVICE_PORT="8001" \
-            --env AI_SERVER_HOST="localhost" \
-            --env AI_SERVER_PORT="8000" \
-            --bind "\$(pwd):/app" \
-            services/client/tests/test-container.sif; then
-            echo "All client tests passed!"
-        else
-            echo "Client tests failed!"
-            exit 1
-        fi
-        
-EOF
-    then
+
+    # Compose file path
+    local dc_file="$PROJECT_ROOT/docker-compose.test.yml"
+    if [[ ! -f "$dc_file" ]]; then
+        print_error "docker-compose test file not found: $dc_file"
+        return 1
+    fi
+
+    print_status "Starting docker-compose service: client-test"
+
+    # Run the client-test service defined in the compose file
+    # Allow skipping integration-marked tests when requested
+    local pytest_marker_args=""
+    if [[ "$SKIP_INTEGRATION" == "true" ]]; then
+        pytest_marker_args="-m 'not integration'"
+    fi
+
+    if docker compose -f "$dc_file" run --rm \
+        -e TESTING=true \
+        client-test \
+        bash -c "cd /app && pip install -q -r requirements-dev.txt && python -m pytest tests/ $pytest_marker_args -v --tb=short --color=yes"; then
         print_success "Container tests completed successfully!"
-        print_status "Check test logs:"
-        print_status "  - Unit tests: $TESTS_DIR/unit-test.log"
-        print_status "  - Integration tests: $TESTS_DIR/integration-test.log"
-        print_status "  - Coverage: $TESTS_DIR/htmlcov/index.html"
         return 0
     else
-        print_error "Container tests failed!"
-        print_status "Check logs for details:"
-        print_status "  - Unit tests: $TESTS_DIR/unit-test.log"
-        print_status "  - Integration tests: $TESTS_DIR/integration-test.log"
+        print_error "Container tests failed or 'client-test' service not defined in $dc_file"
+        print_status "Check $dc_file to ensure a 'client-test' service is configured similar to the server's compose file"
         return 1
     fi
 }
@@ -477,6 +397,7 @@ FAILFAST="false"
 PATTERN=""
 CONTAINER="false"
 INTEGRATION="false"
+SKIP_INTEGRATION="false"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -514,6 +435,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --integration)
             INTEGRATION="true"
+            shift
+            ;;
+        --skip-integration)
+            SKIP_INTEGRATION="true"
             shift
             ;;
         *)

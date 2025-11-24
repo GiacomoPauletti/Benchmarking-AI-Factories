@@ -18,11 +18,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 @pytest.fixture(autouse=True)
 def mock_ssh_and_slurm():
     """
-    Auto-use fixture that mocks SSH and SLURM for ALL tests.
+    Auto-use fixture that mocks SSH for ALL tests.
     This prevents tests from trying to make real SSH connections.
     """
-    with patch('src.ssh_manager.SSHManager') as mock_ssh, \
-         patch('src.slurm.SlurmDeployer') as mock_slurm:
+    # We patch ssh_manager.SSHManager because src is in sys.path
+    with patch('ssh_manager.SSHManager') as mock_ssh:
         
         # Configure SSH Manager mock
         ssh_instance = MagicMock()
@@ -34,6 +34,9 @@ def mock_ssh_and_slurm():
         ssh_instance.execute_remote_command.return_value = (0, "output", "")
         mock_ssh.return_value = ssh_instance
         
+<<<<<<< HEAD
+        yield {"ssh": ssh_instance}
+=======
         # Configure SLURM Deployer mock
         slurm_instance = MagicMock()
         slurm_instance.submit_job.return_value = {
@@ -51,12 +54,13 @@ def mock_ssh_and_slurm():
         mock_slurm.return_value = slurm_instance
         
         yield {"ssh": ssh_instance, "slurm": slurm_instance}
+>>>>>>> dev
 
 
 @pytest.fixture
 def mock_ssh_manager():
     """Mock SSHManager to avoid real SSH connections in tests."""
-    with patch('src.ssh_manager.SSHManager') as mock:
+    with patch('ssh_manager.SSHManager') as mock:
         # Configure mock to return sensible defaults
         mock_instance = MagicMock()
         mock_instance.ssh_user = "test_user"
@@ -69,23 +73,7 @@ def mock_ssh_manager():
         yield mock_instance
 
 
-@pytest.fixture
-def mock_slurm_deployer():
-    """Mock SlurmDeployer to avoid real SLURM API calls in tests."""
-    with patch('src.slurm.SlurmDeployer') as mock:
-        mock_instance = MagicMock()
-        mock_instance.submit_job.return_value = {
-            "job_id": 12345,
-            "name": "test-job",
-            "state": "PENDING"
-        }
-        mock_instance.get_job_status.return_value = {
-            "job_id": 12345,
-            "state": "RUNNING"
-        }
-        mock_instance.list_jobs.return_value = []
-        mock.return_value = mock_instance
-        yield mock_instance
+
 
 
 @pytest.fixture

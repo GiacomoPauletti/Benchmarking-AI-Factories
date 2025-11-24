@@ -1,0 +1,37 @@
+Server:
+    MAIN:
+    - Response list recipes. Variable/Key - possible values
+    - Add more unit/api tests to orchestrator. 
+    - Test multi-node replicas.
+    - Organize docs and add more details about architecture, orchestrator design decision.
+    - Delete all files in meluxina. Then restart server to see if everything works smoothly.
+
+    Optional:
+    - VLLMEndpoint, LoadBalancer, register/unregister, forward_completion, and health checking are vllm_service specific. Refactor?
+    - Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.
+    - Create proper CI pipeline with actions: 
+        - build: docker image with python code, etc.. is built. 
+        - test: docker image is passed into test environment. Runs and must pass specific tests.
+
+
+    Things to Benchmark:
+    vllm:
+    - tokens/sec
+    - uptime seconds
+    - process memory usage 
+    - number of models currently loaded
+    - names of models currently loaded
+
+    vector-db: 
+    - example datasets from huggingface
+    - queries per second 
+    - latency per vector search
+    - time to build or update index
+    - number of loaded collections 
+    - recall ()
+
+
+Client:
+
+
+Logs: 
