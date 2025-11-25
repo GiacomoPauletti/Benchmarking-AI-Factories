@@ -184,8 +184,21 @@ async def stop_service_group(group_id: str, orchestrator = Depends(get_orchestra
     """
     try:
         result = orchestrator.stop_service_group(group_id)
+        
+        # Handle not found gracefully - if already stopped, return success
         if not result.get("success"):
-            raise HTTPException(status_code=404, detail=result.get("error", "Service group not found"))
+            error_msg = result.get("error", "Service group not found")
+            # If the group doesn't exist, it's already stopped - this is idempotent
+            if "not found" in error_msg.lower():
+                return {
+                    "success": True,
+                    "message": f"Service group {group_id} already stopped or does not exist",
+                    "group_id": group_id,
+                    "replicas_stopped": 0
+                }
+            # For other errors, return 500
+            raise HTTPException(status_code=500, detail=error_msg)
+        
         return result
     except HTTPException:
         raise

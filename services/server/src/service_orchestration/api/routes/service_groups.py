@@ -335,6 +335,28 @@ def create_router(orchestrator):
         **Recovery:** To restart a stopped group, you must create a new service group
         using the same recipe and configuration.
         """
-        return orchestrator.stop_service_group(group_id)
+        result = orchestrator.stop_service_group(group_id)
+        
+        # Normalize response format for consistency
+        # Orchestrator returns {"status": "error"|"success"|"partial", ...}
+        # Convert to {"success": bool, ...} format expected by clients
+        if isinstance(result, dict):
+            status = result.get("status")
+            if status == "error":
+                return {
+                    "success": False,
+                    "error": result.get("message", "Unknown error"),
+                    "group_id": group_id
+                }
+            elif status in ("success", "partial"):
+                return {
+                    "success": True,
+                    "message": result.get("message"),
+                    "group_id": result.get("group_id", group_id),
+                    "replicas_stopped": result.get("stopped", 0),
+                    "jobs_cancelled": list(result.get("stopped_jobs", [])) if "stopped_jobs" in result else []
+                }
+        
+        return result
     
     return router

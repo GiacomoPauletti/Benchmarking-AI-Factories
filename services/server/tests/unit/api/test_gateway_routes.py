@@ -12,13 +12,8 @@ Do NOT test business logic here - only HTTP <-> Proxy translation.
 """
 
 import pytest
-import sys
-from pathlib import Path
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
-
-# Add src to path
-sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
 from main import app
 from api.routes import get_orchestrator_proxy
@@ -271,7 +266,7 @@ class TestGatewayAPI:
         assert "Hello, this is a test response" in data["response"]
         mock_proxy.prompt_vllm_service.assert_called_once()
     
-    def test_prompt_vllm_missing_prompt(self, mock_proxy, client):
+    def test_prompt_vllm_missing_prompt(self, client):
         """Test vLLM prompt with missing prompt field"""
         response = client.post("/api/v1/vllm/vllm-123/prompt", json={})
         # FastAPI validation error - either 400 or 422

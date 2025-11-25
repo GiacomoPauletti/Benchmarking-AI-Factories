@@ -11,13 +11,8 @@ Do NOT test SLURM/business logic here - only Internal API <-> Core translation.
 """
 
 import pytest
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
-
-# Add src to path
-sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
 from service_orchestration.api import create_app
 

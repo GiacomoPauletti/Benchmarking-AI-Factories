@@ -38,12 +38,13 @@ def main():
     # Create FastAPI app with routes
     app = create_app(orchestrator)
     
+    orchestrator_port = int(os.getenv("ORCHESTRATOR_PORT", "8003"))
     # Run server with logging configuration
-    logger.info("Starting uvicorn server on 0.0.0.0:8003")
+    logger.info(f"Starting uvicorn server on 0.0.0.0:{orchestrator_port}")
     uvicorn.run(
         app, 
         host="0.0.0.0", 
-        port=8003,
+        port=orchestrator_port,
         log_config={
             "version": 1,
             "disable_existing_loggers": False,

@@ -84,91 +84,6 @@ services:
       server:
         condition: service_healthy
 
-  # Monitoring microservice tests
-  monitoring:
-    build:
-      context: ./services/monitoring
-      dockerfile: Dockerfile
-    container_name: benchmarking-ai-monitoring-live
-    ports:
-      - "8002:8002"
-    volumes:
-      - ./services/monitoring/src:/app/src
-      - ./services/monitoring/logs:/app/logs
-      - ./services/monitoring/state:/app/state
-      # Mount SSH agent socket for SLURM access
-      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
-    environment:
-      # Real SSH Configuration for MeluXina
-      - SSH_HOST=${SSH_HOST}
-      - SSH_PORT=${SSH_PORT}
-      - SSH_USER=${SSH_USER}
-      - SSH_KEY_PATH=${SSH_KEY_PATH}
-      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
-      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      - APP_LOG_DIR=/app/logs
-      - PYTHONPATH=/app/src
-      - PYTHONUNBUFFERED=1
-    env_file:
-      - .env
-    command: >
-      bash -c "
-      mkdir -p /app/logs /app/state &&
-      uvicorn src.main:app --host 0.0.0.0 --port 8002 --reload
-      "
-    networks:
-      - test-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-    depends_on:
-      server:
-        condition: service_healthy
-
-  monitoring-test:
-    build:
-      context: ./services/monitoring
-      dockerfile: Dockerfile
-    container_name: benchmarking-ai-monitoring-test
-    volumes:
-      # Mount source code
-      - ./services/monitoring/src:/app/src
-      # Mount tests directory
-      - ./services/monitoring/tests:/app/tests
-      # Mount test configuration
-      - ./services/monitoring/pytest.ini:/app/pytest.ini
-      - ./services/monitoring/requirements-dev.txt:/app/requirements-dev.txt
-    environment:
-      # Test environment variables
-      - SSH_HOST=${SSH_HOST}
-      - SSH_PORT=${SSH_PORT}
-      - SSH_USER=${SSH_USER}
-      - SSH_KEY_PATH=${SSH_KEY_PATH}
-      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
-      - LOG_LEVEL=DEBUG
-      - PYTHONPATH=/app/src
-      - TESTING=true
-    command: >
-      bash -c "
-      echo 'Waiting for monitoring service to be ready...' &&
-      sleep 5 &&
-      echo 'Installing test dependencies...' &&
-      pip install -q -r requirements-dev.txt &&
-      echo '' &&
-      echo 'Running tests...' &&
-      python -m pytest tests/ -v --tb=short --color=yes
-      "
-    networks:
-      - test-network
-    depends_on:
-      monitoring:
-        condition: service_healthy
-
-  # Client microservice tests
   client:
     build:
       context: ./services/client
@@ -216,48 +131,45 @@ services:
       client:
         condition: service_started
 
+  # Logs microservice (used by integration tests)
+  logs:
+    build:
+      context: ./services/logs
+      dockerfile: Dockerfile
+    container_name: benchmarking-ai-logs
+    ports:
+      - "8004:8004"  # Expose logs service API
+    volumes:
+      # Mount source code for hot-reload during development
+      - ./services/logs/src:/app/src
+      - ./services/logs/data:/app/data  # Persistent log storage
+      # Mount SSH keys from host (read-only)
+      - ${HOME}/.ssh:/tmp/host-ssh:ro
+    environment:
+      # SSH Configuration for MeluXina
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+
+      # Logs Service Configuration
+      - SYNC_INTERVAL=60  # Seconds between syncs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    networks:
+      - test-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
 networks:
   test-network:
     driver: bridge
 
-
-# # Logs microservice tests
-# logs:
-#   build:
-#     context: ./services/logs
-#     dockerfile: Dockerfile
-#   container_name: benchmarking-ai-logs-live
-#   volumes:
-#     - ./services/logs/src:/app/src
-#     - ./services/logs/logs:/app/logs
-#   environment:
-#     - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-#     - PYTHONPATH=/app/src
-#   networks:
-#     - test-network
-#   depends_on:
-#     server:
-#       condition: service_healthy
-#
-# logs-test:
-#   build:
-#     context: ./services/logs
-#     dockerfile: Dockerfile
-#   container_name: benchmarking-ai-logs-test
-#   volumes:
-#     - ./services/logs/src:/app/src
-#     - ./services/logs/tests:/app/tests
-#     - ./services/logs/pytest.ini:/app/pytest.ini
-#   environment:
-#     - PYTHONPATH=/app/src
-#     - TESTING=true
-#   command: >
-#     bash -c "
-#     pip install -q -r requirements-dev.txt &&
-#     python -m pytest tests/ -v --tb=short --color=yes
-#     "
-#   networks:
-#     - test-network
-#   depends_on:
-#     logs:
-#       condition: service_started

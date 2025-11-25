@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: vllm/vllm-openai:latest
+From: vllm/vllm-openai:v0.11.2
 
 %labels
     Description "Apptainer container for vLLM OpenAI-compatible API"

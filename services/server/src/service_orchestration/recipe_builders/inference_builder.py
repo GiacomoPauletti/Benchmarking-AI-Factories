@@ -7,6 +7,7 @@ This is a generic base builder for inference services. Recipe-specific builders
 can override methods to customize behavior (e.g., VllmInferenceBuilder).
 """
 
+import os
 from typing import Dict, Any
 from .base import RecipeScriptBuilder, ScriptPaths
 
@@ -25,6 +26,10 @@ class InferenceRecipeBuilder(RecipeScriptBuilder):
             remote_base_path: Base path on remote filesystem for persistent storage
         """
         self.remote_base_path = remote_base_path
+        self.apptainer_tmpdir_base = os.getenv("APPTAINER_TMPDIR_BASE", "/tmp/apptainer").rstrip("/")
+        self.apptainer_cachedir_base = os.getenv("APPTAINER_CACHEDIR_BASE", "/tmp/apptainer-cache").rstrip("/")
+        self.fake_home_base = os.getenv("REMOTE_FAKE_HOME_BASE", "/tmp/fake-home").rstrip("/")
+        self.remote_hf_cache_dirname = os.getenv("REMOTE_HF_CACHE_DIRNAME", "huggingface_cache").strip("/")
     
     def build_environment_section(self, recipe_env: Dict[str, str]) -> str:
         """Build environment variable exports for inference containers."""
@@ -49,15 +54,19 @@ class InferenceRecipeBuilder(RecipeScriptBuilder):
     
     def build_container_build_block(self, paths: ScriptPaths) -> str:
         """Build the container image build/check block."""
+        tmpdir = f"{self.apptainer_tmpdir_base}-$USER-$$"
+        cachedir = f"{self.apptainer_cachedir_base}-$USER"
+        fake_home = f"{self.fake_home_base}-$USER"
+
         return f"""
 # Build container if needed
-if ! apptainer inspect -a {paths.sif_path}; then
+if ! apptainer inspect --all {paths.sif_path}; then
     echo 'Building Apptainer image: {paths.sif_path}'
     
     # Set up user-writable directories to avoid permission issues
-    export APPTAINER_TMPDIR=/tmp/apptainer-$USER-$$
-    export APPTAINER_CACHEDIR=/tmp/apptainer-cache-$USER
-    export HOME=/tmp/fake-home-$USER
+    export APPTAINER_TMPDIR={tmpdir}
+    export APPTAINER_CACHEDIR={cachedir}
+    export HOME={fake_home}
     
     mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR $HOME/.apptainer
     
@@ -83,8 +92,8 @@ fi
     def build_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
                        recipe: Dict[str, Any]) -> str:
         """Build single-node container run block for inference."""
-        project_ws = paths.remote_base_path
-        hf_cache = f"{project_ws}/huggingface_cache"
+        project_ws = paths.remote_base_path.rstrip("/")
+        hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
         nv_flag = "--nv" if resources.get('gpu') else ""
         
         return f"""

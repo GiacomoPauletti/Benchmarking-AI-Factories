@@ -28,8 +28,8 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
             recipe: Recipe configuration
             config: Combined recipe + user config with gpu_per_replica, base_port, etc.
         """
-        project_ws = paths.remote_base_path
-        hf_cache = f"{project_ws}/huggingface_cache"
+        project_ws = paths.remote_base_path.rstrip("/")
+        hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
         nv_flag = "--nv" if resources.get("gpu") else ""
         
         # Read configuration

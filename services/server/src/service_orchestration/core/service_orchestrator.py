@@ -120,6 +120,7 @@ class ServiceOrchestrator:
         # Initialize job builder
         base_path = os.getenv("REMOTE_BASE_PATH", os.getcwd())
         self.job_builder = JobBuilder(base_path)
+        self.default_account = os.getenv("ORCHESTRATOR_ACCOUNT", "p200776")
         
         # Initialize helper utilities for service handlers
         recipes_dir = Path(base_path) / "src" / "recipes"
@@ -182,13 +183,14 @@ class ServiceOrchestrator:
     def start_service(self, recipe_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
         """Start a new service (job) or service group (replica group)"""
         try:
+            config = config or {}
             # Load recipe to check if it's a replica group
             recipe = self.recipe_loader.load(recipe_name)
             if not recipe:
                 raise ValueError(f"Recipe '{recipe_name}' not found")
             
             # Build job payload
-            account = "p200776"
+            account = config.get("account") or self.default_account
             build_result = self.job_builder.build_job(recipe_name, config, account)
             
             # Submit job - pass the complete payload with script and job

@@ -35,6 +35,8 @@ class JobBuilder:
         self.base_path = Path(base_path)
         self.recipes_dir = self.base_path / "src" / "recipes"
         self.logs_dir = self.base_path / "logs"
+        self.env_module = os.getenv("MELUXINA_ENV_MODULE", "env/release/2023.1")
+        self.apptainer_module = os.getenv("APPTAINER_MODULE", "Apptainer/1.2.4-GCCcore-12.3.0")
         
     def _find_recipe(self, recipe_name: str) -> Path:
         """Find recipe file by name."""
@@ -182,8 +184,8 @@ class JobBuilder:
             
         return f"""#!/bin/bash -l
 
-module load env/release/2023.1
-module load Apptainer/1.2.4-GCCcore-12.3.0
+    module load {self.env_module}
+    module load {self.apptainer_module}
 
 {env_section}
 

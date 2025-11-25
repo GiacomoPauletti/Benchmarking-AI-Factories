@@ -40,10 +40,12 @@ def create_app(orchestrator) -> FastAPI:
     
     app.include_router(management.create_router(orchestrator), prefix="/api", tags=["Management"])
     app.include_router(jobs.create_router(orchestrator), prefix="/api/jobs", tags=["Jobs"])
+    # Important: include data plane routes before services so static paths like /vector-db
+    # resolve before the dynamic /{service_id} routes declared in services.
+    app.include_router(data_plane.create_router(orchestrator), prefix="/api/services", tags=["Data Plane"])
     app.include_router(services.create_router(orchestrator), prefix="/api/services", tags=["Services"])
     app.include_router(service_groups.create_router(orchestrator), prefix="/api/service-groups", tags=["Service Groups"])
     app.include_router(recipes.create_router(orchestrator), prefix="/api/recipes", tags=["Recipes"])
-    app.include_router(data_plane.create_router(orchestrator), prefix="/api/services", tags=["Data Plane"])
     app.include_router(client.create_router(orchestrator), tags=["Client"])
     
     return app

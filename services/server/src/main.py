@@ -3,11 +3,17 @@ Main FastAPI application entry point for the Server Service.
 SLURM + Apptainer orchestration for AI workloads.
 """
 
+import asyncio
 import os
 import logging
 import signal
 import sys
-from fastapi import FastAPI
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
+
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 # Clean package imports
@@ -18,16 +24,74 @@ from orchestrator_initializer import initialize_orchestrator_proxy
 # Global logger and orchestrator proxy
 logger = None
 orchestrator_proxy = None
+orchestrator_monitor_task: Optional[asyncio.Task] = None
+
+
+@dataclass
+class OrchestratorHealthState:
+    """Lightweight shared state for orchestrator availability."""
+
+    alive: bool = False
+    last_check: Optional[str] = None
+    last_error: Optional[str] = "Orchestrator not initialized"
+
+
+orchestrator_health = OrchestratorHealthState()
+
+
+def _set_orchestrator_health(alive: bool, error: Optional[str] = None) -> None:
+    """Update orchestrator health state and log transitions."""
+
+    global orchestrator_health, logger
+
+    previous = orchestrator_health.alive
+    orchestrator_health.alive = alive
+    orchestrator_health.last_check = datetime.utcnow().isoformat() + "Z"
+    orchestrator_health.last_error = error
+
+    if logger and previous != alive:
+        if alive:
+            logger.info("Orchestrator marked healthy")
+        else:
+            logger.warning("Orchestrator marked unhealthy: %s", error)
+
+
+async def _orchestrator_monitor_loop(poll_interval: int = 10) -> None:
+    """Continuously poll orchestrator health endpoint."""
+
+    global orchestrator_proxy
+
+    while True:
+        try:
+            if orchestrator_proxy:
+                try:
+                    orchestrator_proxy.check_health()
+                    _set_orchestrator_health(True, None)
+                except Exception as exc:  # noqa: BLE001 - log unhealthy reason
+                    _set_orchestrator_health(False, str(exc))
+            else:
+                _set_orchestrator_health(False, "Orchestrator proxy not initialized")
+
+            await asyncio.sleep(poll_interval)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:  # noqa: BLE001
+            if logger:
+                logger.exception("Unexpected error in orchestrator monitor: %s", exc)
+            await asyncio.sleep(poll_interval)
+
 
 def shutdown_handler(signum, frame):
     """Handle graceful shutdown by stopping all running services and orchestrator."""
     global logger, orchestrator_proxy
-    
+
+    _set_orchestrator_health(False, f"Server received shutdown signal {signum}")
+
     if logger:
         logger.info(f"Received shutdown signal {signum}. Stopping all services...")
     else:
         print(f"Received shutdown signal {signum}. Stopping all services...")
-    
+
     try:
         # First, stop the orchestrator to prevent new jobs
         if orchestrator_proxy:
@@ -37,21 +101,21 @@ def shutdown_handler(signum, frame):
                 else:
                     print("Stopping orchestrator job...")
                 orchestrator_proxy.stop_orchestrator()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 if logger:
                     logger.error(f"Failed to stop orchestrator: {e}")
                 else:
                     print(f"Failed to stop orchestrator: {e}")
-        
+
         # Get all running services from orchestrator
         if orchestrator_proxy:
             services = orchestrator_proxy.list_services()
-            
+
             if logger:
                 logger.info(f"Found {len(services)} services to stop")
             else:
                 print(f"Found {len(services)} services to stop")
-            
+
             # Cancel each service
             for service in services:
                 service_id = service.get("id")
@@ -62,25 +126,23 @@ def shutdown_handler(signum, frame):
                     else:
                         print(f"Stopping service {service_id} ({service_name})...")
                     orchestrator_proxy.stop_service(service_id)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     if logger:
                         logger.error(f"Failed to stop service {service_id}: {e}")
                     else:
                         print(f"Failed to stop service {service_id}: {e}")
-        
+
         if logger:
             logger.info("All services stopped. Exiting...")
         else:
             print("All services stopped. Exiting...")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         if logger:
             logger.error(f"Error during shutdown: {e}")
         else:
             print(f"Error during shutdown: {e}")
-    
-    sys.exit(0)
 
-# Register shutdown handlers for SIGTERM and SIGINT
+    sys.exit(0)
 signal.signal(signal.SIGTERM, shutdown_handler)
 signal.signal(signal.SIGINT, shutdown_handler)
 
@@ -126,33 +188,40 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint - server is healthy but may not be ready."""
+    """Health check endpoint - returns degraded if orchestrator is down."""
     global orchestrator_proxy
-    
+
+    is_ready = orchestrator_proxy is not None and orchestrator_health.alive
+    status = "healthy" if is_ready else "degraded"
+
     return {
-        "status": "healthy",
+        "status": status,
         "orchestrator_initialized": orchestrator_proxy is not None,
-        "ready": orchestrator_proxy is not None
+        "orchestrator_alive": orchestrator_health.alive,
+        "last_orchestrator_check": orchestrator_health.last_check,
+        "last_orchestrator_error": orchestrator_health.last_error,
+        "ready": is_ready
     }
 
 @app.get("/ready")
 async def ready():
     """Readiness check endpoint - server is ready to accept requests."""
     global orchestrator_proxy
-    
-    if orchestrator_proxy is None:
-        from fastapi import Response
-        import os
-        
-        # Provide helpful error message
-        remote_base = os.getenv("REMOTE_BASE_PATH", "~/ai-factory-benchmarks")
+
+    remote_base = os.getenv("REMOTE_BASE_PATH", "~/ai-factory-benchmarks")
+    orchestrator_ready = orchestrator_proxy is not None and orchestrator_health.alive
+
+    if not orchestrator_ready:
+        reason = "orchestrator not initialized" if orchestrator_proxy is None else "orchestrator heartbeat failed"
         error_detail = {
             "status": "not ready",
-            "reason": "orchestrator not initialized",
+            "reason": reason,
             "details": (
-                "The orchestrator failed to initialize. This is a critical error that prevents "
-                "the server from accepting service deployment requests."
+                "The orchestrator is currently unavailable. The server cannot accept new "
+                "service requests until the orchestrator job is running again."
             ),
+            "orchestrator_alive": orchestrator_health.alive,
+            "last_orchestrator_error": orchestrator_health.last_error,
             "troubleshooting": {
                 "check_logs": f"{remote_base}/logs/orchestrator_job.err",
                 "common_issues": [
@@ -168,13 +237,13 @@ async def ready():
                 ]
             }
         }
-        
+
         return Response(
-            content=str(error_detail).replace("'", '"'),
+            content=json.dumps(error_detail),
             status_code=503,
             media_type="application/json"
         )
-    
+
     return {"status": "ready", "orchestrator": "available"}
 
 # Include API routes
@@ -183,22 +252,38 @@ app.include_router(router, prefix="/api/v1")
 @app.on_event("startup")
 async def on_startup():
     """FastAPI startup event handler - set up SSH tunnel and wait for orchestrator."""
-    global logger, orchestrator_proxy
+    global logger, orchestrator_proxy, orchestrator_monitor_task
     
     if logger:
         logger.info("Setting up SSH tunnel to SLURM REST API...")
     else:
         print("Setting up SSH tunnel to SLURM REST API...")
     
+    slurm_local_port = int(os.getenv("SLURM_REST_LOCAL_PORT", "6820"))
+    slurm_remote_port = int(os.getenv("SLURM_REST_REMOTE_PORT", str(slurm_local_port)))
+    slurm_remote_host = os.getenv("SLURM_REST_REMOTE_HOST", "slurmrestd.meluxina.lxp.lu")
+
     try:
         from ssh_manager import SSHManager
         ssh_manager = SSHManager()
-        ssh_manager.setup_slurm_rest_tunnel(local_port=6820)
+        ssh_manager.setup_slurm_rest_tunnel(
+            local_port=slurm_local_port,
+            remote_host=slurm_remote_host,
+            remote_port=slurm_remote_port
+        )
         
         if logger:
-            logger.info("SSH tunnel established successfully on port 6820")
+            logger.info(
+                "SSH tunnel established successfully on port %s -> %s:%s",
+                slurm_local_port,
+                slurm_remote_host,
+                slurm_remote_port
+            )
         else:
-            print("SSH tunnel established successfully on port 6820")
+            print(
+                f"SSH tunnel established successfully on port {slurm_local_port} "
+                f"to {slurm_remote_host}:{slurm_remote_port}"
+            )
             
         # Initialize OrchestratorProxy - this blocks until orchestrator is ready
         if logger:
@@ -211,11 +296,14 @@ async def on_startup():
         if orchestrator_proxy:
             # Inject orchestrator proxy into routes module
             set_orchestrator_proxy(orchestrator_proxy)
-            
+            _set_orchestrator_health(True, None)
+
             if logger:
                 logger.info("✓ Server is ready - orchestrator initialized successfully")
             else:
                 print("✓ Server is ready - orchestrator initialized successfully")
+
+            orchestrator_monitor_task = asyncio.create_task(_orchestrator_monitor_loop())
         else:
             error_msg = (
                 "✗ CRITICAL: Orchestrator initialization FAILED - server is NOT ready!\n"
@@ -229,6 +317,7 @@ async def on_startup():
                 print(error_msg)
             # Don't raise - let the server run but mark as not ready
             # This allows health checks to show the issue
+            _set_orchestrator_health(False, "Failed to initialize orchestrator")
                 
     except Exception as e:
         error_msg = (
@@ -249,6 +338,7 @@ async def on_startup():
             import traceback
             traceback.print_exc()
         # Don't raise - let health endpoint report the issue
+        _set_orchestrator_health(False, str(e))
 
 @app.get("/orchestrator/services")
 async def get_orchestrator_services():
@@ -277,7 +367,7 @@ async def configure_orchestrator(strategy: str):
 @app.on_event("shutdown")
 async def on_shutdown():
     """FastAPI shutdown event handler."""
-    global logger, orchestrator_proxy
+    global logger, orchestrator_proxy, orchestrator_monitor_task
     
     if logger:
         logger.info("FastAPI shutdown event triggered. Stopping orchestrator and services...")
@@ -312,6 +402,15 @@ async def on_shutdown():
     except Exception as e:
         if logger:
             logger.error(f"Error during FastAPI shutdown: {e}")
+    finally:
+        if orchestrator_monitor_task:
+            orchestrator_monitor_task.cancel()
+            try:
+                await orchestrator_monitor_task
+            except asyncio.CancelledError:
+                pass
+            orchestrator_monitor_task = None
+        _set_orchestrator_health(False, "Server shut down")
 
 if __name__ == "__main__":
     import uvicorn
