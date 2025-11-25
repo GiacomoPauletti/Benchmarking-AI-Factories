@@ -329,3 +329,16 @@ class SSHManager:
         """
         success, _, _ = self.execute_remote_command(f"test -d {remote_path}", timeout=10)
         return success
+
+    def ensure_remote_directory(self, remote_path: str) -> bool:
+        """Ensure a remote directory exists, creating it when missing."""
+        success, _, stderr = self.execute_remote_command(f"mkdir -p {remote_path}", timeout=15)
+
+        if success:
+            self.logger.debug(f"Remote directory ensured: {remote_path}")
+        else:
+            self.logger.warning(
+                f"Failed to create remote directory {remote_path}: {stderr.strip() if stderr else 'unknown error'}"
+            )
+
+        return success

@@ -1,8 +1,6 @@
 Server:
     MAIN:
-    - Response list recipes. Variable/Key - possible values
-    - Add more unit/api tests to orchestrator. 
-    - Test multi-node replicas.
+    - Add similar testing structure to client. Create client-server integration tests.
     - Organize docs and add more details about architecture, orchestrator design decision.
     - Delete all files in meluxina. Then restart server to see if everything works smoothly.
 

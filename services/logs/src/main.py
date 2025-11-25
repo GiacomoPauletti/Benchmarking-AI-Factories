@@ -135,6 +135,13 @@ async def lifespan(app: FastAPI):
     try:
         ssh_manager = SSHManager()
         logger.info("SSH manager initialized")
+
+        remote_logs_path = f"{REMOTE_BASE_PATH}/logs"
+        # Ensure rsync has a remote target directory before the first sync
+        if ssh_manager.ensure_remote_directory(remote_logs_path):
+            logger.info(f"Remote logs directory ready at {remote_logs_path}")
+        else:
+            logger.warning(f"Failed to ensure remote logs directory at {remote_logs_path}")
     except Exception as e:
         logger.error(f"Failed to initialize SSH manager: {e}")
         ssh_manager = None
