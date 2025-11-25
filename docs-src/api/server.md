@@ -1,8 +1,47 @@
 # Server API Documentation
 
+## Architecture Overview
+
+The system uses a **gateway-orchestrator architecture** with two components:
+
+```mermaid
+graph LR
+    Client["Client<br/>(Your Code)"] -->|"HTTP<br/>localhost:8001"| Server["Server<br/>(Gateway)"]
+    Server -->|"SSH Tunnel"| Orch["ServiceOrchestrator<br/>(MeluXina)"]
+    Orch -->|"SLURM"| Compute["Compute Nodes"]
+    
+    InternalClient["Client on<br/>MeluXina"] -.->|"HTTP<br/>orchestrator:8000<br/>(Direct)"| Orch
+    
+    style Server fill:#B3E5FC,stroke:#0288D1,stroke-width:2px
+    style Orch fill:#C8E6C9,stroke:#388E3C,stroke-width:2px
+    style InternalClient stroke-dasharray: 5 5
+```
+
+**Two Access Patterns:**
+
+1. **External Access (typical)**: `Client → Server (localhost:8001) → SSH → Orchestrator → SLURM`
+   - Use when running client code on your laptop/workstation
+   - Server acts as a gateway, forwarding all requests to MeluXina
+   - All examples below use this pattern
+
+2. **Internal Access (advanced)**: `Client → Orchestrator (orchestrator:8000) directly`
+   - Use when running client code **on MeluXina** (e.g., in a compute job)
+   - Bypasses the gateway for lower latency
+   - Requires access to MeluXina internal network
+
+**API Endpoint Translation:**
+
+| Client Request | Server Gateway | Orchestrator Internal API |
+|----------------|----------------|---------------------------|
+| `POST /api/v1/services` | Proxies to → | `POST /api/services/start` |
+| `GET /api/v1/services` | Proxies to → | `GET /api/services` |
+| `DELETE /api/v1/services/{id}` | Proxies to → | `POST /api/services/stop/{id}` |
+| `POST /api/v1/services/{id}/status` | Proxies to → | Handled internally by orchestrator |
+| `POST /api/v1/vllm/{id}/prompt` | Proxies to → | `POST /api/services/vllm/{id}/prompt` |
+
 ## Interactive API Reference
 
-The Server Service provides a REST API for managing SLURM jobs and AI workload orchestration.
+The Server Gateway provides a REST API for managing SLURM jobs and AI workload orchestration.
 
 <swagger-ui src="server-openapi.json"/>
 
@@ -201,13 +240,31 @@ Returns:
 
 ### Stop Service Group
 
-Stop all replicas in a group:
+**Recommended method** (preserves metadata for analysis):
+
+```bash
+curl -X POST http://localhost:8001/api/v1/service-groups/3652098/status \
+  -H "Content-Type: application/json" \
+  -d '{"status": "cancelled"}'
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Service group 3652098 status updated to cancelled",
+  "group_id": "3652098",
+  "replicas_updated": 4
+}
+```
+
+**Legacy method** (deprecated):
 
 ```bash
 curl -X DELETE http://localhost:8001/api/v1/service-groups/3652098
 ```
 
-This cancels the underlying SLURM job, stopping all replicas on the node.
+Both methods cancel the underlying SLURM job(s), stopping all replicas. The POST method is preferred as it preserves service records for logging and Grafana integration.
 
 ### List All Services
 
@@ -235,9 +292,21 @@ curl http://localhost:8001/api/v1/services/3652098/logs
 
 ### Stop a Service
 
+**Recommended method** (preserves metadata for analysis):
+
+```bash
+curl -X POST http://localhost:8001/api/v1/services/3652098/status \
+  -H "Content-Type: application/json" \
+  -d '{"status": "cancelled"}'
+```
+
+**Legacy method** (deprecated):
+
 ```bash
 curl -X DELETE http://localhost:8001/api/v1/services/3652098
 ```
+
+The POST method is preferred as it preserves service records for logging and Grafana integration.
 
 ### List vLLM Services
 
