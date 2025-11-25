@@ -1,15 +1,15 @@
 # Client API Documentation
 
-## Status: TODO
+## Overview
 
-This page will contain the interactive API reference for the Client Service.
+The Client API provides endpoints for creating and managing distributed load testing against AI inference services. It coordinates client groups running on HPC compute nodes that generate realistic workloads.
+
+## Interactive API Reference
 
 <swagger-ui src="client-openapi.json"/>
 
-## Overview
+## Related Documentation
 
-The Client Service will provide endpoints for interacting with the Benchmarking AI Factories platform from external applications.
-
----
-
-**Note**: This service is currently under development. Check back soon for complete documentation.
+- **[Client Service Overview](../services/client)**: Architecture and concepts
+- **[Server API](server)**: Create and manage vLLM services
+- **[Examples](../../getting-started/overview)**: Complete working code samples

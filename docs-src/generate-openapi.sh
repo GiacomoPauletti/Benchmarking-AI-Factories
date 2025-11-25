@@ -103,9 +103,50 @@ if [ "$MONITORING_WAS_RUNNING" = false ]; then
     docker compose down monitoring
 fi
 
-# Client service (TODO)
-echo "  - Client service... (TODO)"
-echo '{"info": {"title": "Client Service", "version": "1.0.0"}, "paths": {}}' > "$API_DIR/client-openapi.json"
+# Client service - launch with docker compose and fetch from API
+echo "  - Client service..."
+
+# Check if client is already running
+if docker compose ps client 2>/dev/null | grep -q "Up"; then
+    echo "    Client already running"
+    CLIENT_WAS_RUNNING=true
+else
+    echo "    Starting client with docker compose..."
+    docker compose up -d client
+    CLIENT_WAS_RUNNING=false
+    
+    # Wait for client to be ready
+    echo "    Waiting for client to be ready..."
+    MAX_ATTEMPTS=30
+    ATTEMPT=0
+    while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+        if curl -s http://localhost:8003/health > /dev/null 2>&1; then
+            echo "    Client is ready"
+            break
+        fi
+        ATTEMPT=$((ATTEMPT + 1))
+        sleep 1
+    done
+    
+    if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+        echo "    Warning: Client did not become ready in time"
+        exit 1
+    fi
+fi
+
+# Fetch OpenAPI schema
+echo "    Fetching OpenAPI schema..."
+if curl -s http://localhost:8003/openapi.json > "$API_DIR/client-openapi.json"; then
+    echo "    Successfully generated client-openapi.json"
+else
+    echo "    Warning: Could not fetch OpenAPI schema"
+fi
+
+# Stop client if we started it
+if [ "$CLIENT_WAS_RUNNING" = false ]; then
+    echo "    Stopping client..."
+    docker compose down client
+fi
 
 # Logs service (TODO)
 echo "  - Logs service... (TODO)"
