@@ -166,7 +166,30 @@ class OrchestratorProxy:
     def list_recipes(self) -> List[Dict[str, Any]]:
         """List available recipes via orchestrator"""
         response = self._make_request("GET", "/api/recipes")
-        return response.get("recipes", [])
+
+        # Support multiple orchestrator response shapes:
+        # - a direct list of recipes (e.g. [ {...}, ... ])
+        # - a dict containing a `recipes` key (e.g. {"recipes": [...]})
+        # - a dict containing `data` or other container keys
+        if isinstance(response, list):
+            return response
+
+        if isinstance(response, dict):
+            # common keys that may contain the list
+            for key in ("recipes", "data", "items"):
+                if key in response and isinstance(response[key], list):
+                    return response[key]
+
+        # Fallback: return empty list to avoid raising AttributeError
+        logger.debug(f"Unexpected recipe list response shape: {type(response).__name__}")
+        return []
+
+    def list_available_recipes(self) -> List[Dict[str, Any]]:
+        """Compatibility alias for older code that calls `list_available_recipes`.
+
+        Delegates to `list_recipes` so routes that expect the older name keep working.
+        """
+        return self.list_recipes()
 
     def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
         """Get service details via orchestrator"""

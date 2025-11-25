@@ -20,3 +20,57 @@ resources:
   memory: "64G"
   time_limit: 15
   gpu: "4"  # Match VLLM_TENSOR_PARALLEL
+
+# Parameter manual (more vllm related in https://docs.vllm.ai/en/stable/api/vllm/envs/#vllm.envs.environment_variables)
+parameters:
+  # Root-level configuration
+  nodes:
+    description: "Number of compute nodes to allocate"
+    type: "integer"
+    default: 1
+    required: true
+    location: "resources"
+  
+  time_limit:
+    description: "Job time limit in minutes"
+    type: "integer"
+    default: 15
+    required: true
+    location: "resources"
+
+  # Environment configuration
+  VLLM_MODEL:
+    description: "HuggingFace model ID to load (e.g., Qwen/Qwen2.5-0.5B-Instruct)"
+    type: "string"
+    default: "Qwen/Qwen2.5-0.5B-Instruct"
+    required: false
+    location: "environment"
+
+  VLLM_TENSOR_PARALLEL:
+    description: "Number of GPUs to use for tensor parallelism (must match allocated GPUs)"
+    type: "integer"
+    default: 4
+    required: false
+    location: "environment"
+
+  VLLM_GPU_MEMORY_UTILIZATION:
+    description: "Fraction of GPU memory to allocate for the model (0.0 - 1.0)"
+    type: "float"
+    default: 0.9
+    required: false
+    location: "environment"
+
+  VLLM_MAX_MODEL_LEN:
+    description: "Maximum context length for the model"
+    type: "integer"
+    default: 4096
+    required: false
+    location: "environment"
+
+  VLLM_LOGGING_LEVEL:
+    description: "Logging verbosity level (DEBUG, INFO, WARNING, ERROR)"
+    type: "string"
+    default: "INFO"
+    required: false
+    location: "environment"
+

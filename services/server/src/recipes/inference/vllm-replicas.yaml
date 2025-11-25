@@ -11,6 +11,7 @@ environment:
   VLLM_WORKDIR: "/workspace"
   VLLM_LOGGING_LEVEL: "INFO"
   VLLM_GPU_MEMORY_UTILIZATION: "0.9"
+  # Ports are assigned per replica starting from base_port
 
 resources:  # Per node (not per replica)
   nodes: "1"  # Number of nodes to allocate
@@ -29,3 +30,73 @@ base_port: 8001     # First replica uses 8001, second uses 8002, etc.
 # - All replicas run in a single SLURM job per node
 # - Each replica listens on base_port + replica_index
 # - Load balancing distributes requests across all replicas
+
+
+# Parameter manual (more vllm related in https://docs.vllm.ai/en/stable/api/vllm/envs/#vllm.envs.environment_variables)
+parameters:
+  # Root-level configuration
+  gpu_per_replica:
+    description: "Number of GPUs to assign to each replica (tensor parallelism)"
+    type: "integer"
+    default: 1
+    required: false
+    location: "root"
+
+  base_port:
+    description: "Starting port number for replicas (increments by 1 for each replica)"
+    type: "integer"
+    default: 8001
+    required: false
+    location: "root"
+
+  # Resource configuration
+  nodes:
+    description: "Number of compute nodes to allocate"
+    type: "integer"
+    default: 1
+    required: true
+    location: "resources"
+
+  gpu:
+    description: "Total GPUs to allocate per node"
+    type: "integer"
+    default: 4
+    required: true
+    location: "resources"
+
+  time_limit:
+    description: "Job time limit in minutes"
+    type: "integer"
+    default: 60
+    required: true
+    location: "resources"
+
+  # Environment configuration
+  VLLM_MODEL:
+    description: "HuggingFace model ID to load (e.g., Qwen/Qwen2.5-0.5B-Instruct)"
+    type: "string"
+    default: "Qwen/Qwen2.5-0.5B-Instruct"
+    required: false
+    location: "environment"
+
+  VLLM_GPU_MEMORY_UTILIZATION:
+    description: "Fraction of GPU memory to allocate for the model (0.0 - 1.0)"
+    type: "float"
+    default: 0.9
+    required: false
+    location: "environment"
+
+  VLLM_MAX_MODEL_LEN:
+    description: "Maximum context length for the model"
+    type: "integer"
+    default: 4096
+    required: false
+    location: "environment"
+
+  VLLM_LOGGING_LEVEL:
+    description: "Logging verbosity level (DEBUG, INFO, WARNING, ERROR)"
+    type: "string"
+    default: "INFO"
+    required: false
+    location: "environment"
+
