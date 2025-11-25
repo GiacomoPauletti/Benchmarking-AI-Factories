@@ -141,28 +141,6 @@ class OrchestratorProxy:
     
     def list_services(self) -> List[Dict[str, Any]]:
         """List all services managed by orchestrator."""
-
-        # def _normalize(items: List[Any]) -> List[Dict[str, Any]]:
-        #     normalized: List[Dict[str, Any]] = []
-        #     for item in items:
-        #         if isinstance(item, dict):
-        #             normalized.append(item)
-        #         elif isinstance(item, str):
-        #             normalized.append({"id": item})
-        #         else:
-        #             raise RuntimeError(
-        #                 f"Unexpected service entry type '{type(item).__name__}' from orchestrator"
-        #             )
-        #     return normalized
-        
-        # response = self._make_request("GET", "/api/services")
-        # if isinstance(response, list):
-        #     return _normalize(response)
-        # if isinstance(response, dict):
-        #     services = response.get("services")
-        #     if isinstance(services, list):
-        #         return _normalize(services)
-        # raise RuntimeError("Unexpected response format from orchestrator for /api/services")
         return self._make_request("GET", "/api/services")
 
     def get_metrics(self) -> Dict[str, Any]:
@@ -195,16 +173,6 @@ class OrchestratorProxy:
             return response.get("status", "unknown")
         except:
             return "unknown"
-
-    def get_job_logs(self, log_path: str, lines: int = 200) -> str:
-        """Get job logs via orchestrator"""
-        try:
-            # Manually construct query string
-            endpoint = f"/api/logs?path={log_path}&lines={lines}"
-            response = self._make_request("GET", endpoint)
-            return response.get("logs", "")
-        except:
-            return "Failed to fetch logs"
 
     def start_service(self, recipe_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
         """Start a service via orchestrator (orchestrator builds the job)"""
@@ -240,10 +208,6 @@ class OrchestratorProxy:
         except:
             return None
 
-    def get_service_logs(self, service_id: str) -> Dict[str, str]:
-        """Get service logs via orchestrator"""
-        return self._make_request("GET", f"/api/services/{service_id}/logs")
-
     def get_service_status(self, service_id: str) -> Dict[str, str]:
         """Get service status via orchestrator"""
         return self._make_request("GET", f"/api/services/{service_id}/status")
@@ -252,13 +216,6 @@ class OrchestratorProxy:
         """List all service groups via orchestrator"""
         response = self._make_request("GET", "/api/service-groups")
         return response.get("service_groups", [])
-        # if isinstance(response, list):
-        #     return response
-        # if isinstance(response, dict):
-        #     groups = response.get("service_groups")
-        #     if isinstance(groups, list):
-        #         return groups
-        # raise RuntimeError("Unexpected response format from orchestrator for /api/service-groups")
     
     def get_service_group(self, group_id: str) -> Optional[Dict[str, Any]]:
         """Get service group details via orchestrator"""
@@ -277,6 +234,10 @@ class OrchestratorProxy:
     def stop_service_group(self, group_id: str) -> Dict[str, Any]:
         """Stop all replicas in a service group via orchestrator"""
         return self._make_request("POST", f"/api/service-groups/{group_id}/stop")
+    
+    def update_service_group_status(self, group_id: str, status: str) -> Dict[str, Any]:
+        """Update service group status (e.g., to 'cancelled') via orchestrator"""
+        return self._make_request("POST", f"/api/service-groups/{group_id}/status", json={"status": status})
 
     # ===== Data Plane Operations (vLLM) =====
 

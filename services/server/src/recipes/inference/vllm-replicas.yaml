@@ -13,7 +13,7 @@ environment:
   VLLM_GPU_MEMORY_UTILIZATION: "0.9"
 
 resources:  # Per node (not per replica)
-  nodes: "1"  # Number of nodes to allocate
+  nodes: "2"  # Number of nodes to allocate
   cpu: "8"    # CPUs per node
   memory: "64G"  # Memory per node
   time_limit: 60  # 60 minutes = 1 hour

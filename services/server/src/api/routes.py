@@ -226,6 +226,48 @@ async def get_service_group_status(group_id: str, orchestrator = Depends(get_orc
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/service-groups/{group_id}/status")
+async def update_service_group_status(
+    group_id: str,
+    status_update: Dict[str, str] = Body(..., examples={
+        "cancel": {
+            "summary": "Cancel a service group",
+            "value": {"status": "cancelled"}
+        }
+    }),
+    orchestrator = Depends(get_orchestrator_proxy)
+):
+    """**[Proxy]** Update the status of a service group (primarily for cancelling).
+    
+    This endpoint proxies to the orchestrator's service group management API.
+    Similar to single service status updates, this allows graceful cancellation
+    of all replicas in a group while preserving metadata for analysis.
+    
+    For detailed documentation, see the orchestrator API documentation at:
+    **POST /api/service-groups/{group_id}/status** on the orchestrator service.
+    """
+    new_status = status_update.get("status")
+    
+    if not new_status:
+        raise HTTPException(status_code=400, detail="Missing 'status' field in request body")
+    
+    # Currently only support cancelling service groups
+    if new_status == "cancelled":
+        result = orchestrator.update_service_group_status(group_id, new_status)
+        if not result.get("success"):
+            error_msg = result.get("error", "Service group not found")
+            if "not found" in error_msg.lower():
+                raise HTTPException(status_code=404, detail=error_msg)
+            else:
+                raise HTTPException(status_code=500, detail=error_msg)
+        return result
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported status value: '{new_status}'. Currently only 'cancelled' is supported."
+        )
+
+
 @router.get("/services/{service_id}/metrics")
 async def get_service_metrics(service_id: str, orchestrator = Depends(get_orchestrator_proxy)):
     """**[Proxy]** Get Prometheus-compatible metrics from any service.

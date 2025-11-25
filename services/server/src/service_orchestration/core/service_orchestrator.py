@@ -692,6 +692,85 @@ class ServiceOrchestrator:
             "stopped": stopped_count
         }
     
+    def update_service_group_status(self, group_id: str, new_status: str) -> Dict[str, Any]:
+        """Update service group status (e.g., to 'cancelled').
+        
+        This is the recommended way to stop service groups as it preserves
+        metadata for analysis while gracefully shutting down all replicas.
+        
+        Args:
+            group_id: The service group ID
+            new_status: The new status (currently only 'cancelled' is supported)
+            
+        Returns:
+            Dict with status and operation details
+        """
+        group_info = self.service_manager.group_manager.get_group(group_id)
+        if not group_info:
+            return {"status": "error", "message": f"Group {group_id} not found"}
+        
+        if new_status != "cancelled":
+            return {
+                "status": "error",
+                "message": f"Unsupported status: {new_status}. Only 'cancelled' is currently supported."
+            }
+        
+        # Extract unique job IDs
+        job_ids = set()
+        node_jobs = group_info.get("node_jobs", [])
+        
+        if isinstance(node_jobs, list):
+            for node_data in node_jobs:
+                job_id = node_data.get("job_id")
+                if job_id:
+                    job_ids.add(job_id)
+        elif isinstance(node_jobs, dict):
+            for node_data in node_jobs.values():
+                job_id = node_data.get("job_id")
+                if job_id:
+                    job_ids.add(job_id)
+        
+        # Cancel all jobs
+        cancelled_count = 0
+        failed_jobs = []
+        
+        for job_id in job_ids:
+            success = self.slurm_client.cancel_job(job_id)
+            if success:
+                cancelled_count += 1
+                # Update individual service status if it exists
+                self.service_manager.update_service_status(job_id, "cancelled")
+            else:
+                failed_jobs.append(job_id)
+        
+        # Update group status
+        self.service_manager.group_manager.update_group_status(group_id, "cancelled")
+        
+        # Update all replica statuses
+        replica_ids = self.service_manager.group_manager.get_all_replica_ids(group_id)
+        replicas_updated = 0
+        for replica_id in replica_ids:
+            self.service_manager.update_service_status(replica_id, "cancelled")
+            replicas_updated += 1
+        
+        if failed_jobs:
+            return {
+                "status": "partial",
+                "message": f"Service group {group_id} status updated to {new_status}. {cancelled_count} jobs cancelled, {len(failed_jobs)} failed",
+                "group_id": group_id,
+                "replicas_updated": replicas_updated,
+                "jobs_cancelled": cancelled_count,
+                "jobs_failed": failed_jobs
+            }
+        
+        return {
+            "status": "success",
+            "message": f"Service group {group_id} status updated to {new_status}",
+            "group_id": group_id,
+            "replicas_updated": replicas_updated,
+            "jobs_cancelled": cancelled_count
+        }
+    
     # ===== Job Management API (called by Server via SSH) =====
 
     def cancel_job(self, job_id: str) -> Dict[str, Any]:
