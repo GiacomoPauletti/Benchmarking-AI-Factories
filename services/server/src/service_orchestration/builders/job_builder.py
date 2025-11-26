@@ -121,6 +121,15 @@ class JobBuilder:
         job_desc["partition"] = "gpu" if resources.get("gpu") else "cpu"
         job_desc["name"] = job_name
         
+        # Add node allocation
+        num_nodes = resources.get("nodes", 1)
+        job_desc["nodes"] = str(num_nodes)
+        
+        # Add task allocation (for multi-replica jobs)
+        if ntasks > 1:
+            job_desc["tasks"] = ntasks
+            job_desc["tasks_per_node"] = ntasks
+        
         # Add GPU allocation if requested
         gpu_count = resources.get("gpu")
         if gpu_count and str(gpu_count) != "0":
@@ -130,7 +139,7 @@ class JobBuilder:
             else:
                 job_desc["gres"] = f"gpu:{gpu_count}"
         
-        logger.info(f"Building job with GPU config: gpu_count={gpu_count}, gpus_per_task={gpus_per_task}, gres={job_desc.get('gres')}")
+        logger.info(f"Building job with nodes={num_nodes}, GPU config: gpu_count={gpu_count}, gpus_per_task={gpus_per_task}, ntasks={ntasks}, gres={job_desc.get('gres')}")
         
         return {
             "script": script,

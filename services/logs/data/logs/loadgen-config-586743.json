@@ -1,0 +1,16 @@
+{
+  "prompt_url": "http://10.3.23.98:8003/api/services/vllm/sg-12ffab8a015e/prompt",
+  "service_id": "sg-12ffab8a015e",
+  "num_clients": 10,
+  "requests_per_second": 0.2,
+  "duration_seconds": 60,
+  "prompts": [
+    "Write a short poem about AI.",
+    "Explain what machine learning is.",
+    "Tell me a fun fact about computers.",
+    "What is Python programming?"
+  ],
+  "max_tokens": 50,
+  "temperature": 0.7,
+  "results_file": "/app/logs/loadgen-results-586743.json"
+}

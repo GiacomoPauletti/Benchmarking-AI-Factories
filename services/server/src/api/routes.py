@@ -90,7 +90,7 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
     ```json
     [
       {
-        "targets": ["server:8001"],
+        "targets": ["mel0343:8002"],
         "labels": {
           "job": "service-3642874",
           "service_id": "3642874",
@@ -105,8 +105,28 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
         targets = []
         for service in orchestrator.list_services():
             service_id = service["id"]
+            
+            # Get full service details to resolve endpoint
+            service_details = orchestrator.get_service(service_id)
+            if not service_details:
+                continue
+            
+            # Only include running services with resolved endpoints
+            status = service_details.get("status", "").lower()
+            if status not in ["running", "RUNNING"]:
+                continue
+            
+            # Extract endpoint - it's in format "http://host:port"
+            endpoint = service_details.get("endpoint")
+            if not endpoint:
+                # Skip services without resolved endpoints
+                continue
+            
+            # Strip protocol to get "host:port" format for Prometheus
+            target = endpoint.replace("http://", "").replace("https://", "")
+            
             targets.append({
-                "targets": [service_id],
+                "targets": [target],
                 "labels": {
                     "job": f"service-{service_id}",
                     "service_id": service_id,

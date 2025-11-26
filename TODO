@@ -1,7 +1,7 @@
 Server:
     MAIN:
-    - Add similar testing structure to client. Create client-server integration tests.
-    - Organize docs and add more details about architecture, orchestrator design decision.
+    - Test multi node replicas.
+    - Add flag to rebuild orchestrator.
     - Delete all files in meluxina. Then restart server to see if everything works smoothly.
 
     Optional:
@@ -30,6 +30,9 @@ Server:
 
 
 Client:
+    MAIN:
+    - Add possibility of using big prompt datasets and RAGs using the vec-db service.
+
 
 
 Logs: 

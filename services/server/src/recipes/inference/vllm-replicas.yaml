@@ -17,7 +17,7 @@ resources:  # Per node (not per replica)
   nodes: "2"  # Number of nodes to allocate
   cpu: "8"    # CPUs per node
   memory: "64G"  # Memory per node
-  time_limit: 60  # 60 minutes = 1 hour
+  time_limit: 30  # 60 minutes = 1 hour
   gpu: "4"    # Total GPUs per node
 
 # Replica group configuration

@@ -89,17 +89,43 @@ services:
       context: ./services/client
       dockerfile: Dockerfile
     container_name: benchmarking-ai-client-live
+    ports:
+      - "8003:8003"
     volumes:
       - ./services/client/src:/app/src
       - ./services/client/logs:/app/logs
+      # Mount SSH agent socket for secure authentication
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
+      # SSH Configuration for MeluXina (same as server)
+      - SSH_HOST=${SSH_HOST}
+      - SSH_PORT=${SSH_PORT}
+      - SSH_USER=${SSH_USER}
+      - SSH_KEY_PATH=${SSH_KEY_PATH}
+      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+      # Server URL for orchestrator discovery
+      - SERVER_URL=http://server:8001
+    env_file:
+      - .env
+    command: >
+      bash -c "
+      uvicorn src.main:app --host 0.0.0.0 --port 8003 --reload
+      "
     networks:
       - test-network
     depends_on:
       server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   client-test:
     build:
@@ -109,7 +135,8 @@ services:
     volumes:
       - ./services/client/src:/app/src
       - ./services/client/tests:/app/tests
-      - ./services/client/pytest.ini:/app/pytest.ini
+      # Mount .server-endpoint file so integration tests can discover server
+      - ./services/server/.server-endpoint:/app/services/server/.server-endpoint
       # Provide test requirements inside container as requirements-dev.txt
       - ./services/client/tests/requirements.txt:/app/requirements-dev.txt
     environment:
@@ -120,6 +147,9 @@ services:
       - SSH_PORT=22
       - REMOTE_BASE_PATH=/home/users/testuser/ai-factory-benchmarks
       - LOG_LEVEL=DEBUG
+      # Environment variables for integration test discovery
+      - SERVER_URL=http://server:8001
+      - CLIENT_URL=http://client:8003
     command: >
       bash -c "
       pip install -q -r requirements-dev.txt &&
@@ -128,6 +158,8 @@ services:
     networks:
       - test-network
     depends_on:
+      server:
+        condition: service_healthy
       client:
         condition: service_started
 
