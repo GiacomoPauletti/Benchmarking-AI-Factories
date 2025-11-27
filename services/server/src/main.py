@@ -252,7 +252,7 @@ async def ready():
             "orchestrator_alive": orchestrator_health.alive,
             "last_orchestrator_error": orchestrator_health.last_error,
             "troubleshooting": {
-                "check_logs": f"{remote_base}/logs/orchestrator_job.err",
+                "check_logs": f"{remote_base}/logs/orchestrator_job-*.err",
                 "common_issues": [
                     "Orchestrator container (.sif) is corrupted - it will be rebuilt on next attempt",
                     "SLURM job failed to start - check SLURM queue with 'squeue'",

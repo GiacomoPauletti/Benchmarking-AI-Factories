@@ -26,7 +26,7 @@ from service_orchestration.builders import JobBuilder, RecipeLoader
 from service_orchestration.managers import ServiceManager
 from service_orchestration.networking import EndpointResolver
 
-logger = logging.getLogger("service_orchestrator")
+logger = logging.getLogger().getChild("service_orchestrator")
 
 
 @dataclass
