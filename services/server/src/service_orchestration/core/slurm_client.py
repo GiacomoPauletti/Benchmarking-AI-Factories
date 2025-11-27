@@ -1,6 +1,6 @@
 """
 SLURM REST API Client for Service Orchestrator.
-Runs directly on the cluster (no SSH tunneling).
+Routes all requests through the SOCKS5 proxy at localhost:1080.
 """
 
 import os
@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 class SlurmClient:
     """
-    Client for interacting with SLURM REST API directly from the cluster.
+    Client for interacting with SLURM REST API via SOCKS5 proxy.
+    Routes all requests through the SSH SOCKS5 proxy at localhost:1080.
     """
     
     def __init__(self):
@@ -27,7 +28,11 @@ class SlurmClient:
             'X-SLURM-USER-TOKEN': self.token,
             'Content-Type': 'application/json'
         }
-        logger.info(f"Initialized SlurmClient for user {self.username} at {self.base_url}")
+        
+        # Configure session - only use SOCKS proxy if explicitly enabled
+        # (Orchestrator runs ON MeluXina, so it can reach SLURM REST directly)
+        self.session = requests.Session()
+        logger.info(f"Initialized SlurmClient for user {self.username} at {self.base_url} (direct connection, no proxy)")
 
     def _get_token(self) -> str:
         """Get SLURM JWT token from env or scontrol"""
@@ -57,7 +62,7 @@ class SlurmClient:
         """Submit a job via REST API"""
         try:
             logger.info(f"Submitting job with payload: {json.dumps(job_payload, indent=2)}")
-            response = requests.post(
+            response = self.session.post(
                 f"{self.base_url}/job/submit",
                 headers=self.headers,
                 json=job_payload,
@@ -84,7 +89,7 @@ class SlurmClient:
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a job"""
         try:
-            response = requests.delete(
+            response = self.session.delete(
                 f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
                 timeout=10
@@ -98,7 +103,7 @@ class SlurmClient:
     def get_job_status(self, job_id: str) -> str:
         """Get job status"""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
                 timeout=5
@@ -119,7 +124,7 @@ class SlurmClient:
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
         """Get detailed job information including node assignment"""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
                 timeout=5

@@ -254,36 +254,16 @@ async def on_startup():
     """FastAPI startup event handler - set up SSH tunnel and wait for orchestrator."""
     global logger, orchestrator_proxy, orchestrator_monitor_task
     
+    # SLURM REST API now uses the same SOCKS5 proxy as the orchestrator
+    # No separate tunnel needed - SlurmClient will route through socks5h://localhost:1080
     if logger:
-        logger.info("Setting up SSH tunnel to SLURM REST API...")
+        logger.info("SLURM REST API will use SOCKS5 proxy (no separate tunnel needed)")
     else:
-        print("Setting up SSH tunnel to SLURM REST API...")
-    
-    slurm_local_port = int(os.getenv("SLURM_REST_LOCAL_PORT", "6820"))
-    slurm_remote_port = int(os.getenv("SLURM_REST_REMOTE_PORT", str(slurm_local_port)))
-    slurm_remote_host = os.getenv("SLURM_REST_REMOTE_HOST", "slurmrestd.meluxina.lxp.lu")
+        print("SLURM REST API will use SOCKS5 proxy (no separate tunnel needed)")
 
     try:
         from ssh_manager import SSHManager
         ssh_manager = SSHManager()
-        ssh_manager.setup_slurm_rest_tunnel(
-            local_port=slurm_local_port,
-            remote_host=slurm_remote_host,
-            remote_port=slurm_remote_port
-        )
-        
-        if logger:
-            logger.info(
-                "SSH tunnel established successfully on port %s -> %s:%s",
-                slurm_local_port,
-                slurm_remote_host,
-                slurm_remote_port
-            )
-        else:
-            print(
-                f"SSH tunnel established successfully on port {slurm_local_port} "
-                f"to {slurm_remote_host}:{slurm_remote_port}"
-            )
             
         # Initialize OrchestratorProxy - this blocks until orchestrator is ready
         if logger:

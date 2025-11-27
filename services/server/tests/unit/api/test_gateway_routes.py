@@ -35,8 +35,17 @@ class TestGatewayAPI:
     def client(self, mock_proxy):
         """Create a test client for the FastAPI app with mocked proxy."""
         app.dependency_overrides[get_orchestrator_proxy] = lambda: mock_proxy
-        client = TestClient(app)
-        yield client
+        
+        # Mock orchestrator health state for health endpoint tests
+        with patch('main.orchestrator_proxy', mock_proxy), \
+             patch('main.orchestrator_health') as mock_health:
+            mock_health.alive = True
+            mock_health.last_check = None
+            mock_health.last_error = None
+            
+            client = TestClient(app)
+            yield client
+            
         app.dependency_overrides.clear()
     
     def test_health_endpoint(self, client):
@@ -302,14 +311,23 @@ class TestGatewayAPI:
         mock_proxy.list_services.return_value = [
             {"id": "svc-1", "recipe_name": "inference/vllm", "status": "running"}
         ]
+        mock_proxy.get_service.return_value = {
+            "id": "svc-1",
+            "recipe_name": "inference/vllm",
+            "status": "running",
+            "endpoint": "http://mel2079:8001"
+        }
 
         response = client.get("/api/v1/services/targets")
 
         assert response.status_code == 200
         targets = response.json()
-        assert targets[0]["targets"] == ["svc-1"]
+        assert len(targets) == 1
+        assert targets[0]["targets"] == ["mel2079:8001"]
+        assert targets[0]["labels"]["service_id"] == "svc-1"
         assert targets[0]["labels"]["status"] == "running"
         mock_proxy.list_services.assert_called_once()
+        mock_proxy.get_service.assert_called_once_with("svc-1")
 
     def test_get_service_group_status(self, mock_proxy, client):
         """Service-group status should proxy orchestrator summary"""

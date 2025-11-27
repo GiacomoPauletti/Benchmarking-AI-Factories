@@ -14,21 +14,23 @@ ARG SSH_USER
 ARG SSH_HOST
 ARG SSH_PORT=22
 ARG REMOTE_BASE_PATH
+ARG REBUILD_ORCHESTRATOR=false
 
-# Always attempt to remove remote orchestrator.sif during image build when SSH info is provided.
+# Conditionally remove remote orchestrator.sif during image build to force rebuild.
+# Set REBUILD_ORCHESTRATOR=true in .env or via docker-compose build --build-arg to enable.
 # If SSH_USER/SSH_HOST are not set, the step is skipped. This runs at build-time so the orchestrator
 # will be rebuilt on the cluster the next time it's started.
 # Note: BuildKit SSH forwarding is recommended so the build can use your SSH agent securely.
-RUN if [ -n "${SSH_USER}" ] && [ -n "${SSH_HOST}" ]; then \
-      echo "Attempting remote orchestrator.sif deletion on ${SSH_USER}@${SSH_HOST}:${SSH_PORT}"; \
+RUN if [ "${REBUILD_ORCHESTRATOR}" = "true" ] && [ -n "${SSH_USER}" ] && [ -n "${SSH_HOST}" ]; then \
+      echo "REBUILD_ORCHESTRATOR=true: Deleting remote orchestrator.sif on ${SSH_USER}@${SSH_HOST}:${SSH_PORT}"; \
       ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${SSH_PORT} ${SSH_USER}@${SSH_HOST} \"rm -f ${REMOTE_BASE_PATH}/src/service_orchestration/orchestrator.sif || true\" || true; \
     else \
-      echo "Skipping remote orchestrator.sif deletion (SSH_USER/SSH_HOST not set)"; \
+      echo "Skipping remote orchestrator.sif deletion (REBUILD_ORCHESTRATOR=${REBUILD_ORCHESTRATOR})"; \
     fi
 
 # Copy requirements and install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt
 
 # Copy source code
 COPY src/ ./src/

@@ -2,6 +2,7 @@
 API route definitions for SLURM-based service orchestration.
 """
 
+import logging
 from fastapi import APIRouter, HTTPException, Body, Depends, Query
 from typing import List, Dict, Any, Optional
 
@@ -12,6 +13,7 @@ from service_orchestration.services.inference.vllm_models_config import (
     get_model_info as get_hf_model_info,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Global orchestrator proxy instance (set by main.py at startup)
@@ -54,10 +56,16 @@ async def create_service(
             config=request.config or {}
         )
         
+        # Check for error responses from orchestrator
+        if isinstance(response, dict) and response.get("status") == "error":
+            raise HTTPException(status_code=500, detail=response.get("message", "Unknown error"))
+        
         # Unwrap service_data if present (orchestrator returns {status, job_id, service_data})
         if "service_data" in response:
             return response["service_data"]
         return response
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -103,7 +111,16 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
     """
     try:
         targets = []
-        for service in orchestrator.list_services():
+        services_response = orchestrator.list_services()
+        logger.debug(f"list_services() returned: {type(services_response)} = {repr(services_response)}")
+        
+        # Handle both dict response {'services': [...]} and list response [...]
+        if isinstance(services_response, dict):
+            services_list = services_response.get('services', [])
+        else:
+            services_list = services_response
+        
+        for service in services_list:
             service_id = service["id"]
             
             # Get full service details to resolve endpoint

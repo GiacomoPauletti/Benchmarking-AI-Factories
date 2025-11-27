@@ -23,9 +23,7 @@ class TestVLLMServiceLogic:
     @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_chat_template_error_detection(self, mock_requests):
         """Test that chat template errors are correctly detected"""
-        mock_response = Mock()
-        mock_response.status_code = 400
-        mock_response.json.return_value = {
+        error_body = {
             "error": {
                 "message": "default chat template is no longer allowed",
                 "type": "BadRequestError"
@@ -38,25 +36,22 @@ class TestVLLMServiceLogic:
         mock_logger = Mock()
 
         vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        assert vllm_service._is_chat_template_error(mock_response) is True
+        assert vllm_service._is_chat_template_error(False, 400, error_body) is True
 
-        mock_response.json.return_value = {
+        other_error_body = {
             "error": {
                 "message": "Invalid parameters",
                 "type": "BadRequestError"
             }
         }
-        assert vllm_service._is_chat_template_error(mock_response) is False
+        assert vllm_service._is_chat_template_error(False, 400, other_error_body) is False
 
-        mock_response.status_code = 500
-        assert vllm_service._is_chat_template_error(mock_response) is False
+        assert vllm_service._is_chat_template_error(False, 500, error_body) is False
 
     @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_parse_chat_response_success(self, mock_requests):
         """Test parsing successful chat response"""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        response_body = {
             "choices": [
                 {
                     "message": {
@@ -78,7 +73,7 @@ class TestVLLMServiceLogic:
         mock_logger = Mock()
 
         vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        result = vllm_service._parse_chat_response(mock_response, "http://test:8001", "test-123")
+        result = vllm_service._parse_chat_response(True, 200, response_body, "http://test:8001", "test-123")
 
         assert result["success"] is True
         assert result["response"] == "This is a test response"
@@ -89,9 +84,7 @@ class TestVLLMServiceLogic:
     @patch('service_orchestration.services.inference.vllm_service.requests')
     def test_parse_completions_response_success(self, mock_requests):
         """Test parsing successful completions response"""
-        mock_response = Mock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        response_body = {
             "choices": [
                 {
                     "text": "This is a completion",
@@ -111,7 +104,7 @@ class TestVLLMServiceLogic:
         mock_logger = Mock()
 
         vllm_service = VllmService(mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger)
-        result = vllm_service._parse_completions_response(mock_response, "http://test:8001", "test-123")
+        result = vllm_service._parse_completions_response(True, 200, response_body, "http://test:8001", "test-123")
 
         assert result["success"] is True
         assert result["response"] == "This is a completion"

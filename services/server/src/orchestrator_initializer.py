@@ -6,6 +6,7 @@ Handles automatic Orchestrator startup via Slurm REST API.
 import os
 import logging
 import requests
+from urllib3.contrib.socks import SOCKSProxyManager  # Ensure SOCKS support is available
 import time
 from typing import Optional, Tuple
 from dataclasses import dataclass
@@ -26,7 +27,6 @@ class OrchestratorSettings:
     tasks: int
     cpus_per_task: int
     time_limit_minutes: int
-    slurm_rest_local_port: int
     apptainer_tmpdir_base: str
     apptainer_cachedir_base: str
     fake_home_base: str
@@ -45,7 +45,6 @@ def load_orchestrator_settings() -> OrchestratorSettings:
         tasks=int(os.getenv("ORCHESTRATOR_TASKS", "1")),
         cpus_per_task=int(os.getenv("ORCHESTRATOR_CPUS_PER_TASK", "4")),
         time_limit_minutes=int(os.getenv("ORCHESTRATOR_TIME_LIMIT_MINUTES", "30")),
-        slurm_rest_local_port=int(os.getenv("SLURM_REST_LOCAL_PORT", "6820")),
         apptainer_tmpdir_base=os.getenv("APPTAINER_TMPDIR_BASE", "/tmp/apptainer").rstrip("/"),
         apptainer_cachedir_base=os.getenv("APPTAINER_CACHEDIR_BASE", "/tmp/apptainer-cache").rstrip("/"),
         fake_home_base=os.getenv("REMOTE_FAKE_HOME_BASE", "/tmp/fake-home").rstrip("/")
@@ -231,9 +230,17 @@ def submit_orchestrator_job(ssh_manager, remote_base_path: str, settings: Orches
             "script": script_content
         }
         
-        # Submit via REST API
-        resp = requests.post(
-            f"http://localhost:{settings.slurm_rest_local_port}/slurm/v0.0.40/job/submit",
+        # Submit via REST API through SOCKS5 proxy
+        socks_proxy = os.getenv("SOCKS_PROXY_URL", "socks5h://localhost:1080")
+        session = requests.Session()
+        session.proxies = {
+            'http': socks_proxy,
+            'https': socks_proxy
+        }
+        
+        slurm_rest_url = os.getenv("SLURM_REST_URL", "http://slurmrestd.meluxina.lxp.lu:6820/slurm/v0.0.40")
+        resp = session.post(
+            f"{slurm_rest_url}/job/submit",
             headers=headers,
             json=job_payload,
             timeout=10
@@ -420,7 +427,7 @@ def initialize_orchestrator_proxy(ssh_manager):
         
         # Ensure requirements.txt exists in service_orchestration directory
         logger.info("Ensuring requirements.txt exists on MeluXina...")
-        req_content = "fastapi==0.109.0\\nuvicorn[standard]==0.27.0\\npydantic==2.5.3\\nrequests==2.31.0\\nparamiko==3.4.0\\nhttpx==0.26.0\\npyyaml==6.0.3"
+        req_content = "fastapi==0.109.0\\nuvicorn[standard]==0.27.0\\npydantic==2.5.3\\nrequests==2.31.0\\nPySocks==1.7.1\\nparamiko==3.4.0\\nhttpx==0.26.0\\npyyaml==6.0.3"
         create_req_cmd = f"printf '{req_content}' > {remote_base_path}/src/service_orchestration/requirements.txt"
         success, _, _ = ssh_manager.execute_remote_command(create_req_cmd, timeout=10)
         if success:
