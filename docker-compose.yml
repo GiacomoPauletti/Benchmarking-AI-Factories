@@ -10,6 +10,7 @@ services:
         SSH_HOST: ${SSH_HOST}
         SSH_PORT: ${SSH_PORT}
         REMOTE_BASE_PATH: ${REMOTE_BASE_PATH}
+        REBUILD_ORCHESTRATOR: ${REBUILD_ORCHESTRATOR:-false}
     container_name: benchmarking-ai-server
     ports:
       - "8001:8001"

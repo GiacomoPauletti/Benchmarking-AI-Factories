@@ -10,14 +10,18 @@ Tests vLLM service performance with prompts of varying lengths to identify:
 
 Usage:
     # Use HuggingFace dataset
-    python examples/stress_test_variable_length.py --dataset sharegpt
+    python examples/stress_test_scenarios/stress_test_variable_length.py --dataset sharegpt
     
     # Use local files
-    python examples/stress_test_variable_length.py --data-dir examples/data
+    python examples/stress_test_scenarios/stress_test_variable_length.py --data-dir examples/data
     
     # Custom length ranges
-    python examples/stress_test_variable_length.py --min-tokens 100 --max-tokens 3000
+    python examples/stress_test_scenarios/stress_test_variable_length.py --min-tokens 100 --max-tokens 3000
 """
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests
 import time

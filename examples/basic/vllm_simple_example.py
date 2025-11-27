@@ -9,9 +9,16 @@ This script demonstrates the basic workflow:
 4. Get a response
 """
 
+import os
+import sys
+
+# Ensure the repository's `examples` directory is on `sys.path` so
+# `from utils.utils import ...` resolves when running this script
+# directly from `examples/basic`.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import requests
 import time
-import os
 from utils.utils import wait_for_server, wait_for_service_ready
 
 

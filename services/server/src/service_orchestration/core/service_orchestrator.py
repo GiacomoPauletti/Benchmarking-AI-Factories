@@ -248,13 +248,14 @@ class ServiceOrchestrator:
         replicas_per_node = total_gpus // gpu_per_replica
         total_replicas = num_nodes * replicas_per_node
         
-        # Create service group
+        # Create service group using job_id in group_id
         group_id = self.service_manager.group_manager.create_replica_group(
             recipe_name=recipe_name,
             num_nodes=num_nodes,
             replicas_per_node=replicas_per_node,
             total_replicas=total_replicas,
-            config=config
+            config=config,
+            job_id=job_id
         )
         
         # Pre-register replicas (they'll update to "ready" when health checks pass)

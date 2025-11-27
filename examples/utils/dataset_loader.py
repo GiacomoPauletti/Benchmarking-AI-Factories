@@ -64,8 +64,15 @@ class DatasetLoader:
         logger.info(f"Loading dataset: {dataset_name} (split={split})")
         
         try:
-            dataset = load_dataset(dataset_name, split=split, trust_remote_code=True)
-            
+            # Load dataset - use force_redownload to work around cache bugs in some datasets versions
+            from datasets import DownloadMode
+            dataset = load_dataset(
+                dataset_name,
+                split=split,
+                download_mode=DownloadMode.REUSE_CACHE_IF_EXISTS,
+                verification_mode="no_checks",
+            )
+
             if shuffle:
                 dataset = dataset.shuffle(seed=seed)
             

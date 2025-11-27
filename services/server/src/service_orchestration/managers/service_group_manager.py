@@ -23,7 +23,8 @@ class ServiceGroupManager:
     
     def create_replica_group(self, recipe_name: str, num_nodes: int, 
                              replicas_per_node: int, total_replicas: int,
-                             config: Dict[str, Any] = None) -> str:
+                             config: Dict[str, Any] = None,
+                             job_id: str = None) -> str:
         """Create a new replica group.
         
         Args:
@@ -32,11 +33,15 @@ class ServiceGroupManager:
             replicas_per_node: Number of replicas per node
             total_replicas: Total number of replicas (num_nodes * replicas_per_node)
             config: Optional configuration for the group
+            job_id: Optional SLURM job ID to use in the group ID (if provided, group_id = "sg-{job_id}")
             
         Returns:
-            The group ID (format: "sg-<uuid>")
+            The group ID (format: "sg-<job_id>" if job_id provided, else "sg-<uuid>")
         """
-        group_id = f"sg-{uuid.uuid4().hex[:12]}"
+        if job_id:
+            group_id = f"sg-{job_id}"
+        else:
+            group_id = f"sg-{uuid.uuid4().hex[:12]}"
         
         self.groups[group_id] = {
             "id": group_id,
