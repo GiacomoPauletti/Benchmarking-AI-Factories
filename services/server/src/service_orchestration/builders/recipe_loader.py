@@ -86,17 +86,20 @@ class RecipeLoader:
         Returns:
             List of recipe metadata dicts
         """
-        recipes = []
-        
         if not self.recipes_dir.exists():
-            return recipes
+            self.logger.warning("Directory folder %s does not exist", self.recipes_dir)
+            return []
         
+        recipes = []
         for category_dir in self.recipes_dir.iterdir():
+            self.logger.debug(f"Listing recipes in directory {category_dir}")
             if not category_dir.is_dir():
+                self.logger.warning("Not a directory")
                 continue
             
             for recipe_file in category_dir.glob("*.yaml"):
                 try:
+                    self.logger.debug(f"Found file {recipe_file}")
                     with open(recipe_file, 'r') as f:
                         recipe_data = yaml.safe_load(f)
                     
@@ -107,6 +110,7 @@ class RecipeLoader:
                 except Exception as e:
                     self.logger.error("Failed to load recipe %s: %s", recipe_file, e)
         
+        self.logger.debug(f"Found recipes: {recipes}")
         return recipes
     
     def list_by_category(self, category: str) -> List[Dict[str, Any]]:

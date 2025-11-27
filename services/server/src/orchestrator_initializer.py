@@ -177,6 +177,7 @@ apptainer run \\
     --env SLURM_JWT=$SLURM_JWT \\
     --env ORCHESTRATOR_ACCOUNT={settings.account} \
     --env REMOTE_BASE_PATH=$BENCHMARK_DIR \\
+    --bind $BENCHMARK_DIR \\
     "$SIF_PATH" \\
     --host 0.0.0.0 --port $ORCHESTRATOR_PORT
 """
