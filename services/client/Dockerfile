@@ -50,6 +50,17 @@ RUN --mount=type=ssh \
 # Set Python path
 ENV PYTHONPATH=/app/src
 
+FROM base AS test
+
+COPY requirements-dev.txt .
+RUN pip install -q -r --no-cache-dir -r requirements-dev.txt
+
+COPY tests/ ./tests/
+
+CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--color=yes"]
+
+FROM base AS prod
+
 # Create logs directory
 RUN mkdir -p /app/logs
 

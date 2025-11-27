@@ -42,7 +42,6 @@ Configure via environment variables in `.env` or `.env.local`:
 SSH_HOST=login.lxp.lu
 SSH_PORT=8822
 SSH_USER=u103056
-SSH_KEY_PATH=~/.ssh/id_ed25519
 
 # Remote path on MeluXina
 REMOTE_BASE_PATH=~/ai-factory-benchmarks

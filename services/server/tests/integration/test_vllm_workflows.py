@@ -184,22 +184,6 @@ def _discover_server_url() -> str:
     if env_url:
         return env_url.rstrip("/")
 
-    endpoint_file = REPO_ROOT / "services" / "server" / ".server-endpoint"
-    if endpoint_file.exists():
-        content = endpoint_file.read_text(encoding="utf-8").strip()
-        if content:
-            url = content.rstrip("/")
-            # When running inside the test container (`server-test`) the server
-            # is reachable at the compose service hostname `server:8001`, not
-            # `localhost:8001` (localhost would resolve to the test container).
-            # The test runner sets `TESTING=true` in the container; if present,
-            # rewrite localhost -> server so network calls reach the server
-            # container.
-            testing_flag = os.getenv("TESTING")
-            if testing_flag and "localhost" in url:
-                return url.replace("localhost", "server")
-            return url
-
     return "http://localhost:8001"
 
 

@@ -315,18 +315,6 @@ def _discover_server_url() -> str:
     if env_url:
         return env_url.rstrip("/")
     
-    # Try to find discovery file
-    repo_root = Path(__file__).parent.parent.parent.parent.parent
-    endpoint_file = repo_root / "services" / "server" / ".server-endpoint"
-    if endpoint_file.exists():
-        content = endpoint_file.read_text(encoding="utf-8").strip()
-        if content:
-            url = content.rstrip("/")
-            # When running in test container, rewrite localhost -> server
-            if os.getenv("TESTING") and "localhost" in url:
-                return url.replace("localhost", "server")
-            return url
-    
     return "http://localhost:8001"
 
 
