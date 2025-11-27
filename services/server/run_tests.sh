@@ -24,7 +24,7 @@ run_in_docker() {
     local pytest_targets="$*"
 
     echo "$description"
-    docker compose $COMPOSE_FLAGS run --rm \
+    docker compose $COMPOSE_FLAGS run --build --rm \
         -e TESTING=true \
         server-test \
         bash -c "cd /app && pip install -q -r requirements-dev.txt && python -m pytest $pytest_targets -v --tb=short --color=yes"
