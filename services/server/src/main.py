@@ -93,21 +93,36 @@ def shutdown_handler(signum, frame):
         print(f"Received shutdown signal {signum}. Stopping all services...")
 
     try:
-        # First, stop the orchestrator to prevent new jobs
+        # First, stop all service groups (before individual services)
         if orchestrator_proxy:
             try:
+                service_groups = orchestrator_proxy.list_service_groups()
                 if logger:
-                    logger.info("Stopping orchestrator job...")
+                    logger.info(f"Found {len(service_groups)} service groups to stop")
                 else:
-                    print("Stopping orchestrator job...")
-                orchestrator_proxy.stop_orchestrator()
+                    print(f"Found {len(service_groups)} service groups to stop")
+
+                for group in service_groups:
+                    group_id = group.get("id")
+                    group_name = group.get("name", "unknown")
+                    try:
+                        if logger:
+                            logger.info(f"Stopping service group {group_id} ({group_name})...")
+                        else:
+                            print(f"Stopping service group {group_id} ({group_name})...")
+                        orchestrator_proxy.stop_service_group(group_id)
+                    except Exception as e:  # noqa: BLE001
+                        if logger:
+                            logger.error(f"Failed to stop service group {group_id}: {e}")
+                        else:
+                            print(f"Failed to stop service group {group_id}: {e}")
             except Exception as e:  # noqa: BLE001
                 if logger:
-                    logger.error(f"Failed to stop orchestrator: {e}")
+                    logger.error(f"Failed to list service groups: {e}")
                 else:
-                    print(f"Failed to stop orchestrator: {e}")
+                    print(f"Failed to list service groups: {e}")
 
-        # Get all running services from orchestrator
+        # Then stop individual services
         if orchestrator_proxy:
             services = orchestrator_proxy.list_services()
 
@@ -132,10 +147,24 @@ def shutdown_handler(signum, frame):
                     else:
                         print(f"Failed to stop service {service_id}: {e}")
 
+        # Finally, stop the orchestrator job itself
+        if orchestrator_proxy:
+            try:
+                if logger:
+                    logger.info("Stopping orchestrator job...")
+                else:
+                    print("Stopping orchestrator job...")
+                orchestrator_proxy.stop_orchestrator()
+            except Exception as e:  # noqa: BLE001
+                if logger:
+                    logger.error(f"Failed to stop orchestrator: {e}")
+                else:
+                    print(f"Failed to stop orchestrator: {e}")
+
         if logger:
-            logger.info("All services stopped. Exiting...")
+            logger.info("All services and orchestrator stopped. Exiting...")
         else:
-            print("All services stopped. Exiting...")
+            print("All services and orchestrator stopped. Exiting...")
     except Exception as e:  # noqa: BLE001
         if logger:
             logger.error(f"Error during shutdown: {e}")
@@ -254,36 +283,16 @@ async def on_startup():
     """FastAPI startup event handler - set up SSH tunnel and wait for orchestrator."""
     global logger, orchestrator_proxy, orchestrator_monitor_task
     
+    # SLURM REST API now uses the same SOCKS5 proxy as the orchestrator
+    # No separate tunnel needed - SlurmClient will route through socks5h://localhost:1080
     if logger:
-        logger.info("Setting up SSH tunnel to SLURM REST API...")
+        logger.info("SLURM REST API will use SOCKS5 proxy (no separate tunnel needed)")
     else:
-        print("Setting up SSH tunnel to SLURM REST API...")
-    
-    slurm_local_port = int(os.getenv("SLURM_REST_LOCAL_PORT", "6820"))
-    slurm_remote_port = int(os.getenv("SLURM_REST_REMOTE_PORT", str(slurm_local_port)))
-    slurm_remote_host = os.getenv("SLURM_REST_REMOTE_HOST", "slurmrestd.meluxina.lxp.lu")
+        print("SLURM REST API will use SOCKS5 proxy (no separate tunnel needed)")
 
     try:
         from ssh_manager import SSHManager
         ssh_manager = SSHManager()
-        ssh_manager.setup_slurm_rest_tunnel(
-            local_port=slurm_local_port,
-            remote_host=slurm_remote_host,
-            remote_port=slurm_remote_port
-        )
-        
-        if logger:
-            logger.info(
-                "SSH tunnel established successfully on port %s -> %s:%s",
-                slurm_local_port,
-                slurm_remote_host,
-                slurm_remote_port
-            )
-        else:
-            print(
-                f"SSH tunnel established successfully on port {slurm_local_port} "
-                f"to {slurm_remote_host}:{slurm_remote_port}"
-            )
             
         # Initialize OrchestratorProxy - this blocks until orchestrator is ready
         if logger:
@@ -370,24 +379,37 @@ async def on_shutdown():
     global logger, orchestrator_proxy, orchestrator_monitor_task
     
     if logger:
-        logger.info("FastAPI shutdown event triggered. Stopping orchestrator and services...")
+        logger.info("FastAPI shutdown event triggered. Stopping service groups, services, and orchestrator...")
     else:
-        print("FastAPI shutdown event triggered. Stopping orchestrator and services...")
+        print("FastAPI shutdown event triggered. Stopping service groups, services, and orchestrator...")
     
     try:
-        # Stop orchestrator first
+        # First, stop all service groups (before individual services)
         if orchestrator_proxy:
             try:
+                service_groups = orchestrator_proxy.list_service_groups()
                 if logger:
-                    logger.info("Stopping orchestrator job...")
-                orchestrator_proxy.stop_orchestrator()
+                    logger.info(f"Found {len(service_groups)} service groups to stop")
+                
+                for group in service_groups:
+                    group_id = group.get("id")
+                    group_name = group.get("name", "unknown")
+                    try:
+                        if logger:
+                            logger.info(f"Stopping service group {group_id} ({group_name})...")
+                        orchestrator_proxy.stop_service_group(group_id)
+                    except Exception as e:
+                        if logger:
+                            logger.error(f"Failed to stop service group {group_id}: {e}")
             except Exception as e:
                 if logger:
-                    logger.error(f"Failed to stop orchestrator: {e}")
+                    logger.error(f"Failed to list service groups: {e}")
         
-        # Get all running services from orchestrator
+        # Then stop individual services
         if orchestrator_proxy:
             services = orchestrator_proxy.list_services()
+            if logger:
+                logger.info(f"Found {len(services)} services to stop")
             
             for service in services:
                 service_id = service.get("id")
@@ -399,6 +421,16 @@ async def on_shutdown():
                 except Exception as e:
                     if logger:
                         logger.error(f"Failed to stop service {service_id}: {e}")
+        
+        # Finally, stop the orchestrator job itself
+        if orchestrator_proxy:
+            try:
+                if logger:
+                    logger.info("Stopping orchestrator job...")
+                orchestrator_proxy.stop_orchestrator()
+            except Exception as e:
+                if logger:
+                    logger.error(f"Failed to stop orchestrator: {e}")
     except Exception as e:
         if logger:
             logger.error(f"Error during FastAPI shutdown: {e}")

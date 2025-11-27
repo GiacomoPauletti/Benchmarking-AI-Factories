@@ -29,8 +29,13 @@ MANIFEST
 # Server logs and job outputs
 services/server/logs/
 services/client/logs/
+services/logs/data/
 *.out
 *.err
+
+# Load generator configs and results
+loadgen-*.json
+**/logs/**/loadgen-*.json
 
 # Monitor state
 services/monitoring/state/

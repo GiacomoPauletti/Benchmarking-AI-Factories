@@ -1,8 +1,5 @@
 Server:
     MAIN:
-    - Test multi node replicas.
-    - Add flag to rebuild orchestrator.
-    - Delete all files in meluxina. Then restart server to see if everything works smoothly.
 
     Optional:
     - VLLMEndpoint, LoadBalancer, register/unregister, forward_completion, and health checking are vllm_service specific. Refactor?

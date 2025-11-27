@@ -114,8 +114,8 @@ async def create_client_group(
     """Create a new client group for load testing.
     
     A client group represents a SLURM job that will spawn multiple concurrent clients
-    to send requests to AI inference services. The service automatically generates a unique
-    group ID and returns it in the response.
+    to send requests to AI inference services. The group ID is derived from the SLURM
+    job ID for easy correlation with HPC job management.
     
     **Request Body:**
     - `service_id`: Service ID of the vLLM service to test (the client service will resolve the data-plane endpoint)
@@ -132,9 +132,9 @@ async def create_client_group(
         ```json
         {
             "status": "created",
-            "group_id": 12345,
+            "group_id": 3732769,
             "num_clients": 10,
-            "message": "Load generator job submitted for service 3732769"
+            "message": "Load generator job submitted for service sg-3732769"
         }
         ```
     
@@ -143,7 +143,7 @@ async def create_client_group(
         curl -X POST "http://localhost:8002/api/v1/client-groups" \\
             -H "Content-Type: application/json" \\
             -d '{
-                "service_id": "3732769",
+                "service_id": "sg-3732769",
                 "num_clients": 5,
                 "requests_per_second": 2.0,
                 "duration_seconds": 60,
@@ -154,40 +154,77 @@ async def create_client_group(
         ```
     
     **Workflow:**
-    1. Client Service generates a unique group ID
-    2. Validates the request
-    3. Creates a ClientGroup object with load test configuration
-    4. Submits a SLURM job to HPC cluster
-    5. SLURM job runs load generator on compute node
-    6. Load generator sends requests to target vLLM endpoint
-    7. Results are saved to logs directory
-    8. Returns immediately with the group ID (job runs asynchronously)
+    1. Client Service submits a SLURM job to HPC cluster
+    2. Uses the SLURM job ID as the group ID for easy correlation
+    3. SLURM job runs load generator on compute node
+    4. Load generator sends requests to target vLLM endpoint
+    5. Results are saved to logs directory
+    6. Returns immediately with the group ID (job runs asynchronously)
     
     **Note:** The load test runs asynchronously. Use `GET /client-groups/{group_id}`
     to check status and retrieve results after completion.
     """
-    # Generate unique group ID
-    import time
-    group_id = int(time.time() * 1000) % 1000000  # Millisecond timestamp mod 1M
-    
-    logger.debug(f"Creating client group {group_id} for service {payload.service_id}")
+    logger.debug(f"Creating client group for service {payload.service_id}")
     
     # Convert payload to dict for storage
     load_config = payload.dict()
     
-    res = client_manager.add_client_group(group_id, load_config)
+    # Resolve orchestrator URL if service_id is provided
+    if not client_manager._orchestrator_url:
+        client_manager.set_orchestrator_url(client_manager._server_addr)
     
-    if res == ClientManagerResponseStatus.ALREADY_EXISTS:
-        # Unlikely with timestamp-based ID, but handle it
-        logger.warning(f"Client group {group_id} already exists, regenerating ID")
-        group_id = (group_id + 1) % 1000000
-        res = client_manager.add_client_group(group_id, load_config)
+    service_id = load_config.get('service_id')
+    if service_id and client_manager._orchestrator_url:
+        prompt_url = f"{client_manager._orchestrator_url.rstrip('/')}/api/services/vllm/{service_id}/prompt"
+        load_config['prompt_url'] = prompt_url
+        logger.info(f"Using orchestrator prompt endpoint for service {service_id}: {prompt_url}")
     
-    if res == ClientManagerResponseStatus.ERROR:
-        logger.error(f"Failed to create client group {group_id}")
+    # Import ClientGroup to create it directly and get job ID
+    from client_manager.client_group import ClientGroup
+    
+    try:
+        # Create ClientGroup - it dispatches SLURM job and gets job_id
+        client_group = ClientGroup(
+            group_id=0,  # Temporary, will be replaced by job_id
+            load_config=load_config,
+            account=client_manager._account,
+            use_container=client_manager._use_container
+        )
+        
+        # Get the SLURM job ID and use it as the group_id
+        job_id = client_group.get_job_id()
+        if job_id:
+            group_id = int(job_id)
+        else:
+            # Fallback to timestamp if no job ID (shouldn't happen)
+            group_id = int(time.time() * 1000) % 1000000
+            logger.warning(f"No SLURM job ID returned, using timestamp-based ID: {group_id}")
+        
+        # Update the group's internal ID to match
+        client_group._group_id = group_id
+        
+        # Register with client manager
+        with client_manager._lock:
+            if group_id in client_manager._client_groups:
+                logger.warning(f"Client group {group_id} already exists")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Client group {group_id} already exists"
+                )
+            client_manager._client_groups[group_id] = client_group
+        
+        logger.info(
+            f"Added client group {group_id} (job {job_id}): {load_config['num_clients']} clients, "
+            f"{load_config['requests_per_second']} RPS"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create client group: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create client group. Check SSH connectivity and SLURM configuration."
+            detail=f"Failed to create client group: {str(e)}"
         )
     
     target_msg = load_config.get('prompt_url') or f"service {payload.service_id}"
@@ -196,7 +233,7 @@ async def create_client_group(
         "status": "created",
         "group_id": group_id,
         "num_clients": payload.num_clients,
-        "message": f"Load generator job submitted for {target_msg}"
+        "message": f"Load generator job {group_id} submitted for {target_msg}"
     }
 
 

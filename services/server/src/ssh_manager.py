@@ -11,16 +11,10 @@ import requests
 import time
 from pathlib import Path
 from typing import Optional, Tuple, Dict
-import requests
 
 
 class SSHManager:
     """Manages SSH connections and operations from local to MeluXina HPC cluster.
-    
-    Provides functionality for:
-    - Remote file fetching (logs, etc.)
-    - Recipe synchronization to remote HPC
-    - Remote command execution
     """
     
     def __init__(self, ssh_host: str = None, ssh_user: str = None, ssh_port: int = None, local_socks_port: int = 1080):
@@ -98,6 +92,15 @@ class SSHManager:
             self.logger.debug(f"Establishing SOCKS5 proxy: {' '.join(ssh_command)}")
             
             self.socks_proxy = subprocess.Popen(ssh_command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            
+            # Wait a moment for the SOCKS proxy to be ready
+            time.sleep(2)
+            
+            # Verify the proxy is actually listening
+            if self.socks_proxy.poll() is not None:
+                stderr = self.socks_proxy.stderr.read().decode() if self.socks_proxy.stderr else ""
+                self.logger.error(f"SOCKS proxy failed to start: {stderr}")
+                return False
             
             self.logger.info(f"SOCKS5 proxy established on localhost:{local_port}, PID: {self.socks_proxy.pid}")
             return True
@@ -283,57 +286,6 @@ class SSHManager:
         
         raise RuntimeError(f"Could not parse SLURM token from output: {stdout}")
     
-    def setup_slurm_rest_tunnel(self, local_port: int = 6820, 
-                                remote_host: str = "slurmrestd.meluxina.lxp.lu",
-                                remote_port: int = 6820) -> int:
-        """Establish an SSH tunnel for the SLURM REST API."""
-        if self._is_tunnel_active(local_port):
-            self.logger.info(f"SSH tunnel already active on port {local_port}")
-            return local_port
-        
-        try:
-            ssh_command = self._ssh_base_cmd + [
-                "-f", "-N",
-                "-L", f"{local_port}:{remote_host}:{remote_port}",
-                "-o", "ExitOnForwardFailure=yes",
-                "-o", "ServerAliveInterval=60",
-                self.ssh_target
-            ]
-            
-            self.logger.debug(f"Creating SSH tunnel: {' '.join(ssh_command)}")
-            env = os.environ.copy()
-            result = subprocess.run(
-                ssh_command,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                env=env
-            )
-            
-            if result.returncode != 0:
-                raise ConnectionError(f"Failed to create SSH tunnel: {result.stderr}")
-            
-            self.logger.info(f"SSH tunnel established: localhost:{local_port} -> {remote_host}:{remote_port}")
-            time.sleep(1)
-            return local_port
-            
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("SSH tunnel creation timed out")
-        except Exception as e:
-            self.logger.error(f"Failed to establish SSH tunnel: {e}")
-            raise RuntimeError(f"SSH tunnel setup failed: {str(e)}")
-    
-    def _is_tunnel_active(self, local_port: int) -> bool:
-        """Check whether an SSH tunnel already listens on the given port."""
-        try:
-            response = requests.get(
-                f"http://localhost:{local_port}/slurm/v0.0.40/ping",
-                timeout=2
-            )
-            return response.status_code in (200, 401, 403)
-        except Exception:
-            return False
-    
     def execute_remote_command(self, command: str, timeout: int = 30) -> Tuple[bool, str, str]:
         """Execute a command on MeluXina via SSH with ControlMaster.
         
@@ -427,15 +379,23 @@ class SSHManager:
             resp = self._session.request(method, url, timeout=timeout, headers=headers, json=json_data)
             status_code = resp.status_code
             is_json = 'application/json' in resp.headers.get('Content-Type', '')
-            body = resp.json() if is_json else resp.text
-            self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(body)} bytes) took {resp.elapsed.total_seconds()*1000:.2f}ms")
+            
+            # Try to parse as JSON first, fallback to text if that fails
+            # This handles cases where Content-Type header is missing but body is actually JSON
+            try:
+                body = resp.json()
+            except (ValueError, json.JSONDecodeError):
+                body = resp.text
+                
+            self.logger.debug(f"HTTP {method} {remote_host}:{remote_port}{path} -> {status_code} ({len(str(body))} chars) took {resp.elapsed.total_seconds()*1000:.2f}ms")
 
             if not resp.ok:
                 self.logger.warning(f"HTTP request via SSH failed to {remote_host}:{remote_port}{path}: {status_code} - {body}")
 
             if json_body and not is_json:
-                self.logger.warning(f"Expected JSON response but got non-JSON from {remote_host}:{remote_port}{path}")
-                return False, status_code, body
+                self.logger.warning(f"Expected JSON response but got non-JSON (Content-Type: {resp.headers.get('Content-Type')}) from {remote_host}:{remote_port}{path}")
+                # Still return success if the HTTP status was OK - Content-Type header might just be missing
+                # Only fail if the actual HTTP request failed
             
             return resp.ok, status_code, body
         

@@ -181,12 +181,21 @@ class TestOrchestratorInternalAPI:
 
     def test_stop_service_group(self, client, mock_core_orchestrator):
         """Stopping a service group should call orchestrator.stop_service_group"""
-        mock_core_orchestrator.stop_service_group.return_value = {"status": "success"}
+        mock_core_orchestrator.stop_service_group.return_value = {
+            "status": "success",
+            "message": "Service group stopped",
+            "group_id": "sg-1",
+            "stopped": 4,
+            "stopped_jobs": ["123", "124"]
+        }
 
         response = client.post("/api/service-groups/sg-1/stop")
 
         assert response.status_code == 200
-        assert response.json()["status"] == "success"
+        result = response.json()
+        assert result["success"] is True
+        assert result["group_id"] == "sg-1"
+        assert result["replicas_stopped"] == 4
         mock_core_orchestrator.stop_service_group.assert_called_once_with("sg-1")
 
     def test_forward_completion(self, client, mock_core_orchestrator):

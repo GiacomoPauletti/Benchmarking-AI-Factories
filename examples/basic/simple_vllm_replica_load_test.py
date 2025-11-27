@@ -1,23 +1,34 @@
 #!/usr/bin/env python3
 """
-Simple end-to-end example demonstrating vLLM load testing.
+Simple end-to-end example demonstrating vLLM replica load testing via the Server API proxy.
 
 This script:
-1. Starts a vLLM inference service via the server API
-2. Waits for the service to be ready
-3. Creates a client group that generates load through the Server API proxy.
-
-The client sends requests to the Server API, which proxies them to the vLLM service.
+1. Starts a vLLM replica service group through the Server API.
+2. Waits for the service group to expose a routable endpoint.
+3. Creates a client group whose traffic flows through the Server API proxy into the replicas.
+4. Cleans up the client group and replica service group.
 
 Usage:
-    python examples/simple_vllm_load_test.py
+    python examples/simple_vllm_replica_load_test.py
 """
+
+import os
+import sys
+
+# Ensure the repository's `examples` directory is on `sys.path` so
+# `from utils.utils import ...` resolves when running this script
+# directly from `examples/basic`.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import requests
 import time
 import json
-from typing import Optional, Dict, Any
-from utils.utils import wait_for_server, wait_for_client, wait_for_service_ready
+from typing import Optional
+from utils.utils import (
+    wait_for_server,
+    wait_for_client,
+    wait_for_service_group_ready,
+)
 
 # API endpoints
 SERVER_API = "http://localhost:8001/api/v1"
@@ -25,36 +36,41 @@ SERVER_BASE = "http://localhost:8001"
 CLIENT_API = "http://localhost:8003/api/v1"
 CLIENT_BASE = "http://localhost:8003"
 
-def create_vllm_service() -> str:
-    """Create a vLLM inference service and return its service_id."""
-    print("Creating vLLM Service")
-    
-    # Use a small model for quick startup
+def create_vllm_service_group() -> str:
+    """Create a vLLM replica service group and return its group_id."""
+    print("Creating vLLM Replica Group")
+
     payload = {
-        "recipe_name": "inference/vllm-single-node"
+        "recipe_name": "inference/vllm-replicas"
     }
-    
-    print(f"Requesting vLLM service with config:")
+
+    print("Requesting vLLM replicas with config:")
     print(json.dumps(payload, indent=2))
-    
+
     response = requests.post(f"{SERVER_API}/services", json=payload)
     response.raise_for_status()
-    
-    service = response.json()
-    service_id = service["id"]
-    
-    print(f"\nService created with ID: {service_id}")
-    print(f"  Status: {service['status']}")
-    print(f"  Recipe: {service['recipe_name']}")
-    
-    return service_id
+
+    group_info = response.json()
+    group_id = group_info.get("group_id") or group_info["id"]
+
+    total_replicas = group_info.get("total_replicas")
+    status = group_info.get("status")
+
+    print(f"\nService group created with ID: {group_id}")
+    if total_replicas is not None:
+        print(f"  Replicas: {total_replicas}")
+    if status:
+        print(f"  Status: {status}")
+    print(f"  Recipe: {group_info.get('recipe_name')}")
+
+    return group_id
 
 
-def create_load_test_group(service_id: str, direct_url: str = None) -> Optional[int]:
+def create_load_test_group(service_group_id: str, direct_url: str = None) -> Optional[int]:
     """Create a client group that generates load against a vLLM service.
     
     Args:
-        service_id: The vLLM service ID from the server
+        service_group_id: The vLLM service group ID from the server
         direct_url: Optional direct URL to the vLLM service (bypasses server proxy)
         
     Returns:
@@ -64,7 +80,7 @@ def create_load_test_group(service_id: str, direct_url: str = None) -> Optional[
     
     # Configure a gentle load test
     payload = {
-        "service_id": service_id,    # Service to test
+        "service_id": service_group_id,  # Target service group
         "num_clients": 10,  # 10 concurrent clients
         "requests_per_second": 0.2,  # Low rate: 1 request every 5 seconds
         "duration_seconds": 60,  # 1 minute test
@@ -81,7 +97,7 @@ def create_load_test_group(service_id: str, direct_url: str = None) -> Optional[
     
     print(f"Load test configuration:")
     print(f"  Server API: {SERVER_BASE}")
-    print(f"  Service ID: {service_id}")
+    print(f"  Service Group ID: {service_group_id}")
     print(f"  Clients: {payload['num_clients']}")
     print(f"  RPS: {payload['requests_per_second']}")
     print(f"  Duration: {payload['duration_seconds']}s")
@@ -95,11 +111,11 @@ def create_load_test_group(service_id: str, direct_url: str = None) -> Optional[
         response.raise_for_status()
         
         result = response.json()
-        group_id = result.get('group_id')
+        client_group_id = result.get('group_id')
         
-        print(f"\nClient group {group_id} created successfully")
+        print(f"\nClient group {client_group_id} created successfully")
         print(f"  Message: {result.get('message', 'Load generator job submitted')}")
-        return group_id
+        return client_group_id
         
     except requests.RequestException as e:
         print(f"\nFailed to create client group: {e}")
@@ -108,22 +124,22 @@ def create_load_test_group(service_id: str, direct_url: str = None) -> Optional[
         return None
 
 
-def monitor_client_group(group_id: int, duration: int = 120):
+def monitor_client_group(client_group_id: int, duration: int = 120):
     """Monitor the client group progress.
     
     Args:
-        group_id: The client group ID
+        client_group_id: The client group ID
         duration: Maximum time to monitor in seconds (stops early if job completes)
     """
     print("Monitoring Load Test Progress")
-    print(f"Monitoring client group {group_id} for up to {duration}s")
+    print(f"Monitoring client group {client_group_id} for up to {duration}s")
     print("Note: Results will be written to remote logs directory")
     
     start_time = time.time()
     
     while time.time() - start_time < duration:
         try:
-            response = requests.get(f"{CLIENT_API}/client-groups/{group_id}")
+            response = requests.get(f"{CLIENT_API}/client-groups/{client_group_id}")
             response.raise_for_status()
             
             group_info = response.json()
@@ -146,25 +162,18 @@ def monitor_client_group(group_id: int, duration: int = 120):
         # Timeout reached without completion
         print(f"\nMonitoring timeout reached after {duration}s")
     
-    print(f"\nCheck logs for detailed results (loadgen-{group_id}).")
+    print(f"\nCheck logs for detailed results (loadgen-{client_group_id}).")
 
 
-def cleanup_service(service_id: str):
-    """Stop a running vLLM service.
-    
-    Args:
-        service_id: The service ID to stop
-    """
-    print(f"\nStopping service {service_id}...")
+def cleanup_service_group(group_id: str):
+    """Stop a running vLLM service group and its replicas."""
+    print(f"\nStopping service group {group_id}...")
     try:
-        response = requests.post(
-            f"{SERVER_API}/services/{service_id}/status",
-            json={"status": "cancelled"}
-        )
+        response = requests.delete(f"{SERVER_API}/service-groups/{group_id}")
         response.raise_for_status()
-        print(f"Service {service_id} stopped successfully")
+        print(f"Service group {group_id} stopped successfully")
     except requests.RequestException as e:
-        print(f"Failed to stop service: {e}")
+        print(f"Failed to stop service group: {e}")
 
 
 def main():
@@ -176,8 +185,9 @@ def main():
     print("  3. Running a load test against the service")
     print()
     
-    service_id = None
-    group_id = None
+    service_group_id = None
+    client_group_id = None
+    prompt_url = None
     
     try:
         # Step 0: Wait for services to be ready
@@ -197,27 +207,34 @@ def main():
         
         print()
         
-        # Step 1: Create vLLM service
-        print("STEP 1: Creating vLLM Service")
-        service_id = create_vllm_service()
+        # Step 1: Create vLLM replica service group
+        print("STEP 1: Creating vLLM Replica Group")
+        service_group_id = create_vllm_service_group()
         print()
         
-        # Step 2: Wait for service to be ready
-        print("STEP 2: Waiting for vLLM Service")
-        endpoint = wait_for_service_ready(SERVER_BASE, service_id, max_wait=600)
-        
-        if not endpoint:
-            print("\nFailed to get service endpoint. Aborting.")
+        # Step 2: Wait for replicas to become healthy
+        print("STEP 2: Waiting for vLLM Replicas")
+        ready = wait_for_service_group_ready(
+            SERVER_BASE,
+            service_group_id,
+            min_healthy=1,
+            timeout=600,
+        )
+
+        if not ready:
+            print("\nFailed to detect healthy replicas. Aborting.")
             return
+
+        prompt_url = f"{SERVER_API}/vllm/{service_group_id}/prompt"
+        print(f"Replica prompt URL: {prompt_url}")
         
         print()
         
-        # Step 3: Create load test group (returns auto-generated group_id)
+        # Step 3: Create load test group (returns auto-generated group ID)
         print("STEP 3: Creating Load Test Group")
-        # Pass the direct endpoint to the load generator
-        group_id = create_load_test_group(service_id, direct_url=endpoint)
+        client_group_id = create_load_test_group(service_group_id)
         
-        if not group_id:
+        if not client_group_id:
             print("\nFailed to create load test group. Aborting.")
             return
         
@@ -225,13 +242,13 @@ def main():
         
         # Step 4: Monitor progress
         print("STEP 4: Monitoring Load Test")
-        monitor_client_group(group_id, duration=300)
+        monitor_client_group(client_group_id, duration=300)
         
         print()
         print("SUCCESS: Load Test Complete!")
-        print(f"Service ID: {service_id}")
-        print(f"Client Group ID: {group_id}")
-        print(f"Endpoint: {endpoint}")
+        print(f"Service Group ID: {service_group_id}")
+        print(f"Client Group ID: {client_group_id}")
+        print(f"Prompt URL: {prompt_url}")
         
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
@@ -241,13 +258,13 @@ def main():
         traceback.print_exc()
     finally:
         # Cleanup
-        if service_id:
-            response = input(f"\nStop service {service_id}? [y/N]: ")
+        if service_group_id:
+            response = input(f"\nStop service group {service_group_id}? [y/N]: ")
             if response.lower() == 'y':
-                cleanup_service(service_id)
+                cleanup_service_group(service_group_id)
             else:
-                print(f"Service {service_id} left running. Stop it manually when done:")
-                print(f"  curl -X POST {SERVER_API}/services/{service_id}/status -H 'Content-Type: application/json' -d '{{\"status\": \"cancelled\"}}'")
+                print(f"Service group {service_group_id} left running. Stop it manually when done:")
+                print(f"  curl -X DELETE {SERVER_API}/service-groups/{service_group_id}")
 
 
 if __name__ == "__main__":
