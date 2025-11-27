@@ -90,7 +90,7 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
     ```json
     [
       {
-        "targets": ["server:8001"],
+        "targets": ["mel0343:8002"],
         "labels": {
           "job": "service-3642874",
           "service_id": "3642874",
@@ -105,8 +105,28 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
         targets = []
         for service in orchestrator.list_services():
             service_id = service["id"]
+            
+            # Get full service details to resolve endpoint
+            service_details = orchestrator.get_service(service_id)
+            if not service_details:
+                continue
+            
+            # Only include running services with resolved endpoints
+            status = service_details.get("status", "").lower()
+            if status not in ["running", "RUNNING"]:
+                continue
+            
+            # Extract endpoint - it's in format "http://host:port"
+            endpoint = service_details.get("endpoint")
+            if not endpoint:
+                # Skip services without resolved endpoints
+                continue
+            
+            # Strip protocol to get "host:port" format for Prometheus
+            target = endpoint.replace("http://", "").replace("https://", "")
+            
             targets.append({
-                "targets": [service_id],
+                "targets": [target],
                 "labels": {
                     "job": f"service-{service_id}",
                     "service_id": service_id,
@@ -184,8 +204,21 @@ async def stop_service_group(group_id: str, orchestrator = Depends(get_orchestra
     """
     try:
         result = orchestrator.stop_service_group(group_id)
+        
+        # Handle not found gracefully - if already stopped, return success
         if not result.get("success"):
-            raise HTTPException(status_code=404, detail=result.get("error", "Service group not found"))
+            error_msg = result.get("error", "Service group not found")
+            # If the group doesn't exist, it's already stopped - this is idempotent
+            if "not found" in error_msg.lower():
+                return {
+                    "success": True,
+                    "message": f"Service group {group_id} already stopped or does not exist",
+                    "group_id": group_id,
+                    "replicas_stopped": 0
+                }
+            # For other errors, return 500
+            raise HTTPException(status_code=500, detail=error_msg)
+        
         return result
     except HTTPException:
         raise
@@ -211,6 +244,48 @@ async def get_service_group_status(group_id: str, orchestrator = Depends(get_orc
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/service-groups/{group_id}/status")
+async def update_service_group_status(
+    group_id: str,
+    status_update: Dict[str, str] = Body(..., examples={
+        "cancel": {
+            "summary": "Cancel a service group",
+            "value": {"status": "cancelled"}
+        }
+    }),
+    orchestrator = Depends(get_orchestrator_proxy)
+):
+    """**[Proxy]** Update the status of a service group (primarily for cancelling).
+    
+    This endpoint proxies to the orchestrator's service group management API.
+    Similar to single service status updates, this allows graceful cancellation
+    of all replicas in a group while preserving metadata for analysis.
+    
+    For detailed documentation, see the orchestrator API documentation at:
+    **POST /api/service-groups/{group_id}/status** on the orchestrator service.
+    """
+    new_status = status_update.get("status")
+    
+    if not new_status:
+        raise HTTPException(status_code=400, detail="Missing 'status' field in request body")
+    
+    # Currently only support cancelling service groups
+    if new_status == "cancelled":
+        result = orchestrator.update_service_group_status(group_id, new_status)
+        if not result.get("success"):
+            error_msg = result.get("error", "Service group not found")
+            if "not found" in error_msg.lower():
+                raise HTTPException(status_code=404, detail=error_msg)
+            else:
+                raise HTTPException(status_code=500, detail=error_msg)
+        return result
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported status value: '{new_status}'. Currently only 'cancelled' is supported."
+        )
 
 
 @router.get("/services/{service_id}/metrics")

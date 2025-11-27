@@ -223,6 +223,17 @@ class ServiceGroupManager:
             group["status"] = "starting"
         else:
             group["status"] = "pending"
+
+    def update_group_status(self, group_id: str, status: str) -> None:
+        """Forcefully set the overall group status when lifecycle events demand it."""
+
+        group = self.groups.get(group_id)
+        if not group:
+            self.logger.warning("Attempted to update status for missing group %s", group_id)
+            return
+
+        group["status"] = status
+        group["updated_at"] = datetime.now().isoformat()
     
     def get_healthy_replicas(self, group_id: str) -> List[str]:
         """Get list of healthy replica IDs for a group.

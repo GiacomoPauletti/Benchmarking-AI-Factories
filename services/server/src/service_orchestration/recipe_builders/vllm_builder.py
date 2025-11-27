@@ -28,8 +28,8 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
             recipe: Recipe configuration
             config: Combined recipe + user config with gpu_per_replica, base_port, etc.
         """
-        project_ws = paths.remote_base_path
-        hf_cache = f"{project_ws}/huggingface_cache"
+        project_ws = paths.remote_base_path.rstrip("/")
+        hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
         nv_flag = "--nv" if resources.get("gpu") else ""
         
         # Read configuration
@@ -41,13 +41,15 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
         total_gpus = int(resources.get("gpu", 4))
         gpu_per_replica = int(config.get("gpu_per_replica") or recipe.get("gpu_per_replica", 1))
         base_port = int(config.get("base_port") or recipe.get("base_port", 8001))
+        num_nodes = int(resources.get("nodes", 1))
         
         # Calculate replicas per node
         replicas_per_node = total_gpus // gpu_per_replica
+        total_replicas = replicas_per_node * num_nodes
         
         # Build script using srun for proper resource isolation
         script = f"""
-echo "=== Starting vLLM replica group ({replicas_per_node} replicas) ==="
+echo "=== Starting vLLM replica group ({total_replicas} total replicas, {replicas_per_node} per node across {num_nodes} nodes) ==="
 export VLLM_MODEL={model}
 export VLLM_MAX_MODEL_LEN={max_len}
 export VLLM_GPU_MEMORY_UTILIZATION={gpu_mem}
@@ -58,7 +60,8 @@ mkdir -p $HF_CACHE_HOST
 chmod 755 $HF_CACHE_HOST
 
 echo "Node: $(hostname)"
-echo "Starting {replicas_per_node} vLLM replicas using srun for resource isolation..."
+echo "Allocated nodes: $SLURM_JOB_NODELIST"
+echo "Starting {total_replicas} vLLM replicas ({replicas_per_node} per node across {num_nodes} nodes)..."
 echo "Base port: {base_port}"
 echo "Model: $VLLM_MODEL"
 echo "GPUs per replica: {gpu_per_replica}"
@@ -69,21 +72,24 @@ declare -a REPLICA_PIDS=()
 
 """
         
-        # Generate launch command for each replica using srun
-        for i in range(replicas_per_node):
-            port = base_port + i
-            
-            if gpu_per_replica == 1:
-                tensor_parallel = 1
-            else:
-                tensor_parallel = gpu_per_replica
-            
-            # Use srun --exact for proper resource isolation per replica
-            # This ensures SLURM manages GPU binding automatically
-            script += f"""
-# Replica {i}: Port {port}, {gpu_per_replica} GPU(s)
-echo "Launching replica {i} on port {port} (srun task {i})..."
-srun --ntasks=1 --exact --gpus-per-task={gpu_per_replica} \\
+        # Generate launch command for each replica across all nodes
+        replica_index = 0
+        for node_idx in range(num_nodes):
+            for replica_in_node in range(replicas_per_node):
+                port = base_port + replica_index
+                
+                if gpu_per_replica == 1:
+                    tensor_parallel = 1
+                else:
+                    tensor_parallel = gpu_per_replica
+                
+                # Use srun --exact for proper resource isolation per replica
+                # --nodes=1 ensures each replica runs on exactly one node
+                # --relative=<node_idx> selects which node within the allocation
+                script += f"""
+# Replica {replica_index}: Node {node_idx}, Port {port}, {gpu_per_replica} GPU(s)
+echo "Launching replica {replica_index} on node {node_idx}, port {port}..."
+srun --nodes=1 --ntasks=1 --relative={node_idx} --exact --gpus-per-task={gpu_per_replica} \\
     apptainer exec {nv_flag} \\
     --bind {paths.log_dir}:/app/logs \\
     --bind {project_ws}:/workspace \\
@@ -103,18 +109,19 @@ srun --ntasks=1 --exact --gpus-per-task={gpu_per_replica} \\
             --tensor-parallel-size {tensor_parallel} \\
             --max-model-len $VLLM_MAX_MODEL_LEN \\
             --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
-    " > {paths.log_dir}/vllm_${{SLURM_JOB_ID}}_replica_{i}.log 2>&1 &
+    " > {paths.log_dir}/vllm_${{SLURM_JOB_ID}}_replica_{replica_index}.log 2>&1 &
 
 REPLICA_PIDS+=($!)
-echo "Replica {i} started with PID ${{REPLICA_PIDS[-1]}} (output: vllm_${{SLURM_JOB_ID}}_replica_{i}.log)"
+echo "Replica {replica_index} started with PID ${{REPLICA_PIDS[-1]}} (output: vllm_${{SLURM_JOB_ID}}_replica_{replica_index}.log)"
 sleep 2  # Brief delay between launches
 
 """
+                replica_index += 1
         
         # Add wait logic to keep job alive - THIS IS CRITICAL!
         script += f"""
 # Wait for all replicas and handle termination
-echo "All {replicas_per_node} replicas launched. PIDs: ${{REPLICA_PIDS[@]}}"
+echo "All {total_replicas} replicas launched. PIDs: ${{REPLICA_PIDS[@]}}"
 echo "Waiting for replicas to complete..."
 
 # Function to cleanup on exit

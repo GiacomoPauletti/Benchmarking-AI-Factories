@@ -187,12 +187,12 @@ class VllmService(InferenceService):
             models = []
             
             # vLLM returns {"object": "list", "data": [...]}
-            if isinstance(body, dict):
+            if isinstance(data, dict):
                 # Try standard OpenAI format (data field)
-                candidates = body.get('data', [])
+                candidates = data.get('data', [])
                 # Fallback to other possible formats
                 if not candidates:
-                    candidates = body.get('models') or body.get('served_models') or []
+                    candidates = data.get('models') or data.get('served_models') or []
                 
                 if isinstance(candidates, list):
                     for item in candidates:
@@ -202,9 +202,9 @@ class VllmService(InferenceService):
                             model_id = item.get('id') or item.get('model')
                             if model_id:
                                 models.append(model_id)
-            elif isinstance(body, list):
+            elif isinstance(data, list):
                 # Direct list format
-                for item in body:
+                for item in data:
                     if isinstance(item, str):
                         models.append(item)
                     elif isinstance(item, dict):
@@ -600,8 +600,12 @@ class VllmService(InferenceService):
         # Default to base timeout
         return BASE_TIMEOUT
 
-    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> requests.Response:
-        """Try to send prompt using chat completions endpoint."""
+    def _try_chat_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> tuple:
+        """Try to send prompt using chat completions endpoint.
+        
+        Returns:
+            Tuple of (ok: bool, status_code: int, body: dict/str)
+        """
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
         parsed = urlparse(endpoint)
@@ -629,10 +633,22 @@ class VllmService(InferenceService):
             timeout=timeout
         )
         
-        return response
+        # Return tuple of (ok, status_code, body)
+        ok = response.ok
+        status_code = response.status_code
+        try:
+            body = response.json()
+        except Exception:
+            body = response.text
+        
+        return ok, status_code, body
 
-    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> requests.Response:
-        """Try to send prompt using completions endpoint (for base models)."""
+    def _try_completions_endpoint(self, endpoint: str, model: str, prompt: str, service_id: str = None, **kwargs) -> tuple:
+        """Try to send prompt using completions endpoint (for base models).
+        
+        Returns:
+            Tuple of (ok: bool, status_code: int, body: dict/str)
+        """
         # Parse endpoint URL (e.g., "http://mel2079:8001")
         from urllib.parse import urlparse
         parsed = urlparse(endpoint)
@@ -660,7 +676,15 @@ class VllmService(InferenceService):
             timeout=timeout
         )
         
-        return response
+        # Return tuple of (ok, status_code, body)
+        ok = response.ok
+        status_code = response.status_code
+        try:
+            body = response.json()
+        except Exception:
+            body = response.text
+        
+        return ok, status_code, body
 
     def _is_chat_template_error(self, ok: bool, status_code: int, body: Any) -> bool:
         """Check if response indicates a chat template error."""

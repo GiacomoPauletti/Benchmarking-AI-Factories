@@ -8,24 +8,67 @@ import logging
 import requests
 import time
 from typing import Optional, Tuple
-from pathlib import Path
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 
-def get_orchestrator_script(remote_base_path: str) -> str:
+@dataclass
+class OrchestratorSettings:
+    """Captures tunable settings for orchestrator provisioning."""
+    env_module: str
+    apptainer_module: str
+    port: int
+    account: str
+    partition: str
+    qos: str
+    nodes: int
+    tasks: int
+    cpus_per_task: int
+    time_limit_minutes: int
+    slurm_rest_local_port: int
+    apptainer_tmpdir_base: str
+    apptainer_cachedir_base: str
+    fake_home_base: str
+
+
+def load_orchestrator_settings() -> OrchestratorSettings:
+    """Load orchestrator-related settings from environment variables."""
+    return OrchestratorSettings(
+        env_module=os.getenv("MELUXINA_ENV_MODULE", "env/release/2023.1"),
+        apptainer_module=os.getenv("APPTAINER_MODULE", "Apptainer/1.2.4-GCCcore-12.3.0"),
+        port=int(os.getenv("ORCHESTRATOR_PORT", "8003")),
+        account=os.getenv("ORCHESTRATOR_ACCOUNT", "p200776"),
+        partition=os.getenv("ORCHESTRATOR_PARTITION", "cpu"),
+        qos=os.getenv("ORCHESTRATOR_QOS", "default"),
+        nodes=int(os.getenv("ORCHESTRATOR_NODES", "1")),
+        tasks=int(os.getenv("ORCHESTRATOR_TASKS", "1")),
+        cpus_per_task=int(os.getenv("ORCHESTRATOR_CPUS_PER_TASK", "4")),
+        time_limit_minutes=int(os.getenv("ORCHESTRATOR_TIME_LIMIT_MINUTES", "30")),
+        slurm_rest_local_port=int(os.getenv("SLURM_REST_LOCAL_PORT", "6820")),
+        apptainer_tmpdir_base=os.getenv("APPTAINER_TMPDIR_BASE", "/tmp/apptainer").rstrip("/"),
+        apptainer_cachedir_base=os.getenv("APPTAINER_CACHEDIR_BASE", "/tmp/apptainer-cache").rstrip("/"),
+        fake_home_base=os.getenv("REMOTE_FAKE_HOME_BASE", "/tmp/fake-home").rstrip("/")
+    )
+
+
+def get_orchestrator_script(remote_base_path: str, settings: OrchestratorSettings) -> str:
     """Generate the bash script for running the Orchestrator.
     
     Args:
         remote_base_path: Base path on MeluXina for the project
+        settings: Loaded orchestrator configuration values
         
     Returns:
         Bash script content as a string
     """
+    tmpdir = f"{settings.apptainer_tmpdir_base}-$USER-$$"
+    cachedir = f"{settings.apptainer_cachedir_base}-$USER"
+    fake_home = f"{settings.fake_home_base}-$USER"
     return f"""#!/bin/bash
 # Load modules
-module load env/release/2023.1
-module load Apptainer/1.2.4-GCCcore-12.3.0
+module load {settings.env_module}
+module load {settings.apptainer_module}
 
 # Get SLURM JWT token for API calls
 echo "Fetching SLURM JWT token..."
@@ -38,7 +81,7 @@ echo "SLURM JWT token obtained"
 
 # Get the node's IP
 ORCHESTRATOR_HOST=$(hostname -i)
-ORCHESTRATOR_PORT=8003
+ORCHESTRATOR_PORT={settings.port}
 
 # Define base directory
 BENCHMARK_DIR="{remote_base_path}"
@@ -46,8 +89,9 @@ ENV_FILE="${{BENCHMARK_DIR}}/orchestrator.env"
 
 # Ensure HOME is set for Apptainer
 if [ -z "$HOME" ] || [ "$HOME" = "/" ]; then
-    export HOME=$(dirname "$BENCHMARK_DIR")
+    export HOME={fake_home}
 fi
+mkdir -p "$HOME"
 
 echo "Starting ServiceOrchestrator on ${{ORCHESTRATOR_HOST}}:${{ORCHESTRATOR_PORT}}"
 echo "ORCHESTRATOR_URL=http://${{ORCHESTRATOR_HOST}}:${{ORCHESTRATOR_PORT}}" > "$ENV_FILE"
@@ -96,8 +140,8 @@ if [ $NEED_REBUILD -eq 1 ] || [ ! -f "$SIF_PATH" ]; then
     echo "Building Apptainer container from $DEF_PATH..."
     cd "$ORCH_DIR"
     
-    export APPTAINER_TMPDIR=/tmp/apptainer-$USER-$$
-    export APPTAINER_CACHEDIR=$HOME/.apptainer/cache
+    export APPTAINER_TMPDIR={tmpdir}
+    export APPTAINER_CACHEDIR={cachedir}
     mkdir -p $APPTAINER_TMPDIR $APPTAINER_CACHEDIR
     
     apptainer build "$SIF_PATH" "$DEF_PATH"
@@ -132,13 +176,14 @@ apptainer run \\
     --env ORCHESTRATOR_HOST=0.0.0.0 \\
     --env ORCHESTRATOR_PORT=$ORCHESTRATOR_PORT \\
     --env SLURM_JWT=$SLURM_JWT \\
+    --env ORCHESTRATOR_ACCOUNT={settings.account} \
     --env REMOTE_BASE_PATH=$BENCHMARK_DIR \\
     "$SIF_PATH" \\
     --host 0.0.0.0 --port $ORCHESTRATOR_PORT
 """
 
 
-def submit_orchestrator_job(ssh_manager, remote_base_path: str) -> Tuple[bool, str]:
+def submit_orchestrator_job(ssh_manager, remote_base_path: str, settings: OrchestratorSettings) -> Tuple[bool, str]:
     """Submit Orchestrator job via Slurm REST API.
     
     Args:
@@ -159,19 +204,19 @@ def submit_orchestrator_job(ssh_manager, remote_base_path: str) -> Tuple[bool, s
         }
         
         # Build job payload
-        script_content = get_orchestrator_script(remote_base_path)
+        script_content = get_orchestrator_script(remote_base_path, settings)
         
         job_payload = {
             "job": {
                 "name": "service-orchestrator",
-                "qos": "default",
-                "account": "p200776",
-                "partition": "cpu",
-                "nodes": 1,
-                "tasks": 1,
-                "cpus_per_task": 4,
+                "qos": settings.qos,
+                "account": settings.account,
+                "partition": settings.partition,
+                "nodes": settings.nodes,
+                "tasks": settings.tasks,
+                "cpus_per_task": settings.cpus_per_task,
                 "time_limit": {
-                    "number": 30,  # 30 minutes
+                    "number": settings.time_limit_minutes,
                     "set": True
                 },
                 "current_working_directory": remote_base_path,
@@ -188,7 +233,7 @@ def submit_orchestrator_job(ssh_manager, remote_base_path: str) -> Tuple[bool, s
         
         # Submit via REST API
         resp = requests.post(
-            "http://localhost:6820/slurm/v0.0.40/job/submit",
+            f"http://localhost:{settings.slurm_rest_local_port}/slurm/v0.0.40/job/submit",
             headers=headers,
             json=job_payload,
             timeout=10
@@ -242,7 +287,8 @@ def wait_for_orchestrator_url(ssh_manager, remote_env_file: str, timeout: int = 
     return None
 
 
-def wait_for_orchestrator_ready(ssh_manager, orchestrator_url: str, timeout: int = 180) -> bool:
+def wait_for_orchestrator_ready(ssh_manager, orchestrator_url: str, timeout: int = 180,
+                                default_port: Optional[int] = None) -> bool:
     """Wait for orchestrator to be fully ready and accepting requests.
     
     This ensures the orchestrator container has finished building and starting up.
@@ -251,6 +297,7 @@ def wait_for_orchestrator_ready(ssh_manager, orchestrator_url: str, timeout: int
         ssh_manager: SSH manager instance
         orchestrator_url: URL of the orchestrator service
         timeout: Maximum wait time in seconds
+        default_port: Port to fall back to if the URL omits one
         
     Returns:
         True if orchestrator is ready, False otherwise
@@ -267,7 +314,8 @@ def wait_for_orchestrator_ready(ssh_manager, orchestrator_url: str, timeout: int
     from urllib.parse import urlparse
     parsed = urlparse(orchestrator_url)
     host = parsed.hostname
-    port = parsed.port or 8003
+    fallback_port = default_port or int(os.getenv("ORCHESTRATOR_PORT", "8003"))
+    port = parsed.port or fallback_port
     
     while time.time() - start_time < timeout:
         attempts += 1
@@ -353,9 +401,10 @@ def initialize_orchestrator_proxy(ssh_manager):
     Returns:
         OrchestratorProxy instance if successful, None otherwise
     """
-    from service_orchestration.core import OrchestratorProxy
+    from orchestrator_proxy import OrchestratorProxy
     
     try:
+        settings = load_orchestrator_settings()
         # Get remote paths
         remote_base_path = os.environ.get("REMOTE_BASE_PATH", "/project/home/p200981/benchmark")
         
@@ -397,7 +446,7 @@ def initialize_orchestrator_proxy(ssh_manager):
         if not orchestrator_url:
             logger.info("Orchestrator not running. Submitting new job...")
             
-            success, message = submit_orchestrator_job(ssh_manager, remote_base_path)
+            success, message = submit_orchestrator_job(ssh_manager, remote_base_path, settings)
             if not success:
                 raise RuntimeError(message)
             
@@ -414,7 +463,8 @@ def initialize_orchestrator_proxy(ssh_manager):
             
             # Wait for orchestrator to be fully ready (container built, service started)
             logger.info("Orchestrator URL found, now waiting for service to be fully ready...")
-            if not wait_for_orchestrator_ready(ssh_manager, orchestrator_url, timeout=180):
+            if not wait_for_orchestrator_ready(ssh_manager, orchestrator_url, timeout=180,
+                                              default_port=settings.port):
                 raise RuntimeError(
                     "Orchestrator failed to become ready - container may still be building or service failed to start. "
                     f"Check logs at: {remote_base_path}/logs/orchestrator_job.err"
@@ -422,7 +472,8 @@ def initialize_orchestrator_proxy(ssh_manager):
         else:
             # Orchestrator was already running, verify it's still healthy
             logger.info("Existing orchestrator found, verifying it's ready...")
-            if not wait_for_orchestrator_ready(ssh_manager, orchestrator_url, timeout=30):
+            if not wait_for_orchestrator_ready(ssh_manager, orchestrator_url, timeout=30,
+                                              default_port=settings.port):
                 logger.warning("Existing orchestrator is not responding, will need to restart")
                 # Remove stale env file and return None to trigger restart
                 ssh_manager.execute_remote_command(f"rm -f {remote_env_file}")

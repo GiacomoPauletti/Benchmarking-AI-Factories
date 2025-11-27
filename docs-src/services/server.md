@@ -11,112 +11,179 @@ The Server Service provides REST API for managing AI services on the MeluXina su
 
 ## Overview
 
-A FastAPI server for orchestrating AI workloads on SLURM clusters using Apptainer containers.
+A FastAPI gateway server that proxies AI workload orchestration requests to a ServiceOrchestrator running on MeluXina.
+
+### Architecture
+
+The system consists of two main components:
+
+1. **Server (Gateway)**: Runs locally (e.g., laptop/workstation), exposes REST API, forwards requests via SSH
+2. **ServiceOrchestrator**: Runs on MeluXina, manages SLURM jobs, handles container deployment
 
 ### What it does
 
-- **Service Orchestration**: Deploy and manage AI services via SLURM job submission
-- **Recipe System**: Pre-defined configurations for common AI workloads
-- **REST API**: Operations for service lifecycle management
+- **API Gateway**: Provides a stable REST API endpoint for external clients
+- **Request Proxying**: Forwards all orchestration requests to the ServiceOrchestrator via SSH tunnels
+- **Dual Access Pattern**: 
+  - **External clients** → Server (localhost:8001) → SSH tunnel → Orchestrator (MeluXina)
+  - **Internal clients** (on MeluXina) → Orchestrator API directly (orchestrator:8000)
 
 
-### Orchestration & Infrastructure
+### Deployment Architecture
 
-The following class diagram describes the major components in the `services/server` microservice and how they relate to each other (FastAPI routing, orchestration, SLURM interaction, SSH, recipe loading and service-specific handlers).
+The system is split across two locations with clear separation of concerns:
+
+```mermaid
+graph TB
+    subgraph Local["Local Machine (Laptop/Workstation)"]
+        Client["Client Application"]
+        Server["Server (Gateway)<br/>FastAPI<br/>Port 8001"]
+    end
+    
+    subgraph MeluXina["MeluXina Supercomputer"]
+        Orchestrator["ServiceOrchestrator<br/>FastAPI<br/>Port 8000"]
+        SLURM["SLURM Cluster"]
+        Compute["Compute Nodes<br/>(vLLM, Qdrant, etc.)"]
+    end
+    
+    Client -->|"HTTP: localhost:8001"| Server
+    Server -->|"SSH Tunnel<br/>(http_request_via_ssh)"| Orchestrator
+    Orchestrator -->|"sbatch/scancel"| SLURM
+    SLURM -->|"Job Control"| Compute
+    Orchestrator -->|"HTTP<br/>(status, models, prompts)"| Compute
+    
+    InternalClient["Internal Client<br/>(on MeluXina)"] -.->|"HTTP: orchestrator:8000<br/>(Direct Access)"| Orchestrator
+    
+    style Server fill:#B3E5FC,stroke:#0288D1,stroke-width:2px
+    style Orchestrator fill:#C8E6C9,stroke:#388E3C,stroke-width:2px
+    style Client fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px
+    style InternalClient fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px,stroke-dasharray: 5 5
+```
+
+**Key Points:**
+
+- **Server (Gateway)**: Lightweight proxy running locally, provides stable API endpoint
+- **ServiceOrchestrator**: Heavy lifting component on MeluXina, manages SLURM and containers
+- **SSH Tunnel**: Secure communication channel between server and orchestrator
+- **Dual Access**: External clients use the gateway; internal MeluXina clients can bypass it
+
+### Server (Gateway) Components
+
+The server component focuses on request proxying and client-facing API:
 
 ```mermaid
 classDiagram
-%% =========================================
-%% Groups / Layers
-%% =========================================
-class FastAPIApp:::api {
-    +root()
-    +health()
-}
-
-class APIRouter:::api {
-    +create_service()
-    +list_services()
-    +get_service()
-    +vllm_endpoints()
-    +vector_db_endpoints()
-}
-
-class ServerService:::core {
-    +start_service(recipe_name, config)
-    +stop_service(service_id)
-    +list_running_services()
-    +get_service_status(service_id)
-    +get_service_logs(service_id)
-}
-
-class SlurmDeployer:::infra {
-    +submit_job()
-    +cancel_job()
-    +get_job_status()
-    +get_job_logs()
-    +get_job_details()
-}
-
-class SSHManager:::infra {
-    +setup_slurm_rest_tunnel()
-    +fetch_remote_file()
-    +http_request_via_ssh()
-    +sync_directory_to_remote()
-}
-
-class ServiceManager:::infra {
-    +register_service()
-    +list_services()
-    +get_service()
-    +update_service_status()
-}
-
-class RecipeLoader:::infra {
-    +load(recipe_name)
-    +list_all()
-    +get_recipe_port()
-}
-
-class EndpointResolver:::infra {
-    +resolve(job_id, default_port)
-}
-
-class BuilderRegistry:::infra {
-    +create_builder(category, recipe_name)
-    +register(category, builder_class)
-    +register_recipe(recipe_name, builder_class)
-}
-
-%% =========================================
-%% Main Relationships
-%% =========================================
-FastAPIApp --> APIRouter
-APIRouter --> ServerService
-ServerService *-- SlurmDeployer
-ServerService *-- ServiceManager
-ServerService *-- RecipeLoader
-ServerService *-- EndpointResolver
-SlurmDeployer --> SSHManager
-SlurmDeployer --> BuilderRegistry
-EndpointResolver --> SlurmDeployer
-
-%% =========================================
-%% Styling
-%% =========================================
-classDef api fill:#B3E5FC,stroke:#0288D1,stroke-width:1px,color:#01579B
-classDef core fill:#C8E6C9,stroke:#388E3C,stroke-width:1px,color:#1B5E20
-classDef infra fill:#F5F5F5,stroke:#9E9E9E,stroke-width:1px,color:#424242
-
+    class FastAPIApp:::api {
+        +root()
+        +health()
+    }
+    
+    class APIRouter:::api {
+        +create_service()
+        +list_services()
+        +stop_service()
+        +get_service_status()
+        +update_service_status()
+        +vllm_endpoints()
+        +vector_db_endpoints()
+    }
+    
+    class OrchestratorProxy:::proxy {
+        +start_service(recipe, config)
+        +stop_service(service_id)
+        +list_services()
+        +get_service_status(service_id)
+        +prompt_vllm_service(...)
+        +get_vllm_models(...)
+        +_make_request(method, endpoint)
+    }
+    
+    class SSHManager:::ssh {
+        +http_request_via_ssh(host, port, method, path)
+        +execute_remote_command(cmd)
+        +setup_tunnel(local_port, remote_port)
+    }
+    
+    FastAPIApp --> APIRouter
+    APIRouter --> OrchestratorProxy
+    OrchestratorProxy --> SSHManager
+    
+    classDef api fill:#B3E5FC,stroke:#0288D1,stroke-width:2px
+    classDef proxy fill:#FFE0B2,stroke:#F57C00,stroke-width:2px
+    classDef ssh fill:#E0E0E0,stroke:#9E9E9E,stroke-width:1px
 ```
 
-The orchestration diagram above groups the primary infrastructure and control-path responsibilities:
+**Server Layer Responsibilities:**
 
-- FastAPI exposes HTTP endpoints; the router maps requests to the server-layer.
-- ServerService is the central coordinator: it submits jobs using SlurmDeployer, keeps service records in ServiceManager, loads recipes via RecipeLoader, and computes endpoints via EndpointResolver.
-- SlurmDeployer is responsible for job lifecycle (submit/cancel/status) and relies on SSHManager for remote operations (tunnels, fetching logs, proxy HTTP calls to compute nodes) and BuilderRegistry for recipe-specific script generation.
+- Expose REST API on `localhost:8001` for external clients
+- Parse and validate client requests
+- Forward requests to orchestrator via SSH tunnels
+- Handle SSH connection failures gracefully
+- Return normalized responses to clients
 
-When tracing a "create service" request, follow the path: FastAPIApp -> APIRouter -> ServerService -> SlurmDeployer (+ SSHManager + BuilderRegistry). Endpoint resolution happens later via EndpointResolver which queries SLURM job details and recipe metadata.
+### ServiceOrchestrator Components (on MeluXina)
+
+The orchestrator handles all the heavy lifting:
+
+```mermaid
+classDiagram
+    class OrchestratorAPI:::api {
+        +start_service()
+        +stop_service()
+        +list_services()
+        +get_service_group()
+    }
+    
+    class ServiceOrchestrator:::core {
+        +start_service(recipe_name, config)
+        +stop_service(service_id)
+        +update_service_status(service_id, status)
+        +stop_service_group(group_id)
+        +update_service_group_status(group_id, status)
+    }
+    
+    class SlurmDeployer:::infra {
+        +submit_job()
+        +cancel_job()
+        +get_job_status()
+    }
+    
+    class ServiceManager:::infra {
+        +register_service()
+        +get_service()
+        +update_service_status()
+    }
+    
+    class RecipeLoader:::infra {
+        +load(recipe_name)
+        +list_all()
+    }
+    
+    class BuilderRegistry:::infra {
+        +create_builder(category)
+    }
+    
+    OrchestratorAPI --> ServiceOrchestrator
+    ServiceOrchestrator *-- SlurmDeployer
+    ServiceOrchestrator *-- ServiceManager
+    ServiceOrchestrator *-- RecipeLoader
+    SlurmDeployer --> BuilderRegistry
+    
+    classDef api fill:#C8E6C9,stroke:#388E3C,stroke-width:2px
+    classDef core fill:#DCEDC8,stroke:#8BC34A,stroke-width:2px
+    classDef infra fill:#F5F5F5,stroke:#9E9E9E,stroke-width:1px
+```
+
+**Orchestrator Layer Responsibilities:**
+
+- Expose internal API on `orchestrator:8000` (accessible from MeluXina network)
+- Load and parse recipe YAML files
+- Generate SLURM job scripts with appropriate resource allocations
+- Submit jobs to SLURM via `sbatch`
+- Track service lifecycle (pending → configuring → running → cancelled)
+- Resolve compute node endpoints for running services
+- Query service health and models from compute nodes
+- Handle service groups (replica sets) and load balancing
 
 ### Service Handlers & Types
 
@@ -298,9 +365,9 @@ Some recipes have custom builders that override script generation behavior. For 
 
 This allows recipes to customize script generation without modifying the core `SlurmDeployer`.
 
-### Recipe Script Builders
+### Recipe Script Builders (Orchestrator Component)
 
-The following diagram shows the Recipe Builder architecture, which uses the Strategy pattern to generate SLURM job scripts for different recipe types. This modular design allows adding new services without modifying the core SLURM deployer.
+The following diagram shows the Recipe Builder architecture **running on the ServiceOrchestrator** (MeluXina side). It uses the Strategy pattern to generate SLURM job scripts for different recipe types. This modular design allows adding new services without modifying the core SLURM deployer.
 
 ```mermaid
 classDiagram

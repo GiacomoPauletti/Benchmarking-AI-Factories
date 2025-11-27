@@ -1,9 +1,7 @@
 Server:
     MAIN:
-    - Response list recipes. Variable/Key - possible values
-    - Add more unit/api tests to orchestrator. 
-    - Test multi-node replicas.
-    - Organize docs and add more details about architecture, orchestrator design decision.
+    - Test multi node replicas.
+    - Add flag to rebuild orchestrator.
     - Delete all files in meluxina. Then restart server to see if everything works smoothly.
 
     Optional:
@@ -32,6 +30,9 @@ Server:
 
 
 Client:
+    MAIN:
+    - Add possibility of using big prompt datasets and RAGs using the vec-db service.
+
 
 
 Logs: 

@@ -35,6 +35,8 @@ class JobBuilder:
         self.base_path = Path(base_path)
         self.recipes_dir = self.base_path / "src" / "recipes"
         self.logs_dir = self.base_path / "logs"
+        self.env_module = os.getenv("MELUXINA_ENV_MODULE", "env/release/2023.1")
+        self.apptainer_module = os.getenv("APPTAINER_MODULE", "Apptainer/1.2.4-GCCcore-12.3.0")
         
     def _find_recipe(self, recipe_name: str) -> Path:
         """Find recipe file by name."""
@@ -119,6 +121,15 @@ class JobBuilder:
         job_desc["partition"] = "gpu" if resources.get("gpu") else "cpu"
         job_desc["name"] = job_name
         
+        # Add node allocation
+        num_nodes = resources.get("nodes", 1)
+        job_desc["nodes"] = str(num_nodes)
+        
+        # Add task allocation (for multi-replica jobs)
+        if ntasks > 1:
+            job_desc["tasks"] = ntasks
+            job_desc["tasks_per_node"] = ntasks
+        
         # Add GPU allocation if requested
         gpu_count = resources.get("gpu")
         if gpu_count and str(gpu_count) != "0":
@@ -128,7 +139,7 @@ class JobBuilder:
             else:
                 job_desc["gres"] = f"gpu:{gpu_count}"
         
-        logger.info(f"Building job with GPU config: gpu_count={gpu_count}, gpus_per_task={gpus_per_task}, gres={job_desc.get('gres')}")
+        logger.info(f"Building job with nodes={num_nodes}, GPU config: gpu_count={gpu_count}, gpus_per_task={gpus_per_task}, ntasks={ntasks}, gres={job_desc.get('gres')}")
         
         return {
             "script": script,
@@ -182,8 +193,8 @@ class JobBuilder:
             
         return f"""#!/bin/bash -l
 
-module load env/release/2023.1
-module load Apptainer/1.2.4-GCCcore-12.3.0
+    module load {self.env_module}
+    module load {self.apptainer_module}
 
 {env_section}
 

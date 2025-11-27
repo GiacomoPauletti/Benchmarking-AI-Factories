@@ -18,13 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 @pytest.fixture(autouse=True)
 def mock_ssh_and_slurm():
     """
-    Auto-use fixture that mocks SSH for ALL tests.
-    This prevents tests from trying to make real SSH connections.
+    Auto-use fixture that mocks SSH and SLURM clients for ALL tests.
+    This prevents tests from trying to make real SSH or SLURM calls.
     """
-    # We patch ssh_manager.SSHManager because src is in sys.path
-    with patch('ssh_manager.SSHManager') as mock_ssh:
-        
-        # Configure SSH Manager mock
+    with patch('ssh_manager.SSHManager') as mock_ssh, patch('service_orchestration.core.slurm_client.SlurmClient') as mock_slurm:
         ssh_instance = MagicMock()
         ssh_instance.ssh_user = "testuser"
         ssh_instance.ssh_host = "test.example.com"
@@ -33,11 +30,7 @@ def mock_ssh_and_slurm():
         ssh_instance.fetch_remote_file.return_value = True
         ssh_instance.execute_remote_command.return_value = (0, "output", "")
         mock_ssh.return_value = ssh_instance
-        
-<<<<<<< HEAD
-        yield {"ssh": ssh_instance}
-=======
-        # Configure SLURM Deployer mock
+
         slurm_instance = MagicMock()
         slurm_instance.submit_job.return_value = {
             "job_id": 12345,
@@ -52,9 +45,8 @@ def mock_ssh_and_slurm():
         slurm_instance.ssh_manager = ssh_instance
         slurm_instance.token = "test-token-12345"
         mock_slurm.return_value = slurm_instance
-        
+
         yield {"ssh": ssh_instance, "slurm": slurm_instance}
->>>>>>> dev
 
 
 @pytest.fixture
@@ -71,10 +63,6 @@ def mock_ssh_manager():
         mock_instance.execute_remote_command.return_value = (0, "output", "")
         mock.return_value = mock_instance
         yield mock_instance
-
-
-
-
 
 @pytest.fixture
 def test_env():

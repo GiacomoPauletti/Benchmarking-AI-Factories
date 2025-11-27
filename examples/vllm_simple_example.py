@@ -39,7 +39,7 @@ def main():
             json={
                 "recipe_name": "inference/vllm-single-node"
             },
-            timeout=60
+            timeout=500
         )
         
         if response.status_code != 200:

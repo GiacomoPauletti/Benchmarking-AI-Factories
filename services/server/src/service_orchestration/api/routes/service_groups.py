@@ -335,6 +335,126 @@ def create_router(orchestrator):
         **Recovery:** To restart a stopped group, you must create a new service group
         using the same recipe and configuration.
         """
-        return orchestrator.stop_service_group(group_id)
+        result = orchestrator.stop_service_group(group_id)
+        
+        # Normalize response format for consistency
+        # Orchestrator returns {"status": "error"|"success"|"partial", ...}
+        # Convert to {"success": bool, ...} format expected by clients
+        if isinstance(result, dict):
+            status = result.get("status")
+            if status == "error":
+                return {
+                    "success": False,
+                    "error": result.get("message", "Unknown error"),
+                    "group_id": group_id
+                }
+            elif status in ("success", "partial"):
+                return {
+                    "success": True,
+                    "message": result.get("message"),
+                    "group_id": result.get("group_id", group_id),
+                    "replicas_stopped": result.get("stopped", 0),
+                    "jobs_cancelled": list(result.get("stopped_jobs", [])) if "stopped_jobs" in result else []
+                }
+        
+        return result
+    
+    @router.post("/{group_id}/status")
+    async def update_service_group_status(
+        group_id: str,
+        status_update: dict
+    ):
+        """Update the status of a service group (primarily for cancelling).
+
+        This endpoint allows graceful status updates for service groups,
+        similar to single service status updates. The primary use case is
+        cancelling a group while preserving metadata for analysis.
+
+        **Path Parameters:**
+        - `group_id`: The service group ID (e.g., "sg-ba5f6e2462fb")
+
+        **Request Body:**
+        ```json
+        {
+          "status": "cancelled"
+        }
+        ```
+
+        **Returns (Success):**
+        ```json
+        {
+          "success": true,
+          "message": "Service group sg-ba5f6e2462fb status updated to cancelled",
+          "group_id": "sg-ba5f6e2462fb",
+          "replicas_updated": 4
+        }
+        ```
+
+        **Returns (Not Found):**
+        ```json
+        {
+          "success": false,
+          "error": "Service group 'sg-ba5f6e2462fb' not found"
+        }
+        ```
+
+        **Supported Status Values:**
+        - `cancelled`: Cancel all replicas and mark group as cancelled
+
+        **Operation Details:**
+        When status is set to "cancelled":
+        1. Cancels all SLURM jobs in the group
+        2. Updates group status to "cancelled"
+        3. Updates individual replica statuses
+        4. Preserves metadata for logging and analysis
+
+        **Example Request:**
+        ```bash
+        curl -X POST http://orchestrator:8000/api/service-groups/sg-ba5f6e2462fb/status \\
+          -H "Content-Type: application/json" \\
+          -d '{"status": "cancelled"}'
+        ```
+
+        **Errors:**
+        - 400: Invalid status value or missing 'status' field
+        - 404: Service group not found
+        - 500: Failed to update status
+
+        **Note:** This is the recommended way to stop service groups (instead of
+        DELETE) as it preserves service records for post-mortem analysis and
+        Grafana integration.
+        """
+        new_status = status_update.get("status")
+        
+        if not new_status:
+            raise HTTPException(status_code=400, detail="Missing 'status' field in request body")
+        
+        # Currently only support cancelling
+        if new_status != "cancelled":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported status value: '{new_status}'. Currently only 'cancelled' is supported."
+            )
+        
+        result = orchestrator.update_service_group_status(group_id, new_status)
+        
+        # Normalize response
+        if isinstance(result, dict):
+            status = result.get("status")
+            if status == "error":
+                return {
+                    "success": False,
+                    "error": result.get("message", "Unknown error"),
+                    "group_id": group_id
+                }
+            elif status in ("success", "partial"):
+                return {
+                    "success": True,
+                    "message": result.get("message"),
+                    "group_id": result.get("group_id", group_id),
+                    "replicas_updated": result.get("replicas_updated", 0)
+                }
+        
+        return result
     
     return router

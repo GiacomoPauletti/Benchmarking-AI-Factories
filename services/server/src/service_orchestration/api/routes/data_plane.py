@@ -52,7 +52,8 @@ def create_router(orchestrator):
         Services in "starting" status may take several minutes to become ready, especially
         for large models.
         """
-        return orchestrator.vllm_service.find_services()
+        services = orchestrator.vllm_service.find_services()
+        return {"vllm_services": services}
     
     @router.get("/vllm/{service_id}/models")
     async def get_vllm_models(service_id: str, timeout: int = 5):
@@ -218,7 +219,8 @@ def create_router(orchestrator):
 
         **Note:** Only services with status "running" are ready for collection and point operations.
         """
-        return orchestrator.qdrant_service.find_services()
+        services = orchestrator.qdrant_service.find_services()
+        return {"vector_db_services": services}
     
     @router.get("/vector-db/{service_id}/collections")
     async def get_collections(service_id: str, timeout: int = 5):

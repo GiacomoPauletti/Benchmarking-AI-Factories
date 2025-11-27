@@ -30,7 +30,14 @@ class OrchestratorProxy:
         logger.info(f"OrchestratorProxy initialized for {orchestrator_url}, job_id={orchestrator_job_id}")
     
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
-        """Make HTTP request to orchestrator via SSH tunnel"""
+        """Make HTTP request to orchestrator via SSH tunnel.
+
+        This method is intentionally defensive: transient SSH/tunnel failures
+        (e.g. connection refused while the orchestrator is briefly restarting)
+        are treated as retriable conditions with a small number of quick
+        retries. If all retries fail, a clear RuntimeError is raised so the
+        API layer can surface a 503-style response instead of an opaque 500.
+        """
         # Parse orchestrator URL
         from urllib.parse import urlparse, urlencode
         parsed = urlparse(self.orchestrator_url)
@@ -43,56 +50,82 @@ class OrchestratorProxy:
             query_string = urlencode(kwargs["params"])
             full_path = f"{endpoint}?{query_string}"
         
-        try:
-            # Use SSH manager to execute curl on the remote machine (login node)
-            # targeting the orchestrator (compute node)
-            logger.debug(f"Making request to orchestrator: {method} {full_path} via {host}:{port}")
-            
-            # Only send json_data for non-GET methods
-            json_data = None
-            if method != "GET":
-                json_data = kwargs.get("json") or kwargs.get("params")
-            
-            success, status, body = self.ssh_manager.http_request_via_ssh(
-                remote_host=host,
-                remote_port=port,
-                method=method,
-                path=full_path,
-                headers=kwargs.get("headers"),
-                json_data=json_data,
-                timeout=kwargs.get("timeout", 30)
-            )
-            
-            if not success:
-                logger.error(f"SSH HTTP request failed - success={success}, status={status}, body='{body}'")
-                logger.error(f"Request details: {method} {host}:{port}{full_path}")
-                raise RuntimeError(f"SSH HTTP request failed: {body if body else 'No error details'}")
-            
-            if status >= 400:
-                logger.error(f"HTTP error {status} from orchestrator: {body}")
-                raise RuntimeError(f"HTTP error {status}: {body}")
-            
-            if isinstance(body, (dict, list)):
-                return body
+        # Basic retry parameters; keep them small to avoid long hangs
+        max_retries = kwargs.pop("_retries", 2)
+        attempt = 0
 
-            if isinstance(body, bytes):
-                body_text = body.decode("utf-8", errors="replace")
-            else:
-                body_text = body
+        while True:
+            attempt += 1
+            try:
+                # Use SSH manager to execute HTTP request via SOCKS proxy
+                logger.debug(
+                    f"Making request to orchestrator: {method} {full_path} via {host}:{port} (attempt {attempt}/{max_retries + 1})"
+                )
 
-            if isinstance(body_text, str):
-                return json.loads(body_text)
+                # Only send json_data for non-GET methods
+                json_data = None
+                if method != "GET":
+                    json_data = kwargs.get("json") or kwargs.get("params")
 
-            logger.error(f"Unexpected response type from orchestrator: {type(body).__name__}")
-            raise RuntimeError("Invalid response type from orchestrator")
+                success, status, body = self.ssh_manager.http_request_via_ssh(
+                    remote_host=host,
+                    remote_port=port,
+                    method=method,
+                    path=full_path,
+                    headers=kwargs.get("headers"),
+                    json_data=json_data,
+                    timeout=kwargs.get("timeout", 30)
+                )
+
+                if not success:
+                    logger.error(
+                        f"SSH HTTP request failed - success={success}, status={status}, body='{body}'"
+                    )
+                    logger.error(f"Request details: {method} {host}:{port}{full_path}")
+
+                    # status==0 and body is None is our typical "connection refused" /
+                    # transient tunnel failure signature. Retry a couple of times
+                    # before giving up so that short blips don't surface as 500s.
+                    if status == 0 and attempt <= max_retries:
+                        logger.warning("Transient SSH failure detected, retrying orchestrator request...")
+                        continue
+
+                    raise RuntimeError(
+                        f"SSH HTTP request failed: {body if body else 'No error details'}"
+                    )
+
+                if status >= 400:
+                    logger.error(f"HTTP error {status} from orchestrator: {body}")
+                    raise RuntimeError(f"HTTP error {status}: {body}")
             
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse orchestrator response as JSON: {e}")
-            logger.error(f"Raw body: {body_text if 'body_text' in locals() else body}")
-            raise RuntimeError(f"Invalid JSON response from orchestrator: {str(e)}")
-        except Exception as e:
-            logger.error(f"Request to orchestrator failed: {e}")
-            raise
+                if isinstance(body, (dict, list)):
+                    return body
+
+                if isinstance(body, bytes):
+                    body_text = body.decode("utf-8", errors="replace")
+                else:
+                    body_text = body
+
+                if isinstance(body_text, str):
+                    return json.loads(body_text)
+
+                logger.error(
+                    f"Unexpected response type from orchestrator: {type(body).__name__}"
+                )
+                raise RuntimeError("Invalid response type from orchestrator")
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse orchestrator response as JSON: {e}")
+                logger.error(
+                    f"Raw body: {body_text if 'body_text' in locals() else body}"
+                )
+                raise RuntimeError(f"Invalid JSON response from orchestrator: {str(e)}")
+            except Exception as e:
+                # For unexpected exceptions (including repeated transient failures),
+                # log and re-raise so FastAPI can turn this into a clear 503-style
+                # error at the HTTP layer instead of an opaque 500.
+                logger.error(f"Request to orchestrator failed: {e}")
+                raise
     
     def register_service(self, service_id: str, host: str, port: int, model: str) -> Dict[str, Any]:
         """Register a vLLM service with the orchestrator"""
@@ -106,10 +139,10 @@ class OrchestratorProxy:
         """Unregister a service"""
         return self._make_request("DELETE", f"/api/services/{service_id}")
     
-    def list_services(self) -> Dict[str, Any]:
-        """List all services managed by orchestrator"""
+    def list_services(self) -> List[Dict[str, Any]]:
+        """List all services managed by orchestrator."""
         return self._make_request("GET", "/api/services")
-    
+
     def get_metrics(self) -> Dict[str, Any]:
         """Get orchestrator metrics"""
         return self._make_request("GET", "/api/metrics")
@@ -141,16 +174,6 @@ class OrchestratorProxy:
         except:
             return "unknown"
 
-    def get_job_logs(self, log_path: str, lines: int = 200) -> str:
-        """Get job logs via orchestrator"""
-        try:
-            # Manually construct query string
-            endpoint = f"/api/logs?path={log_path}&lines={lines}"
-            response = self._make_request("GET", endpoint)
-            return response.get("logs", "")
-        except:
-            return "Failed to fetch logs"
-
     def start_service(self, recipe_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
         """Start a service via orchestrator (orchestrator builds the job)"""
         return self._make_request(
@@ -166,29 +189,16 @@ class OrchestratorProxy:
     def list_recipes(self) -> List[Dict[str, Any]]:
         """List available recipes via orchestrator"""
         response = self._make_request("GET", "/api/recipes")
-
-        # Support multiple orchestrator response shapes:
-        # - a direct list of recipes (e.g. [ {...}, ... ])
-        # - a dict containing a `recipes` key (e.g. {"recipes": [...]})
-        # - a dict containing `data` or other container keys
         if isinstance(response, list):
             return response
-
         if isinstance(response, dict):
-            # common keys that may contain the list
-            for key in ("recipes", "data", "items"):
-                if key in response and isinstance(response[key], list):
-                    return response[key]
-
-        # Fallback: return empty list to avoid raising AttributeError
-        logger.debug(f"Unexpected recipe list response shape: {type(response).__name__}")
-        return []
+            recipes = response.get("recipes")
+            if isinstance(recipes, list):
+                return recipes
+        raise RuntimeError("Unexpected response format from orchestrator for /api/recipes")
 
     def list_available_recipes(self) -> List[Dict[str, Any]]:
-        """Compatibility alias for older code that calls `list_available_recipes`.
-
-        Delegates to `list_recipes` so routes that expect the older name keep working.
-        """
+        """Compatibility alias used by API routes."""
         return self.list_recipes()
 
     def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
@@ -197,10 +207,6 @@ class OrchestratorProxy:
             return self._make_request("GET", f"/api/services/{service_id}")
         except:
             return None
-
-    def get_service_logs(self, service_id: str) -> Dict[str, str]:
-        """Get service logs via orchestrator"""
-        return self._make_request("GET", f"/api/services/{service_id}/logs")
 
     def get_service_status(self, service_id: str) -> Dict[str, str]:
         """Get service status via orchestrator"""
@@ -228,6 +234,10 @@ class OrchestratorProxy:
     def stop_service_group(self, group_id: str) -> Dict[str, Any]:
         """Stop all replicas in a service group via orchestrator"""
         return self._make_request("POST", f"/api/service-groups/{group_id}/stop")
+    
+    def update_service_group_status(self, group_id: str, status: str) -> Dict[str, Any]:
+        """Update service group status (e.g., to 'cancelled') via orchestrator"""
+        return self._make_request("POST", f"/api/service-groups/{group_id}/status", json={"status": status})
 
     # ===== Data Plane Operations (vLLM) =====
 
@@ -320,3 +330,7 @@ class OrchestratorProxy:
     def get_orchestrator_url(self) -> Optional[str]:
         """Get the internal orchestrator URL."""
         return self.orchestrator_url
+
+    def check_health(self) -> Dict[str, Any]:
+        """Query the orchestrator /health endpoint to verify availability."""
+        return self._make_request("GET", "/health")
