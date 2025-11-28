@@ -14,6 +14,7 @@ Do NOT test business logic here - only HTTP <-> Proxy translation.
 import pytest
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
+from fastapi import status, HTTPException
 
 from main import app
 from api.routes import get_orchestrator_proxy
@@ -357,17 +358,14 @@ class TestGatewayAPI:
             "id": "svc-1",
             "recipe_name": "inference/vllm-single-node"
         }
-        mock_proxy.get_vllm_metrics.return_value = {
-            "success": True,
-            "metrics": "# HELP\nmetric 1"
-        }
+        mock_proxy.get_service_metrics.return_value = "# HELP\nmetric 1"
 
         response = client.get("/api/v1/services/svc-1/metrics")
 
         assert response.status_code == 200
         assert "metric" in response.text
         assert response.headers["content-type"].startswith("text/plain")
-        mock_proxy.get_vllm_metrics.assert_called_once_with("svc-1")
+        mock_proxy.get_service_metrics.assert_called_once_with("svc-1")
 
     def test_get_service_metrics_qdrant(self, mock_proxy, client):
         """Service metrics route should handle vector DB recipes"""
@@ -375,16 +373,13 @@ class TestGatewayAPI:
             "id": "svc-2",
             "recipe_name": "vector-db/qdrant"
         }
-        mock_proxy.get_qdrant_metrics.return_value = {
-            "success": True,
-            "metrics": "# TYPE qdrant"
-        }
+        mock_proxy.get_service_metrics.return_value = "# TYPE qdrant"
 
         response = client.get("/api/v1/services/svc-2/metrics")
 
         assert response.status_code == 200
         assert "qdrant" in response.text
-        mock_proxy.get_qdrant_metrics.assert_called_once_with("svc-2")
+        mock_proxy.get_service_metrics.assert_called_once_with("svc-2")
 
     def test_get_service_metrics_unsupported_recipe(self, mock_proxy, client):
         """Service metrics returns 400 for unknown recipes"""
@@ -393,8 +388,13 @@ class TestGatewayAPI:
             "recipe_name": "monitoring/prometheus"
         }
 
+        mock_proxy.get_service_metrics.side_effect = HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Metrics not available"
+        )
         response = client.get("/api/v1/services/svc-3/metrics")
 
+        print(f"Response: {response.status_code} - {response.text}")
         assert response.status_code == 400
         assert "Metrics not available" in response.json()["detail"]
 

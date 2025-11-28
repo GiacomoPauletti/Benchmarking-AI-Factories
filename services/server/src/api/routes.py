@@ -316,40 +316,11 @@ async def get_service_metrics(service_id: str, orchestrator = Depends(get_orches
     """
     from fastapi.responses import PlainTextResponse
     
-    try:
-        # Get service details to determine recipe type
-        service = orchestrator.get_service(service_id)
-        if not service:
-            raise HTTPException(status_code=404, detail="Service not found")
-        
-        recipe_name = service.get("recipe_name", "")
-        
-        # Route to appropriate service-specific metrics endpoint
-        if recipe_name.startswith("inference/vllm"):
-            result = orchestrator.get_vllm_metrics(service_id)
-        elif recipe_name.startswith("vector-db/qdrant"):
-            result = orchestrator.get_qdrant_metrics(service_id)
-        else:
-            # Unknown service type
-            raise HTTPException(
-                status_code=400,
-                detail=f"Metrics not available for service type: {recipe_name}"
-            )
-        
-        # If successful, return metrics as plain text
-        if result.get("success"):
-            return PlainTextResponse(
-                content=result.get("metrics", ""),
-                media_type="text/plain; version=0.0.4"
-            )
-        else:
-            # Return error as JSON
-            return result
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Route to appropriate service-specific metrics endpoint
+    return PlainTextResponse(
+        content=orchestrator.get_service_metrics(service_id),
+        media_type="text/plain; version=0.0.4"
+    )
 
 
 @router.delete("/services/{service_id}")

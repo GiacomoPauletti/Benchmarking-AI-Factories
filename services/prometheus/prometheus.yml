@@ -27,7 +27,7 @@ scrape_configs:
     scrape_interval: 5s
     # Transform the discovered targets from <service> to host:port and the corresponding URL
     relabel_configs:
-      - source_labels: [__address__]
+      - source_labels: [service_id]
         regex:  '(.*)'
         replacement: '/api/v1/services/$1/metrics'
         target_label: __metrics_path__

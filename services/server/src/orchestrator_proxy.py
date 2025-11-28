@@ -74,7 +74,8 @@ class OrchestratorProxy:
                     path=full_path,
                     headers=kwargs.get("headers"),
                     json_data=json_data,
-                    timeout=kwargs.get("timeout", 30)
+                    timeout=kwargs.get("timeout", 30),
+                    json_body=kwargs.get("json_body"),
                 )
                 logger.debug(f"Got return code={status} body={body}")
 
@@ -94,6 +95,9 @@ class OrchestratorProxy:
                     raise RuntimeError(
                         f"SSH HTTP request failed: {body if body else 'No error details'}"
                     )
+                
+                if not json_data:
+                    return body
             
                 if isinstance(body, (dict, list)):
                     logger.debug(f"Is of type dict or list, returning")
@@ -141,7 +145,7 @@ class OrchestratorProxy:
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get orchestrator metrics"""
-        return self._make_request("GET", "/api/metrics")
+        return self._make_request("GET", "/api/metrics", json_body=False)
     
     def configure_load_balancer(self, strategy: str) -> Dict[str, Any]:
         """Configure load balancing strategy"""
@@ -296,7 +300,7 @@ class OrchestratorProxy:
         Returns:
             Dict with success status and metrics or error information
         """
-        return self._make_request("GET", f"/api/services/{service_id}/metrics", params={"timeout": timeout})
+        return self._make_request("GET", f"/api/services/{service_id}/metrics", params={"timeout": timeout}, json_data=True)
 
     def stop_orchestrator(self) -> bool:
         """Stop the orchestrator job via SLURM."""
