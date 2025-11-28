@@ -62,7 +62,7 @@ class ClientManager:
         self._lock = threading.Lock()
         self._logger = logging.getLogger("client_manager")
 
-        self._server_addr = server_addr 
+        self._server_addr = server_addr or os.environ.get("SERVER_URL", "http://server:8001")
         self._client_service_addr = client_service_addr 
         self._use_container = use_container 
         self._account = account 
@@ -73,42 +73,34 @@ class ClientManager:
 
         self._initialized = True
 
-    def set_orchestrator_url(self, server_addr: str, timeout: float = 2.0) -> bool:
+    def set_orchestrator_url(self, timeout: float = 2.0) -> bool:
         """Query the Server API to obtain the orchestrator endpoint and set
         ``self._orchestrator_url``.
 
         Args:
-            server_addr: Base URL of the Server API.
             timeout: HTTP request timeout in seconds.
 
         Returns:
             True if an orchestrator endpoint was discovered and set, False otherwise.
         """
         try:
-            if not server_addr:
-                self._logger.warning("set_orchestrator_url called with empty server_addr")
-                return False
-
-            base = server_addr.rstrip('/')
-            # Remember the server address for future calls
-            self._server_addr = base
-            url = f"{base}/api/v1/orchestrator/endpoint"
+            url = f"{self._server_addr}/api/v1/orchestrator/endpoint"
             resp = requests.get(url, timeout=timeout)
             if resp.status_code != 200:
-                self._logger.warning(f"Failed to query orchestrator endpoint from server {base}: status={resp.status_code}")
+                self._logger.warning(f"Failed to query orchestrator endpoint from server {self._server_addr}: status={resp.status_code}")
                 return False
 
             data = resp.json()
             endpoint = data.get('endpoint')
             if not endpoint:
-                self._logger.warning(f"Server {base} returned no 'endpoint' field for orchestrator")
+                self._logger.warning(f"Server {self._server_addr} returned no 'endpoint' field for orchestrator")
                 return False
 
             self._orchestrator_url = endpoint
             self._logger.info(f"Orchestrator URL set to: {endpoint}")
             return True
         except Exception as e:
-            self._logger.exception(f"Error while setting orchestrator URL from {server_addr}: {e}")
+            self._logger.exception(f"Error while setting orchestrator URL from {self._server_addr}: {e}")
             return False
 
     def add_client_group(self, group_id: int, load_config: dict) -> int:
@@ -128,7 +120,7 @@ class ClientManager:
             
             try:
                 if not self._orchestrator_url:
-                    self.set_orchestrator_url(self._server_addr)
+                    self.set_orchestrator_url()
                 service_id = load_config.get('service_id')
                 if service_id:
                     if self._orchestrator_url:
