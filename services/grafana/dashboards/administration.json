@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 5,
+  "id": 6,
   "links": [],
   "panels": [
     {
@@ -72,7 +72,7 @@
               "oneClick": false,
               "targetBlank": true,
               "title": "Details",
-              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}﻿&var-port=﻿${port:queryparam}﻿&var-service=${__series.name}"
+              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}﻿&var-port=﻿${port:queryparam}﻿&var-service=${__field.name}"
             }
           ],
           "mappings": [
@@ -223,8 +223,8 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 12,
-        "w": 6,
+        "h": 8,
+        "w": 8,
         "x": 0,
         "y": 7
       },
@@ -251,15 +251,17 @@
           "elementDisplayMode": "modified",
           "title": "Confirm update request"
         },
-        "elementValueChanged": "",
+        "elementValueChanged": "const selected = context.panel.elements.find(el => el.id == \"recipe_name\").value\nif (context.panel.data.prevSelected !== selected) {\n  const data = context.panel.data.series[0].fields;\n  const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == selected)\n  const parameters = JSON.parse(data.find(s => s.name == \"resources\").values[idx])\n  context.panel.setFormValue({\n    \"recipe_name\": selected,\n    \"config.nodes\": parameters[\"nodes\"] || 1,\n    \"config.cpus\": parameters[\"cpu\"] || 1,\n    \"config.gpus\": parameters[\"gpu\"] || 0,\n    \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\")\n  })\n}\ncontext.panel.data.prevSelected = selected",
         "elements": [
           {
             "allowCustomValue": false,
             "background": "",
+            "disableIf": "",
             "getOptions": "return (context.panel.data.initial || []).map(x => ({ label: x.name, value: x.path }));",
             "id": "recipe_name",
-            "labelBackground": "",
-            "labelWidth": 20,
+            "labelBackground": "#FFB357",
+            "labelColor": "",
+            "labelWidth": 15,
             "options": [
               {
                 "id": "3",
@@ -278,7 +280,7 @@
             "queryOptions": {
               "label": "name",
               "source": "recipes",
-              "value": "path"
+              "value": "name"
             },
             "section": "",
             "title": "Recipe",
@@ -290,19 +292,124 @@
           },
           {
             "id": "config.nodes",
-            "labelWidth": 20,
+            "labelWidth": 15,
+            "max": 4,
             "min": 1,
             "section": "",
-            "title": "Number of nodes",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+            "step": 1,
+            "title": "# of nodes",
             "tooltip": "",
-            "type": "number",
+            "type": "slider",
             "uid": "0ce34aee-a245-43c0-829c-5a3bc752df65",
             "unit": "",
             "value": 0
+          },
+          {
+            "id": "config.cpus",
+            "labelWidth": 15,
+            "max": 32,
+            "min": 1,
+            "section": "",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+            "step": 1,
+            "title": "# of CPUs",
+            "tooltip": "",
+            "type": "slider",
+            "uid": "9aa3ff40-e65e-4482-9001-0bbbf768dc2f",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "id": "config.gpus",
+            "labelWidth": 15,
+            "max": 4,
+            "min": 0,
+            "section": "",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+            "step": 1,
+            "title": "# of GPUs",
+            "tooltip": "",
+            "type": "slider",
+            "uid": "265e565f-1b41-4926-901b-a247f549e629",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "allowCustomValue": false,
+            "id": "config.memory",
+            "labelWidth": 15,
+            "options": [
+              {
+                "icon": "dashboard",
+                "id": "4G",
+                "label": "4 GB",
+                "type": "string",
+                "value": "4G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "8G",
+                "label": "8 GB",
+                "type": "string",
+                "value": "8G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "16G",
+                "label": "16 GB",
+                "type": "string",
+                "value": "16G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "32G",
+                "label": "32 GB",
+                "type": "string",
+                "value": "32G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "64G",
+                "label": "64 GB",
+                "type": "string",
+                "value": "64G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "128G",
+                "label": "256 GB",
+                "type": "string",
+                "value": "128G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "256G",
+                "label": "256 GB",
+                "type": "string",
+                "value": "256G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "512G",
+                "label": "512 GB",
+                "type": "string",
+                "value": "512G"
+              }
+            ],
+            "optionsSource": "Custom",
+            "section": "",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\";",
+            "title": "Memory",
+            "tooltip": "",
+            "type": "select",
+            "uid": "59ef387c-be7e-4f4e-88b1-e28133db5aa0",
+            "unit": "",
+            "value": ""
           }
         ],
         "initial": {
-          "code": "context.panel.data.initial = context.panel.initial;",
+          "code": "context.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n})\ncontext.panel.data.prevSelected = null",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,
@@ -371,6 +478,7 @@
           "refId": "recipes",
           "root_selector": "",
           "source": "url",
+          "summarizeExpression": "",
           "type": "json",
           "url": "/api/v1/recipes",
           "url_options": {
@@ -380,6 +488,27 @@
         }
       ],
       "title": "Start service",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "base_port": true,
+              "container_def": true,
+              "deployment_config": true,
+              "environment": true,
+              "gpu_per_replica": true,
+              "health_check": true,
+              "image": true,
+              "path": true,
+              "ports": true
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
       "type": "volkovlabs-form-panel"
     },
     {
@@ -435,9 +564,9 @@
         ]
       },
       "gridPos": {
-        "h": 12,
-        "w": 18,
-        "x": 6,
+        "h": 16,
+        "w": 16,
+        "x": 8,
         "y": 7
       },
       "id": 3,
@@ -500,6 +629,224 @@
         }
       ],
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 15
+      },
+      "id": 5,
+      "options": {
+        "buttonGroup": {
+          "orientation": "center",
+          "size": "lg"
+        },
+        "confirmModal": {
+          "body": "Please confirm to update changed values",
+          "cancel": "Cancel",
+          "columns": {
+            "include": [
+              "name",
+              "oldValue",
+              "newValue"
+            ],
+            "name": "Label",
+            "newValue": "New Value",
+            "oldValue": "Old Value"
+          },
+          "confirm": "Confirm",
+          "elementDisplayMode": "modified",
+          "title": "Confirm update request"
+        },
+        "elementValueChanged": "",
+        "elements": [
+          {
+            "allowCustomValue": false,
+            "getOptions": "const ids = context.panel.data.series[0].fields.find(f => f.name === \"service_id\")?.values;\nif (!ids) return []\nconst formatted = ids.map(id => id.split(':')[0])\nconst uniques = [...(new Set(formatted)).keys().map(k => ({ label: k, value: k }))]\nreturn uniques",
+            "id": "service_id",
+            "labelWidth": 15,
+            "options": [],
+            "optionsSource": "Code",
+            "section": "",
+            "title": "Service ID",
+            "tooltip": "",
+            "type": "select",
+            "uid": "aae2ed60-02b9-4a66-968a-5d05376598d7",
+            "unit": "",
+            "value": ""
+          },
+          {
+            "id": "num_clients",
+            "labelWidth": 15,
+            "min": 1,
+            "section": "",
+            "title": "# of clients",
+            "tooltip": "",
+            "type": "number",
+            "uid": "d5701437-b86d-4d94-ae96-fd84ec75b15b",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "id": "requests_per_second",
+            "labelWidth": 15,
+            "min": 1,
+            "section": "",
+            "title": "Req/s",
+            "tooltip": "",
+            "type": "number",
+            "uid": "8d5d6ae7-ff03-4792-a561-769bf7be5324",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "id": "duration_seconds",
+            "labelWidth": 15,
+            "min": 1,
+            "section": "",
+            "title": "Duration",
+            "tooltip": "",
+            "type": "number",
+            "uid": "124316ac-6d60-440d-b228-568b1e4582e0",
+            "unit": "s",
+            "value": 0
+          },
+          {
+            "id": "max_tokens",
+            "labelWidth": 15,
+            "min": 1,
+            "section": "",
+            "title": "Max tokens",
+            "tooltip": "",
+            "type": "number",
+            "uid": "0208340d-283e-4c83-a553-5a43b6403f65",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "id": "temperature",
+            "labelWidth": 15,
+            "max": 1,
+            "min": 0,
+            "section": "",
+            "step": 0.01,
+            "title": "Temperature",
+            "tooltip": "",
+            "type": "slider",
+            "uid": "e0b30291-dac9-49fd-aaaa-941d1841516c",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "allowCustomValue": true,
+            "id": "prompts",
+            "labelWidth": 15,
+            "options": [],
+            "optionsSource": "Custom",
+            "section": "",
+            "title": "Prompts",
+            "tooltip": "",
+            "type": "multiselect",
+            "uid": "5955cdab-3aa2-48c5-8d70-44de2ac82c40",
+            "unit": "",
+            "value": []
+          }
+        ],
+        "initial": {
+          "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_second: 100,\n  duration_seconds: 60,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
+          "contentType": "application/json",
+          "getPayload": "return {}",
+          "highlight": false,
+          "highlightColor": "red",
+          "method": "query",
+          "payload": {},
+          "url": "http://${server}:${port}/api/v1/recipes"
+        },
+        "layout": {
+          "orientation": "horizontal",
+          "padding": 10,
+          "sectionVariant": "default",
+          "variant": "single"
+        },
+        "reset": {
+          "backgroundColor": "purple",
+          "foregroundColor": "yellow",
+          "icon": "process",
+          "text": "Reset",
+          "variant": "hidden"
+        },
+        "resetAction": {
+          "code": "if (context.panel.response) {\n  context.grafana.notifySuccess(['Update', 'Values updated successfully.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Update', 'An error occurred updating values.']);\n}",
+          "confirm": false,
+          "getPayload": "return {}",
+          "mode": "initial",
+          "payload": {}
+        },
+        "saveDefault": {
+          "icon": "save",
+          "text": "Save Default",
+          "variant": "hidden"
+        },
+        "submit": {
+          "backgroundColor": "purple",
+          "foregroundColor": "yellow",
+          "icon": "play",
+          "text": "Start benchmark",
+          "variant": "primary"
+        },
+        "sync": true,
+        "update": {
+          "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
+          "confirm": false,
+          "contentType": "application/json",
+          "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+          "method": "POST",
+          "payload": {},
+          "payloadMode": "all",
+          "url": "http://${server}:${client_port}/api/v1/client-groups"
+        },
+        "updateEnabled": "auto"
+      },
+      "pluginVersion": "6.3.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "editorMode": "builder",
+          "expr": "process_start_time_seconds{instance=\"server:8001\", status=\"running\"}",
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Start benchmark",
+      "transformations": [
+        {
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "labelsToFields": true,
+            "mode": "seriesToRows",
+            "reducers": [
+              "max"
+            ]
+          }
+        }
+      ],
+      "type": "volkovlabs-form-panel"
     }
   ],
   "preload": false,
@@ -529,7 +876,7 @@
           "text": "8001",
           "value": "8001"
         },
-        "label": "Port number",
+        "label": "Server port number",
         "name": "port",
         "options": [
           {
@@ -539,6 +886,24 @@
           }
         ],
         "query": "8001",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "8003",
+          "value": "8003"
+        },
+        "description": "",
+        "label": "Client port number",
+        "name": "client_port",
+        "options": [
+          {
+            "selected": true,
+            "text": "8003",
+            "value": "8003"
+          }
+        ],
+        "query": "8003",
         "type": "custom"
       }
     ]
