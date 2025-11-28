@@ -9,5 +9,4 @@ RUN VERSION=1.10.0; grafana cli --pluginUrl "https://github.com/mahendrapaipuri/
 
 COPY grafana.ini /etc/grafana/grafana.ini
 COPY provisioning /etc/grafana/provisioning
-COPY plugins /etc/grafana/plugins
 COPY dashboards /var/lib/grafana/dashboards

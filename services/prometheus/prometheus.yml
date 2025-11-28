@@ -31,6 +31,14 @@ scrape_configs:
         regex:  '(.*)'
         replacement: '/api/v1/services/$1/metrics'
         target_label: __metrics_path__
+      - source_labels: [service_id]
+        regex:  '(.*):(.*)'
+        replacement: '$2'
+        target_label: replica_no
+      - source_labels: [service_id]
+        regex:  '(.*):(.*)'
+        replacement: '$1'
+        target_label: service_id
       - source_labels: [__address__]
         regex:  '.*'
         replacement: 'server:8001'

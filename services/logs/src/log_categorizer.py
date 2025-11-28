@@ -101,7 +101,7 @@ class LogCategorizer:
         log_files = list(self.source_dir.rglob('*'))
 
         # Clear categorized directory
-        shutil.rmtree(self.categorized_dir)
+        shutil.rmtree(self.categorized_dir, ignore_errors=True)
         
         for log_file in log_files:
             # Skip directories
