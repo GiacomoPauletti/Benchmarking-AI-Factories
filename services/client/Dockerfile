@@ -24,9 +24,6 @@ COPY src/requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
-COPY src/ ./src/
-
 # Build-time options to optionally rebuild the remote Apptainer/SIF on MeluXina.
 # These are optional and only used when an SSH agent/socket is forwarded during
 # the Docker build (BuildKit + `--ssh`), and when the remote host is reachable.
@@ -52,14 +49,19 @@ ENV PYTHONPATH=/app/src
 
 FROM base AS test
 
-COPY requirements-dev.txt .
-RUN pip install -q -r --no-cache-dir -r requirements-dev.txt
+COPY tests/requirements.txt requirements-dev.txt
+RUN pip install -q --no-cache-dir -r requirements-dev.txt
 
+# Copy source code
+COPY src/ ./src/
 COPY tests/ ./tests/
 
 CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--color=yes"]
 
 FROM base AS prod
+
+# Copy source code
+COPY src/ ./src/
 
 # Create logs directory
 RUN mkdir -p /app/logs

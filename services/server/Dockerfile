@@ -32,9 +32,6 @@ RUN if [ "${REBUILD_ORCHESTRATOR}" = "true" ] && [ -n "${SSH_USER}" ] && [ -n "$
 COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt
 
-# Copy source code
-COPY src/ ./src/
-
 # Create necessary directories
 RUN mkdir -p /root/.ssh
 
@@ -48,11 +45,16 @@ RUN pip install -q --no-cache-dir -r requirements-dev.txt
 
 COPY pytest.ini .
 
+# Copy source code
+COPY src/ ./src/
 COPY tests/ ./tests/
 
 CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--color=yes"]
 
 FROM base AS prod
+
+# Copy source code
+COPY src/ ./src/
 
 # Expose FastAPI port
 EXPOSE 8001
