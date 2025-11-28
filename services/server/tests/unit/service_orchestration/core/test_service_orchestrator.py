@@ -42,11 +42,11 @@ def mock_service_manager():
 def mock_recipe_loader():
     """Mock recipe loader"""
     mock = MagicMock()
-    mock.load.return_value = {
+    mock.load.return_value = ("test/test-recipe", {
         "name": "test-recipe",
         "resources": {"gpu": 1, "nodes": 1},
         "environment": {}
-    }
+    })
     return mock
 
 
@@ -95,10 +95,10 @@ class TestServiceOrchestratorCore:
 
     def test_start_service_failure(self, orchestrator, mock_slurm_client, mock_recipe_loader, mock_job_builder):
         """Test starting a service with failure"""
-        mock_recipe_loader.load.return_value = {
+        mock_recipe_loader.load.return_value = ("bob/test-recipe", {
             "name": "test-recipe",
             "resources": {"gpu": 1, "nodes": 1}
-        }
+        })
         mock_job_builder.build_job.return_value = {
             "script": "#!/bin/bash\necho test",
             "job": {"name": "test-job"}
@@ -187,11 +187,11 @@ class TestServiceOrchestratorCore:
         recipe_name = "test-replica-recipe"
         config = {"nodes": 2, "gpu_per_replica": 1}
 
-        mock_recipe_loader.load.return_value = {
+        mock_recipe_loader.load.return_value = (f"bob/${recipe_name}", {
             "name": recipe_name,
             "gpu_per_replica": 1,
             "resources": {"gpu": 4, "nodes": 2}
-        }
+        })
         mock_job_builder.build_job.return_value = {
             "script": "#!/bin/bash\necho test",
             "job": {"name": "test-job"}

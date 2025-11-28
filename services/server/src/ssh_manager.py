@@ -4,6 +4,7 @@ Handles SSH tunnels, remote file operations, and command execution.
 Uses SSH ControlMaster for persistent connections to reduce overhead.
 """
 
+import json
 import os
 import subprocess
 import logging

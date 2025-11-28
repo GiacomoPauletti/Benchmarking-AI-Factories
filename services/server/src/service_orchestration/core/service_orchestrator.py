@@ -185,7 +185,7 @@ class ServiceOrchestrator:
         try:
             config = config or {}
             # Load recipe to check if it's a replica group
-            recipe = self.recipe_loader.load(recipe_name)
+            recipe_name, recipe = self.recipe_loader.load(recipe_name)
             if not recipe:
                 raise ValueError(f"Recipe '{recipe_name}' not found")
             
