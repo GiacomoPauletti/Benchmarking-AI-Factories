@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 5,
+  "id": 6,
   "links": [
     {
       "asDropdown": false,
@@ -556,7 +556,7 @@
         {
           "editorMode": "builder",
           "expr": "process_virtual_memory_bytes{service_id=\"$service\", status=\"running\"}",
-          "legendFormat": "Virtual memory",
+          "legendFormat": "Virtual memory - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -652,7 +652,7 @@
         {
           "editorMode": "builder",
           "expr": "process_resident_memory_bytes{service_id=\"$service\", status=\"running\"}",
-          "legendFormat": "Virtual memory",
+          "legendFormat": "Virtual memory - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -1121,7 +1121,7 @@
           "expr": "python_gc_objects_collected_total{service_id=~\"$service\", status=\"running\"}",
           "format": "heatmap",
           "instant": false,
-          "legendFormat": "generation = {{generation}}",
+          "legendFormat": "generation = {{generation}} - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -1225,7 +1225,7 @@
           "expr": "python_gc_objects_uncollectable_total{service_id=~\"$service\", status=\"running\"}",
           "format": "heatmap",
           "instant": false,
-          "legendFormat": "generation = {{generation}}",
+          "legendFormat": "generation = {{generation}} - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -1329,7 +1329,7 @@
           "expr": "python_gc_collections_total{service_id=~\"$service\", status=\"running\"}",
           "format": "heatmap",
           "instant": false,
-          "legendFormat": "generation = {{generation}}",
+          "legendFormat": "generation = {{generation}} - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -1429,6 +1429,67 @@
       ],
       "title": "Heatmap request latency",
       "type": "heatmap"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "id": 17,
+      "panels": [],
+      "repeat": "replicas",
+      "title": "Logs - $replicas",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 18,
+      "options": {
+        "dedupStrategy": "none",
+        "detailsMode": "inline",
+        "enableInfiniteScrolling": false,
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showControls": true,
+        "showLabels": false,
+        "showTime": false,
+        "sortOrder": "Ascending",
+        "syntaxHighlighting": true,
+        "wrapLogMessage": false
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "direction": "forward",
+          "editorMode": "code",
+          "expr": "{service_name=\"vllm-log\", filename=~\"/logs/vllm_${service}_replica_0\\\\.log\"} | logfmt | label_format level=detected_level",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs",
+      "type": "logs"
     }
   ],
   "preload": false,
@@ -1453,6 +1514,38 @@
         "query": {
           "qryType": 1,
           "query": "label_values(process_start_time_seconds{status=\"running\"},service_id)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 3,
+        "type": "query"
+      },
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": [
+            "8001",
+            "8002",
+            "8003",
+            "8004"
+          ],
+          "value": [
+            "8001",
+            "8002",
+            "8003",
+            "8004"
+          ]
+        },
+        "definition": "label_values({service_id=\"$service\"},replica_no)",
+        "description": "",
+        "label": "replicas",
+        "multi": true,
+        "name": "replicas",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({service_id=\"$service\"},replica_no)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,

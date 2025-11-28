@@ -844,6 +844,28 @@
               "max"
             ]
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Field": {
+                "aggregations": [
+                  "lastNotNull"
+                ]
+              },
+              "replica_no": {
+                "aggregations": [
+                  "count"
+                ],
+                "operation": "aggregate"
+              },
+              "service_id": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
+          }
         }
       ],
       "type": "volkovlabs-form-panel"
