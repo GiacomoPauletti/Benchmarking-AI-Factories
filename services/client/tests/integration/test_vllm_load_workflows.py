@@ -325,9 +325,9 @@ def _discover_client_url() -> str:
     
     # When running in test container, use service name
     if os.getenv("TESTING"):
-        return "http://client:8003"
+        return "http://client:8002"
     
-    return "http://localhost:8003"
+    return "http://localhost:8002"
 
 
 def _monitor_client_group_brief(client_api_base: str, group_id: int, duration: int = 30):

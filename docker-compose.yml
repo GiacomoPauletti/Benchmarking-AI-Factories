@@ -85,7 +85,7 @@ services:
         REMOTE_BASE_PATH: ${REMOTE_BASE_PATH}
     container_name: benchmarking-ai-client
     ports:
-      - "8003:8003"
+      - "8002:8002"
     volumes:
       # Mount source code for hot-reload during development
       # TODO: Remove in production
@@ -113,7 +113,7 @@ services:
       dockerfile: Dockerfile
     container_name: benchmarking-ai-monitoring
     ports:
-      - "8002:8002"
+      - "8005:8005"
     volumes:
       # Mount source code for hot-reload during development
       - ./services/monitoring/src:/app/src

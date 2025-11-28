@@ -65,7 +65,7 @@ FROM base AS prod
 RUN mkdir -p /app/logs
 
 # Expose port for client service API
-EXPOSE 8003
+EXPOSE 8002
 
 # Default command - can be overridden in docker-compose
-CMD ["python", "-m", "main", "--host", "0.0.0.0", "--port", "8003"]
+CMD ["python", "-m", "main", "--host", "0.0.0.0", "--port", "8002"]
