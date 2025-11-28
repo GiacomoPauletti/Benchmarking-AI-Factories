@@ -27,7 +27,6 @@ services:
       - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
       # Application Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
     # Load additional service-specific variables
     env_file:
@@ -98,7 +97,6 @@ services:
       - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
       # Application Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
     # Load additional service-specific variables
     env_file:
@@ -127,7 +125,6 @@ services:
       - MONITORING_SERVER_API_URL=http://server:8001
       
       # Application Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - APP_LOG_DIR=/app/logs
       - PYTHONUNBUFFERED=1
     env_file:
@@ -233,10 +230,6 @@ services:
       - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
       - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-      
-      # Logs Service Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - PYTHONUNBUFFERED=1
     env_file:
       - .env
     networks: 
