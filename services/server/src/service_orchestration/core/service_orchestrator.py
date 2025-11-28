@@ -950,8 +950,10 @@ class ServiceOrchestrator:
                     group_info = self.service_manager.group_manager.get_group(group_id)
                     if group_info:
                         recipe_name = group_info.get("recipe_name", "inference/vllm-replicas")
+                        replica_no = replica.get('replica_index', '')
                         self.service_manager.register_service({
                             "id": replica_id,
+                            "name": f"{job_id}-replica-{replica_no}",
                             "job_id": job_id,
                             "recipe_name": recipe_name,
                             "config": {},

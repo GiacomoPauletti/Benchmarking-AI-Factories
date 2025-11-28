@@ -89,6 +89,7 @@ class SlurmClient:
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a job"""
         try:
+            job_id = job_id.split(':', 1)[0]
             response = self.session.delete(
                 f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
@@ -103,6 +104,7 @@ class SlurmClient:
     def get_job_status(self, job_id: str) -> str:
         """Get job status"""
         try:
+            job_id = job_id.split(':', 1)[0]
             response = self.session.get(
                 f"{self.base_url}/job/{job_id}",
                 headers=self.headers,
@@ -124,8 +126,9 @@ class SlurmClient:
     def get_job_details(self, job_id: str) -> Dict[str, Any]:
         """Get detailed job information including node assignment"""
         try:
+            slurm_job_id = job_id.split(':', 1)[0]
             response = self.session.get(
-                f"{self.base_url}/job/{job_id}",
+                f"{self.base_url}/job/{slurm_job_id}",
                 headers=self.headers,
                 timeout=5
             )
