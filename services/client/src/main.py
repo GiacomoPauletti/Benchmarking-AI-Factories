@@ -15,6 +15,7 @@ import glob
 from api.routes import router
 from client_manager.client_manager import ClientManager
 from ssh_manager import SSHManager
+from fastapi.middleware.cors import CORSMiddleware
 
 # =================================== LOGGING CONFIG ====================================
 # Set up logging to both console and file
@@ -90,6 +91,16 @@ app = FastAPI(
         {"name": "Logs", "description": "Sync and manage SLURM job logs"}
     ]
 )
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
