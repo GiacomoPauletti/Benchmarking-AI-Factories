@@ -5,8 +5,11 @@ SLURM job scripts with container orchestration.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from service_orchestration.recipes import Recipe, RecipeResources
 
 
 @dataclass
@@ -51,14 +54,14 @@ class RecipeScriptBuilder(ABC):
         pass
     
     @abstractmethod
-    def build_run_block(self, paths: ScriptPaths, resources: Dict[str, Any], 
-                       recipe: Dict[str, Any]) -> str:
+    def build_run_block(self, paths: ScriptPaths, resources: "RecipeResources", 
+                       recipe: "Recipe") -> str:
         """Build the bash block that runs the container (single-node).
         
         Args:
             paths: Container and filesystem paths
-            resources: Resource requirements (cpu, memory, gpu, etc.)
-            recipe: Full recipe configuration
+            resources: RecipeResources object with cpu, memory, gpu, etc.
+            recipe: Recipe object with full configuration
             
         Returns:
             Bash script block for running the container
@@ -73,8 +76,8 @@ class RecipeScriptBuilder(ABC):
         """
         return False
     
-    def build_replica_group_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                                      recipe: Dict[str, Any], 
+    def build_replica_group_run_block(self, paths: ScriptPaths, resources: "RecipeResources",
+                                      recipe: "Recipe", 
                                       config: Dict[str, Any]) -> str:
         """Build the bash block for replica group execution.
         
@@ -82,9 +85,9 @@ class RecipeScriptBuilder(ABC):
         
         Args:
             paths: Container and filesystem paths
-            resources: Resource requirements
-            recipe: Full recipe configuration
-            config: Merged recipe + user configuration
+            resources: RecipeResources object with resource requirements
+            recipe: Recipe object with full configuration
+            config: User-provided configuration overrides
             
         Returns:
             Bash script block for replica group execution

@@ -1,16 +1,24 @@
 """Abstract base class for vector database services (Qdrant, Chroma, Weaviate, etc.)."""
 
-from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional
+from abc import abstractmethod
+from typing import Dict, List, Any
 from service_orchestration.services.base_service import BaseService
 
 
-class VectorDbService(BaseService, ABC):
+class VectorDbService(BaseService):
     """Abstract base class for all vector database service implementations.
     
     This class defines the common interface that all vector database services
     (Qdrant, Chroma, Weaviate, FAISS, etc.) must implement.
+    
+    Inherits from BaseService which provides:
+    - HTTP request helpers (_make_request, _success_response, _error_response)
+    - Service validation helpers (_validate_service_exists)
+    - Readiness checking (_check_service_ready_http)
     """
+    
+    # Default health check path for vector databases
+    HEALTH_CHECK_PATH = "/collections"
 
     @abstractmethod
     def get_collections(self, service_id: str) -> Dict[str, Any]:
@@ -104,21 +112,5 @@ class VectorDbService(BaseService, ABC):
             Dict with either:
             - {"success": True, "results": [...]}
             - {"success": False, "error": "..."}
-        """
-        pass
-
-    @abstractmethod
-    def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str]:
-        """Check if a vector database service is ready to accept requests.
-        
-        This method should implement service-specific readiness checks by examining
-        logs for startup indicators.
-        
-        Args:
-            service_id: The service ID to check
-            service_info: The service information dict
-            
-        Returns:
-            Tuple of (is_ready: bool, status: str)
         """
         pass

@@ -8,8 +8,11 @@ can override methods to customize behavior (e.g., VllmInferenceBuilder).
 """
 
 import os
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 from .base import RecipeScriptBuilder, ScriptPaths
+
+if TYPE_CHECKING:
+    from service_orchestration.recipes import Recipe, RecipeResources
 
 
 class InferenceRecipeBuilder(RecipeScriptBuilder):
@@ -89,12 +92,12 @@ if ! apptainer inspect --all {paths.sif_path}; then
 fi
 """
     
-    def build_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                       recipe: Dict[str, Any]) -> str:
+    def build_run_block(self, paths: ScriptPaths, resources: "RecipeResources",
+                       recipe: "Recipe") -> str:
         """Build single-node container run block for inference."""
         project_ws = paths.remote_base_path.rstrip("/")
         hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
-        nv_flag = "--nv" if resources.get('gpu') else ""
+        nv_flag = "--nv" if resources.gpu else ""
         
         return f"""
 echo "Starting container..."

@@ -4,16 +4,19 @@ Extends InferenceRecipeBuilder with vLLM-specific distributed execution
 using tensor parallelism.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 from .inference_builder import InferenceRecipeBuilder
 from .base import ScriptPaths
+
+if TYPE_CHECKING:
+    from service_orchestration.recipes import Recipe, RecipeResources, InferenceRecipe
 
 
 class VllmInferenceBuilder(InferenceRecipeBuilder):
     """vLLM-specific script builder with replica group support."""
     
-    def build_replica_group_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                                      recipe: Dict[str, Any],
+    def build_replica_group_run_block(self, paths: ScriptPaths, resources: "RecipeResources",
+                                      recipe: "Recipe",
                                       config: Dict[str, Any]) -> str:
         """Build replica group run block for vLLM.
         
@@ -24,24 +27,27 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
         
         Args:
             paths: Container and filesystem paths
-            resources: Resource requirements (gpu, cpu, memory)
-            recipe: Recipe configuration
-            config: Combined recipe + user config with gpu_per_replica, base_port, etc.
+            resources: RecipeResources object with gpu, cpu, memory
+            recipe: Recipe object (InferenceRecipe with gpu_per_replica, base_port)
+            config: User-provided config overrides
         """
         project_ws = paths.remote_base_path.rstrip("/")
         hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
-        nv_flag = "--nv" if resources.get("gpu") else ""
+        nv_flag = "--nv" if resources.gpu else ""
         
-        # Read configuration
-        model = config.get("model", recipe.get("environment", {}).get("VLLM_MODEL", "Qwen/Qwen2.5-0.5B-Instruct"))
+        # Read configuration - prefer config overrides, then recipe values
+        model = config.get("model", recipe.environment.get("VLLM_MODEL", "Qwen/Qwen2.5-0.5B-Instruct"))
         max_len = config.get("max_model_len", 4096)
         gpu_mem = config.get("gpu_memory_utilization", 0.9)
         
-        # Get replica group configuration
-        total_gpus = int(resources.get("gpu", 4))
-        gpu_per_replica = int(config.get("gpu_per_replica") or recipe.get("gpu_per_replica", 1))
-        base_port = int(config.get("base_port") or recipe.get("base_port", 8001))
-        num_nodes = int(resources.get("nodes", 1))
+        # Get replica group configuration from resources and recipe
+        total_gpus = resources.gpu or 4
+        
+        # Get gpu_per_replica and base_port from InferenceRecipe
+        # Use getattr for type safety with Recipe base class
+        gpu_per_replica = config.get("gpu_per_replica") or getattr(recipe, "gpu_per_replica", 1) or 1
+        base_port = config.get("base_port") or getattr(recipe, "base_port", 8001) or 8001
+        num_nodes = resources.nodes
         
         # Calculate replicas per node
         replicas_per_node = total_gpus // gpu_per_replica

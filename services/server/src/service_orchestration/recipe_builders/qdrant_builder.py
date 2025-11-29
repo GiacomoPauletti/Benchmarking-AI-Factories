@@ -3,16 +3,19 @@
 Extends VectorDbRecipeBuilder with Qdrant-specific storage configuration.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 from .vector_db_builder import VectorDbRecipeBuilder
 from .base import ScriptPaths
+
+if TYPE_CHECKING:
+    from service_orchestration.recipes import Recipe, RecipeResources
 
 
 class QdrantVectorDbBuilder(VectorDbRecipeBuilder):
     """Qdrant-specific script builder with proper storage path configuration."""
     
-    def build_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                       recipe: Dict[str, Any]) -> str:
+    def build_run_block(self, paths: ScriptPaths, resources: "RecipeResources",
+                       recipe: "Recipe") -> str:
         """Build run block for Qdrant with job-specific storage."""
         project_ws = paths.remote_base_path
         

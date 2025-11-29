@@ -182,9 +182,13 @@ class TestVllmServiceUnit:
         assert "error" in result
         assert "not found" in result["error"].lower()
 
-    @patch('service_orchestration.services.inference.vllm_service.requests')
+    @patch('service_orchestration.services.base_service.requests')
     def test_get_models_uses_correct_endpoint(self, mock_requests, vllm_service, mock_service_manager, mock_endpoint_resolver):
-        """Test that get_models() uses the resolved endpoint correctly"""
+        """Test that get_models() uses the resolved endpoint correctly.
+        
+        Note: We patch base_service.requests because get_models() uses _make_request()
+        from BaseService which imports requests there.
+        """
         mock_service_manager.get_service.return_value = {
             "id": "123",
             "name": "vllm-test",
@@ -196,9 +200,10 @@ class TestVllmServiceUnit:
         mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
 
         mock_response = Mock()
-        mock_response.ok = True
+        mock_response.status_code = 200
+        mock_response.text = '{"data": [{"id": "model1"}, {"id": "model2"}]}'
         mock_response.json.return_value = {"data": [{"id": "model1"}, {"id": "model2"}]}
-        mock_requests.get.return_value = mock_response
+        mock_requests.request.return_value = mock_response
 
         result = vllm_service.get_models("123")
 
@@ -207,9 +212,13 @@ class TestVllmServiceUnit:
         assert len(result["models"]) == 2
         assert "model1" in result["models"]
 
-    @patch('service_orchestration.services.inference.vllm_service.requests')
+    @patch('service_orchestration.services.base_service.requests')
     def test_get_models_handles_errors(self, mock_requests, vllm_service, mock_service_manager, mock_endpoint_resolver):
-        """Test that get_models() handles errors gracefully"""
+        """Test that get_models() handles errors gracefully.
+        
+        Note: We patch base_service.requests because get_models() uses _make_request()
+        from BaseService which imports requests there.
+        """
         mock_service_manager.get_service.return_value = {
             "id": "123",
             "name": "vllm-test",
@@ -220,10 +229,14 @@ class TestVllmServiceUnit:
         vllm_service._check_ready_and_discover_model = Mock(return_value=(True, "running", None))
         mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
 
-        mock_requests.get.side_effect = Exception("Connection refused")
+        # Simulate a connection error - _make_request catches this and returns error response
+        import requests as real_requests
+        mock_requests.request.side_effect = real_requests.exceptions.ConnectionError("Connection refused")
+        mock_requests.exceptions = real_requests.exceptions
 
         result = vllm_service.get_models("123")
 
         assert result["success"] is False
         assert "error" in result
-        assert "Connection refused" in result["error"]
+        # The error message is standardized to "Connection failed" by _make_request
+        assert "Connection" in result["error"]
