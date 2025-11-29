@@ -912,8 +912,8 @@
       },
       {
         "current": {
-          "text": "8003",
-          "value": "8003"
+          "text": "8002",
+          "value": "8002"
         },
         "description": "",
         "label": "Client port number",
@@ -921,11 +921,11 @@
         "options": [
           {
             "selected": true,
-            "text": "8003",
-            "value": "8003"
+            "text": "8002",
+            "value": "8002"
           }
         ],
-        "query": "8003",
+        "query": "8002",
         "type": "custom"
       }
     ]
