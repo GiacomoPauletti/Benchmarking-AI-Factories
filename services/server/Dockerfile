@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
@@ -32,17 +32,29 @@ RUN if [ "${REBUILD_ORCHESTRATOR}" = "true" ] && [ -n "${SSH_USER}" ] && [ -n "$
 COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt
 
-# Copy source code
-COPY src/ ./src/
-
-# Copy .server-endpoint if it exists (optional file)
-RUN touch .server-endpoint
-
 # Create necessary directories
 RUN mkdir -p /root/.ssh
 
 # Set proper SSH directory permissions
 RUN chmod 700 /root/.ssh
+
+FROM base AS test
+
+COPY requirements-dev.txt .
+RUN pip install -q --no-cache-dir -r requirements-dev.txt
+
+COPY pytest.ini .
+
+# Copy source code
+COPY src/ ./src/
+COPY tests/ ./tests/
+
+CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--color=yes"]
+
+FROM base AS prod
+
+# Copy source code
+COPY src/ ./src/
 
 # Expose FastAPI port
 EXPOSE 8001
@@ -57,32 +69,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Run the FastAPI application with SSH key setup and recipe sync in CMD
 CMD ["/bin/bash", "-c", "\
 # ============================================================================
-# SSH Key Setup
-# ============================================================================
-setup_ssh_keys() { \
-  if [ -d /tmp/host-ssh ]; then \
-    echo 'Setting up SSH keys...'; \
-    cp /tmp/host-ssh/id_* /root/.ssh/ 2>/dev/null || true; \
-    cp /tmp/host-ssh/known_hosts /root/.ssh/ 2>/dev/null || true; \
-    chmod 700 /root/.ssh; \
-    chmod 600 /root/.ssh/id_* 2>/dev/null || true; \
-    chmod 644 /root/.ssh/*.pub 2>/dev/null || true; \
-    echo 'SSH keys ready'; \
-  fi; \
-}; \
-\
-# ============================================================================
 # Build SSH Options
 # ============================================================================
 build_ssh_opts() { \
   local SSH_OPTS=\"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\"; \
-  \
-  if [ -n \"$SSH_KEY_PATH\" ]; then \
-    SSH_KEY_EXPANDED=$(eval echo $SSH_KEY_PATH); \
-    if [ -f \"/root/.ssh/$(basename $SSH_KEY_EXPANDED)\" ]; then \
-      SSH_OPTS=\"$SSH_OPTS -i /root/.ssh/$(basename $SSH_KEY_EXPANDED)\"; \
-    fi; \
-  fi; \
   \
   if [ \"$SSH_PORT\" != \"22\" ] && [ -n \"$SSH_PORT\" ]; then \
     SSH_OPTS=\"$SSH_OPTS -p $SSH_PORT\"; \
@@ -156,7 +146,5 @@ sync_to_meluxina() { \
 # ============================================================================
 # Startup Sequence
 # ============================================================================
-setup_ssh_keys && \
 sync_to_meluxina && \
-echo 'http://localhost:8001' > /app/.server-endpoint && \
 exec uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload"]

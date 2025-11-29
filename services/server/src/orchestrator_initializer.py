@@ -177,6 +177,7 @@ apptainer run \\
     --env SLURM_JWT=$SLURM_JWT \\
     --env ORCHESTRATOR_ACCOUNT={settings.account} \
     --env REMOTE_BASE_PATH=$BENCHMARK_DIR \\
+    --bind $BENCHMARK_DIR \\
     "$SIF_PATH" \\
     --host 0.0.0.0 --port $ORCHESTRATOR_PORT
 """
@@ -219,12 +220,13 @@ def submit_orchestrator_job(ssh_manager, remote_base_path: str, settings: Orches
                     "set": True
                 },
                 "current_working_directory": remote_base_path,
-                "standard_output": f"{remote_base_path}/logs/orchestrator_job.out",
-                "standard_error": f"{remote_base_path}/logs/orchestrator_job.err",
+                "standard_output": f"{remote_base_path}/logs/orchestrator_job-%j.out",
+                "standard_error": f"{remote_base_path}/logs/orchestrator_job-%j.err",
                 "environment": {
                     "PATH": "/bin:/usr/bin:/usr/local/bin",
                     "USER": ssh_manager.ssh_user,
-                    "BASH_ENV": "/etc/profile"
+                    "BASH_ENV": "/etc/profile",
+                    "LOG_LEVEL": os.environ.get("LOG_LEVEL")
                 }
             },
             "script": script_content
@@ -474,7 +476,7 @@ def initialize_orchestrator_proxy(ssh_manager):
                                               default_port=settings.port):
                 raise RuntimeError(
                     "Orchestrator failed to become ready - container may still be building or service failed to start. "
-                    f"Check logs at: {remote_base_path}/logs/orchestrator_job.err"
+                    f"Check logs at: {remote_base_path}/logs/orchestrator_job-*.err"
                 )
         else:
             # Orchestrator was already running, verify it's still healthy

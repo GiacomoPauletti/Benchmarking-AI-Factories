@@ -5,7 +5,7 @@ Centralizes recipe loading, parsing, and path resolution.
 """
 
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import yaml
 import logging
 
@@ -23,7 +23,7 @@ class RecipeLoader:
         self.recipes_dir = Path(recipes_dir)
         self.logger = logging.getLogger(__name__)
     
-    def load(self, recipe_name: str) -> Optional[Dict[str, Any]]:
+    def load(self, recipe_name: str) -> Tuple[str, Optional[Dict[str, Any]]]:
         """
         Load a recipe by name with smart path resolution.
         
@@ -33,20 +33,20 @@ class RecipeLoader:
         Returns:
             Recipe data as dict, or None if not found
         """
-        recipe_path = self._resolve_recipe_path(recipe_name)
+        canonical_recipe_name, recipe_path = self._resolve_recipe_path(recipe_name)
         
         if not recipe_path or not recipe_path.exists():
             self.logger.warning("Recipe not found: %s", recipe_name)
-            return None
+            return canonical_recipe_name, None
         
         try:
             with open(recipe_path, 'r') as f:
-                return yaml.safe_load(f)
+                return canonical_recipe_name, yaml.safe_load(f)
         except Exception as e:
             self.logger.error("Failed to load recipe %s: %s", recipe_name, e)
-            return None
+            return canonical_recipe_name, None
     
-    def _resolve_recipe_path(self, recipe_name: str) -> Optional[Path]:
+    def _resolve_recipe_path(self, recipe_name: str) -> Tuple[str, Optional[Path]]:
         """
         Resolve recipe name to full path.
         
@@ -64,20 +64,20 @@ class RecipeLoader:
         if '/' in recipe_name:
             candidate = self.recipes_dir / f"{recipe_name}.yaml"
             if candidate.exists():
-                return candidate
-            return None
+                return recipe_name, candidate
+            return recipe_name, None
         
         # Search all category directories for the recipe
         if not self.recipes_dir.exists():
-            return None
+            return recipe_name, None
         
         for category_dir in self.recipes_dir.iterdir():
             if category_dir.is_dir():
                 candidate = category_dir / f"{recipe_name}.yaml"
                 if candidate.exists():
-                    return candidate
+                    return f"{category_dir.parts[-1]}/{recipe_name}", candidate
         
-        return None
+        return recipe_name, None
     
     def list_all(self) -> List[Dict[str, Any]]:
         """
@@ -86,17 +86,20 @@ class RecipeLoader:
         Returns:
             List of recipe metadata dicts
         """
-        recipes = []
-        
         if not self.recipes_dir.exists():
-            return recipes
+            self.logger.warning("Directory folder %s does not exist", self.recipes_dir)
+            return []
         
+        recipes = []
         for category_dir in self.recipes_dir.iterdir():
+            self.logger.debug(f"Listing recipes in directory {category_dir}")
             if not category_dir.is_dir():
+                self.logger.warning("Not a directory")
                 continue
             
             for recipe_file in category_dir.glob("*.yaml"):
                 try:
+                    self.logger.debug(f"Found file {recipe_file}")
                     with open(recipe_file, 'r') as f:
                         recipe_data = yaml.safe_load(f)
                     
@@ -107,6 +110,7 @@ class RecipeLoader:
                 except Exception as e:
                     self.logger.error("Failed to load recipe %s: %s", recipe_file, e)
         
+        self.logger.debug(f"Found recipes: {recipes}")
         return recipes
     
     def list_by_category(self, category: str) -> List[Dict[str, Any]]:

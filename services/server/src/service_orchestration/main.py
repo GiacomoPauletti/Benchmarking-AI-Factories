@@ -15,8 +15,9 @@ from api import create_app
 def setup_logging():
     """Configure logging to write to both file and stdout"""  
     # Configure root logger
+    log_level = os.getenv("LOG_LEVEL", "INFO")
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, log_level.upper()),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler()  # Also log to console

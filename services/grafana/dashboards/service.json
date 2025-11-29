@@ -49,8 +49,152 @@
     },
     {
       "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "af28rrswju6m8c"
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": 10000
+          },
+          "fieldMinMax": false,
+          "mappings": [
+            {
+              "options": {
+                "building": {
+                  "color": "light-blue",
+                  "index": 1,
+                  "text": "Building…"
+                },
+                "cancelled": {
+                  "color": "red",
+                  "index": 6,
+                  "text": "Cancelled"
+                },
+                "completed": {
+                  "color": "dark-green",
+                  "index": 4,
+                  "text": "Completed"
+                },
+                "failed": {
+                  "color": "dark-red",
+                  "index": 5,
+                  "text": "Failed !"
+                },
+                "pending": {
+                  "color": "super-light-blue",
+                  "index": 0,
+                  "text": "Pending…"
+                },
+                "running": {
+                  "color": "green",
+                  "index": 3,
+                  "text": "Running"
+                },
+                "starting": {
+                  "color": "blue",
+                  "index": 2,
+                  "text": "Starting…"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-purple",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 9,
+        "x": 0,
+        "y": 1
+      },
+      "id": 1,
+      "options": {
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "editorMode": "builder",
+          "expr": "process_start_time_seconds{service_id=\"$service\", instance=\"server:8001\"}",
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Status",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "keepLabels": [
+              "status"
+            ],
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "Time",
+                "status"
+              ]
+            }
+          }
+        }
+      ],
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
       },
       "fieldConfig": {
         "defaults": {
@@ -110,15 +254,28 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Start time"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
+        "h": 4,
+        "w": 15,
+        "x": 9,
         "y": 1
       },
-      "id": 1,
+      "id": 16,
       "options": {
         "colorMode": "background_solid",
         "graphMode": "none",
@@ -142,80 +299,75 @@
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "columns": [],
           "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "af28rrswju6m8c"
+            "type": "prometheus",
+            "uid": "prom"
           },
-          "filters": [],
-          "format": "table",
-          "global_query_id": "",
-          "parser": "backend",
-          "refId": "meta",
-          "root_selector": "",
-          "source": "url",
-          "type": "json",
-          "url": "/api/v1/services/${service}",
-          "url_options": {
-            "data": "",
-            "method": "GET"
-          }
+          "editorMode": "builder",
+          "exemplar": false,
+          "expr": "process_start_time_seconds{service_id=\"$service\"}",
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
         }
       ],
-      "title": "Status",
+      "title": "Info",
       "transformations": [
         {
-          "id": "extractFields",
+          "id": "labelsToFields",
           "options": {
-            "delimiter": ",",
-            "format": "json",
-            "jsonPaths": [
-              {
-                "alias": "Nodes",
-                "path": "nodes"
-              }
+            "keepLabels": [
+              "recipe_name"
             ],
-            "keepTime": false,
-            "replace": false,
-            "source": "config"
+            "mode": "columns"
           }
         },
         {
-          "id": "convertFieldType",
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "calculateField",
           "options": {
-            "conversions": [
-              {
-                "destinationType": "time",
-                "targetField": "created_at"
+            "alias": "start_time",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "process_start_time_seconds"
+                }
+              },
+              "operator": "*",
+              "right": {
+                "fixed": "1000"
               }
-            ],
-            "fields": {}
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            },
+            "unary": {
+              "fieldName": "process_start_time_seconds",
+              "operator": "abs"
+            }
           }
         },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "config": true,
-              "id": true,
-              "name": true
+              "Time": true,
+              "process_start_time_seconds": true,
+              "recipe_name": false,
+              "start_time": false
             },
             "includeByName": {},
-            "indexByName": {
-              "Nodes": 3,
-              "config": 4,
-              "created_at": 2,
-              "id": 5,
-              "name": 6,
-              "recipe_name": 1,
-              "status": 0
-            },
+            "indexByName": {},
             "renameByName": {
-              "Nodes": "# of nodes",
-              "Status": "Status",
-              "created_at": "Created at",
+              "process_start_time_seconds": "",
               "recipe_name": "Recipe name",
-              "status": "Status"
+              "start_time": "Start time"
             }
           }
         }
@@ -235,7 +387,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 5
       },
       "id": 2,
       "options": {
@@ -282,7 +434,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 17
       },
       "id": 14,
       "options": {
@@ -383,7 +535,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 33
+        "y": 29
       },
       "id": 10,
       "options": {
@@ -404,7 +556,7 @@
         {
           "editorMode": "builder",
           "expr": "process_virtual_memory_bytes{service_id=\"$service\", status=\"running\"}",
-          "legendFormat": "Virtual memory",
+          "legendFormat": "Virtual memory - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -479,7 +631,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 29
       },
       "id": 11,
       "options": {
@@ -500,7 +652,7 @@
         {
           "editorMode": "builder",
           "expr": "process_resident_memory_bytes{service_id=\"$service\", status=\"running\"}",
-          "legendFormat": "Virtual memory",
+          "legendFormat": "Virtual memory - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -570,7 +722,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 36
       },
       "id": 12,
       "options": {
@@ -702,7 +854,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 40
+        "y": 36
       },
       "id": 13,
       "options": {
@@ -778,7 +930,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 43
       },
       "id": 5,
       "panels": [],
@@ -812,7 +964,7 @@
         "h": 2,
         "w": 3,
         "x": 0,
-        "y": 48
+        "y": 44
       },
       "id": 9,
       "options": {
@@ -942,7 +1094,7 @@
         "h": 8,
         "w": 5,
         "x": 3,
-        "y": 48
+        "y": 44
       },
       "id": 6,
       "options": {
@@ -969,7 +1121,7 @@
           "expr": "python_gc_objects_collected_total{service_id=~\"$service\", status=\"running\"}",
           "format": "heatmap",
           "instant": false,
-          "legendFormat": "generation = {{generation}}",
+          "legendFormat": "generation = {{generation}} - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -1046,7 +1198,7 @@
         "h": 8,
         "w": 5,
         "x": 8,
-        "y": 48
+        "y": 44
       },
       "id": 7,
       "options": {
@@ -1073,7 +1225,7 @@
           "expr": "python_gc_objects_uncollectable_total{service_id=~\"$service\", status=\"running\"}",
           "format": "heatmap",
           "instant": false,
-          "legendFormat": "generation = {{generation}}",
+          "legendFormat": "generation = {{generation}} - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -1150,7 +1302,7 @@
         "h": 8,
         "w": 5,
         "x": 13,
-        "y": 48
+        "y": 44
       },
       "id": 8,
       "options": {
@@ -1177,7 +1329,7 @@
           "expr": "python_gc_collections_total{service_id=~\"$service\", status=\"running\"}",
           "format": "heatmap",
           "instant": false,
-          "legendFormat": "generation = {{generation}}",
+          "legendFormat": "generation = {{generation}} - {{replica_no}}",
           "range": true,
           "refId": "A"
         }
@@ -1209,7 +1361,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 48
+        "y": 44
       },
       "id": 15,
       "options": {
@@ -1277,6 +1429,67 @@
       ],
       "title": "Heatmap request latency",
       "type": "heatmap"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "id": 17,
+      "panels": [],
+      "repeat": "replicas",
+      "title": "Logs - $replicas",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 18,
+      "options": {
+        "dedupStrategy": "none",
+        "detailsMode": "inline",
+        "enableInfiniteScrolling": false,
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showControls": true,
+        "showLabels": false,
+        "showTime": false,
+        "sortOrder": "Ascending",
+        "syntaxHighlighting": true,
+        "wrapLogMessage": false
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "direction": "forward",
+          "editorMode": "code",
+          "expr": "{service_name=\"vllm-log\", filename=~\"/logs/vllm_${service}_replica_0\\\\.log\"} | logfmt | label_format level=detected_level",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs",
+      "type": "logs"
     }
   ],
   "preload": false,
@@ -1285,74 +1498,59 @@
   "templating": {
     "list": [
       {
-        "current": {
-          "text": "localhost",
-          "value": "localhost"
-        },
-        "label": "Server",
-        "name": "server",
-        "options": [
-          {
-            "selected": true,
-            "text": "localhost",
-            "value": "localhost"
-          }
-        ],
-        "query": "localhost",
-        "type": "custom"
-      },
-      {
-        "current": {
-          "text": "8001",
-          "value": "8001"
-        },
-        "label": "Port number",
-        "name": "port",
-        "options": [
-          {
-            "selected": true,
-            "text": "8001",
-            "value": "8001"
-          }
-        ],
-        "query": "8001",
-        "type": "custom"
-      },
-      {
         "allowCustomValue": false,
         "current": {
           "text": "vllm-3664613",
           "value": "3664613"
         },
         "datasource": {
-          "type": "yesoreyeram-infinity-datasource",
-          "uid": "af28rrswju6m8c"
+          "type": "prometheus",
+          "uid": "prom"
         },
-        "definition": "",
+        "definition": "label_values(process_start_time_seconds{status=\"running\"},service_id)",
         "label": "Service",
         "name": "service",
         "options": [],
         "query": {
-          "infinityQuery": {
-            "columns": [],
-            "filters": [],
-            "format": "table",
-            "parser": "jq-backend",
-            "refId": "variable",
-            "root_selector": "map({ __value: .id, __text: .name })",
-            "source": "url",
-            "type": "json",
-            "url": "/api/v1/services",
-            "url_options": {
-              "data": "",
-              "method": "GET"
-            }
-          },
-          "query": "",
-          "queryType": "infinity"
+          "qryType": 1,
+          "query": "label_values(process_start_time_seconds{status=\"running\"},service_id)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
         "regex": "",
+        "sort": 3,
+        "type": "query"
+      },
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": [
+            "8001",
+            "8002",
+            "8003",
+            "8004"
+          ],
+          "value": [
+            "8001",
+            "8002",
+            "8003",
+            "8004"
+          ]
+        },
+        "definition": "label_values({service_id=\"$service\"},replica_no)",
+        "description": "",
+        "label": "replicas",
+        "multi": true,
+        "name": "replicas",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({service_id=\"$service\"},replica_no)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 3,
         "type": "query"
       }
     ]

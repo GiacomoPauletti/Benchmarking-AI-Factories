@@ -47,15 +47,15 @@ cd services/monitoring/src
 python main.py
 ```
 
-The service will start on port 8002 with:
-- API documentation at http://localhost:8002/docs
-- ReDoc at http://localhost:8002/redoc
-- Health check at http://localhost:8002/health
+The service will start on port 8005 with:
+- API documentation at http://localhost:8005/docs
+- ReDoc at http://localhost:8005/redoc
+- Health check at http://localhost:8005/health
 
 ### Production Mode
 
 ```bash
-uvicorn src.main:app --host 0.0.0.0 --port 8002
+uvicorn src.main:app --host 0.0.0.0 --port 8005
 ```
 
 ## API Endpoints

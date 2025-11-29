@@ -26,7 +26,7 @@ from service_orchestration.builders import JobBuilder, RecipeLoader
 from service_orchestration.managers import ServiceManager
 from service_orchestration.networking import EndpointResolver
 
-logger = logging.getLogger("service_orchestrator")
+logger = logging.getLogger().getChild("service_orchestrator")
 
 
 @dataclass
@@ -185,7 +185,7 @@ class ServiceOrchestrator:
         try:
             config = config or {}
             # Load recipe to check if it's a replica group
-            recipe = self.recipe_loader.load(recipe_name)
+            recipe_name, recipe = self.recipe_loader.load(recipe_name)
             if not recipe:
                 raise ValueError(f"Recipe '{recipe_name}' not found")
             
@@ -950,8 +950,10 @@ class ServiceOrchestrator:
                     group_info = self.service_manager.group_manager.get_group(group_id)
                     if group_info:
                         recipe_name = group_info.get("recipe_name", "inference/vllm-replicas")
+                        replica_no = replica.get('replica_index', '')
                         self.service_manager.register_service({
                             "id": replica_id,
+                            "name": f"{job_id}-replica-{replica_no}",
                             "job_id": job_id,
                             "recipe_name": recipe_name,
                             "config": {},

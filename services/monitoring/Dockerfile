@@ -16,11 +16,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 
 # Expose FastAPI port
-EXPOSE 8002
+EXPOSE 8005
 
 # Set PYTHONPATH so imports work correctly
 ENV PYTHONPATH=/app/src
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8002/health || exit 1
+    CMD curl -f http://localhost:8005/health || exit 1

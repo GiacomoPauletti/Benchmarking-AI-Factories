@@ -4,6 +4,7 @@ Organizes and categorizes logs by service/microservice type.
 """
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Set
@@ -98,6 +99,9 @@ class LogCategorizer:
         
         # Process all log files recursively
         log_files = list(self.source_dir.rglob('*'))
+
+        # Clear categorized directory
+        shutil.rmtree(self.categorized_dir, ignore_errors=True)
         
         for log_file in log_files:
             # Skip directories
@@ -120,7 +124,7 @@ class LogCategorizer:
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
                 if dest_file.exists() or dest_file.is_symlink():
                     dest_file.unlink()
-                dest_file.symlink_to(log_file)
+                dest_file.symlink_to(os.path.relpath(log_file, dest_file.parent))
                 stats[category] += 1
                 self.logger.debug(f"Categorized {log_file.name} -> {category} (symlink)")
             except Exception as e:

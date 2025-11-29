@@ -10,7 +10,7 @@
 
 The monitoring service has been refactored to follow the same architecture pattern as the server service:
 
-- **FastAPI REST API** for programmatic control (port 8002)
+- **FastAPI REST API** for programmatic control (port 8005)
 - **Core business logic** separated from API layer
 - **Pydantic schemas** for request/response validation
 - **OpenAPI documentation** at `/docs` and `/redoc`
@@ -195,16 +195,16 @@ docker-compose logs -f prometheus
 
 ### API Usage
 
-The Monitoring service exposes a FastAPI REST API on port 8002:
+The Monitoring service exposes a FastAPI REST API on port 8005:
 
 ```bash
 # Create a monitoring session
-curl -X POST http://localhost:8002/api/v1/sessions \
+curl -X POST http://localhost:8005/api/v1/sessions \
   -H "Content-Type: application/json" \
   -d '{"session_id": "bench01"}'
 
 # Register a target for monitoring (e.g., vLLM service)
-curl -X POST http://localhost:8002/api/v1/sessions/bench01/targets \
+curl -X POST http://localhost:8005/api/v1/sessions/bench01/targets \
   -H "Content-Type: application/json" \
   -d '{
     "job_id": "3607637",
@@ -217,15 +217,15 @@ curl -X POST http://localhost:8002/api/v1/sessions/bench01/targets \
   }'
 
 # Check Prometheus targets
-curl http://localhost:8002/api/v1/prometheus/targets
+curl http://localhost:8005/api/v1/prometheus/targets
 
 # Query metrics
-curl -X POST http://localhost:8002/api/v1/prometheus/query \
+curl -X POST http://localhost:8005/api/v1/prometheus/query \
   -H "Content-Type: application/json" \
   -d '{"query": "up"}'
 
 # Collect metrics for a time window
-curl -X POST http://localhost:8002/api/v1/sessions/bench01/collect \
+curl -X POST http://localhost:8005/api/v1/sessions/bench01/collect \
   -H "Content-Type: application/json" \
   -d '{
     "start_time": "2025-01-01T10:00:00Z",
@@ -234,16 +234,16 @@ curl -X POST http://localhost:8002/api/v1/sessions/bench01/collect \
   }'
 
 # Get session status
-curl http://localhost:8002/api/v1/sessions/bench01
+curl http://localhost:8005/api/v1/sessions/bench01
 
 # Delete session
-curl -X DELETE http://localhost:8002/api/v1/sessions/bench01
+curl -X DELETE http://localhost:8005/api/v1/sessions/bench01
 ```
 
 ### API Documentation
 
-* OpenAPI docs: http://localhost:8002/docs
-* ReDoc: http://localhost:8002/redoc
+* OpenAPI docs: http://localhost:8005/docs
+* ReDoc: http://localhost:8005/redoc
 * Prometheus UI: http://localhost:9090
 * Grafana: http://localhost:3000 (admin/admin)
 

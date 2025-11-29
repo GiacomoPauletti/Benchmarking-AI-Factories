@@ -171,7 +171,7 @@ async def create_client_group(
     
     # Resolve orchestrator URL if service_id is provided
     if not client_manager._orchestrator_url:
-        client_manager.set_orchestrator_url(client_manager._server_addr)
+        client_manager.set_orchestrator_url()
     
     service_id = load_config.get('service_id')
     if service_id and client_manager._orchestrator_url:

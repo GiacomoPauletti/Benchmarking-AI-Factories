@@ -107,7 +107,7 @@ class TestServiceOrchestratorCore:
         config = {"nodes": 2, "gpu_per_replica": 1}
         
         # Mock recipe loader to return a recipe with gpu_per_replica
-        mock_recipe_loader.load.return_value = {"name": recipe_name, "gpu_per_replica": 1, "resources": {"gpu": 4}}
+        mock_recipe_loader.load.return_value = (f"bob/${recipe_name}", {"name": recipe_name, "gpu_per_replica": 1, "resources": {"gpu": 4}})
         
         # Mock group manager
         mock_service_manager.group_manager.create_replica_group.return_value = "sg-123"

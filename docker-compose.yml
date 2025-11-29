@@ -17,32 +17,22 @@ services:
     volumes:
       # Mount source code for hot-reload during development. 
       # TODO: Remove in production
+      - ./services/logs/data/logs:/app/logs
       - ./services/server/src:/app/src
       - ./services/server/tests:/app/tests
       - ./services/server/pytest.ini:/app/pytest.ini
-      # Mount server endpoint file so client can find it
-      - ./services/server/.server-endpoint:/app/.server-endpoint
       # Mount SSH agent socket for secure authentication (no raw keys exposed)
       - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
-      # SSH Configuration for MeluXina
-      - SSH_HOST=${SSH_HOST}
-      - SSH_PORT=${SSH_PORT}
-      - SSH_USER=${SSH_USER}
-      - SSH_KEY_PATH=${SSH_KEY_PATH}
-      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
       - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
       # Application Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
     # Load additional service-specific variables
     env_file:
       - .env
     networks: 
       - ai-factory
-    stdin_open: true
-    tty: true
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/ready"]
@@ -93,8 +83,8 @@ services:
         SSH_PORT: ${SSH_PORT}
         REMOTE_BASE_PATH: ${REMOTE_BASE_PATH}
     container_name: benchmarking-ai-client
-    # ports:
-    #   - "8003:8003"  # Ignored when network_mode: host
+    ports:
+      - "8002:8002"
     volumes:
       # Mount source code for hot-reload during development
       # TODO: Remove in production
@@ -104,31 +94,16 @@ services:
       # Mount SSH agent socket for secure authentication (no raw keys exposed)
       - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
-      # SSH Configuration for MeluXina
-      - SSH_HOST=${SSH_HOST}
-      - SSH_PORT=${SSH_PORT}
-      - SSH_USER=${SSH_USER}
-      - SSH_KEY_PATH=${SSH_KEY_PATH}
-      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
       - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
       # Application Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
     # Load additional service-specific variables
     env_file:
       - .env
-    network_mode: host
-    stdin_open: true
-    tty: true
+    networks:
+      - ai-factory
     restart: unless-stopped
-    command: >
-      python -m main
-      http://localhost:8001
-      --host 0.0.0.0
-      --port 8003
-      --container
-
 
   monitoring:
     build:
@@ -136,7 +111,7 @@ services:
       dockerfile: Dockerfile
     container_name: benchmarking-ai-monitoring
     ports:
-      - "8002:8002"
+      - "8005:8005"
     volumes:
       # Mount source code for hot-reload during development
       - ./services/monitoring/src:/app/src
@@ -150,15 +125,12 @@ services:
       - MONITORING_SERVER_API_URL=http://server:8001
       
       # Application Configuration
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - APP_LOG_DIR=/app/logs
       - PYTHONUNBUFFERED=1
     env_file:
       - .env
     networks: 
       - ai-factory
-    stdin_open: true
-    tty: true
     restart: unless-stopped
     depends_on:
       prometheus:
@@ -218,7 +190,7 @@ services:
       - 12345:12345
       - 4318:4318
     volumes:
-      - ./services/server/logs:/logs
+      - ./services/logs/data/logs:/logs
     networks:
       - ai-factory
     restart: unless-stopped
@@ -254,20 +226,10 @@ services:
       # Mount source code for hot-reload during development
       - ./services/logs/src:/app/src
       - ./services/logs/data:/app/data  # Persistent log storage
-      # Mount SSH keys from host (read-only) 
-      - ${HOME}/.ssh:/tmp/host-ssh:ro
+      # Mount SSH agent socket for secure authentication (no raw keys exposed)
+      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock:ro
     environment:
-      # SSH Configuration for MeluXina
-      - SSH_HOST=${SSH_HOST}
-      - SSH_PORT=${SSH_PORT}
-      - SSH_USER=${SSH_USER}
-      - SSH_KEY_PATH=${SSH_KEY_PATH}
-      - REMOTE_BASE_PATH=${REMOTE_BASE_PATH}
-      
-      # Logs Service Configuration
-      - SYNC_INTERVAL=60  # Seconds between syncs
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - PYTHONUNBUFFERED=1
+      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
     env_file:
       - .env
     networks: 

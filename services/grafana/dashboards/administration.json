@@ -18,132 +18,13 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
+  "id": 6,
   "links": [],
   "panels": [
     {
       "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "af28rrswju6m8c"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "actions": [],
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false,
-            "wrapText": true
-          },
-          "links": [],
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Category"
-            },
-            "properties": [
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "pill"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "name"
-          }
-        ]
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "columns": [],
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "af28rrswju6m8c"
-          },
-          "filters": [],
-          "format": "table",
-          "global_query_id": "",
-          "parser": "backend",
-          "refId": "A",
-          "root_selector": "",
-          "source": "url",
-          "type": "json",
-          "url": "/api/v1/recipes",
-          "url_options": {
-            "data": "",
-            "method": "GET"
-          }
-        }
-      ],
-      "title": "Recipes",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {},
-            "includeByName": {},
-            "indexByName": {
-              "category": 3,
-              "description": 4,
-              "name": 0,
-              "path": 2,
-              "version": 1
-            },
-            "renameByName": {
-              "category": "Category",
-              "description": "Description",
-              "name": "Name",
-              "path": "Path",
-              "version": "Version"
-            }
-          }
-        }
-      ],
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "af28rrswju6m8c"
+        "type": "prometheus",
+        "uid": "prom"
       },
       "fieldConfig": {
         "defaults": {
@@ -160,7 +41,7 @@
                 ],
                 "method": "POST",
                 "queryParams": [],
-                "url": "http://${server}:${port}/api/v1/services/${__data.fields.id}/status"
+                "url": "http://${server}:${port}/api/v1/services/${__series.name}/status"
               },
               "style": {
                 "backgroundColor": "#F2495C"
@@ -170,29 +51,77 @@
             }
           ],
           "color": {
-            "fixedColor": "purple",
-            "mode": "shades"
+            "fixedColor": "#7d7d7d",
+            "mode": "fixed"
           },
           "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
+            "axisPlacement": "auto",
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
             },
-            "filterable": true,
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false,
-            "wrapText": true
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": 60000
           },
+          "fieldMinMax": false,
           "links": [
             {
+              "oneClick": false,
               "targetBlank": true,
               "title": "Details",
-              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}﻿&var-port=﻿${port:queryparam}﻿&var-service=${__data.fields.ID}"
+              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}﻿&var-port=﻿${port:queryparam}﻿&var-service=${__field.name}"
             }
           ],
-          "mappings": [],
+          "mappings": [
+            {
+              "options": {
+                "building": {
+                  "color": "blue",
+                  "index": 3,
+                  "text": "Building…"
+                },
+                "cancelled": {
+                  "color": "yellow",
+                  "index": 6,
+                  "text": "Cancelled"
+                },
+                "completed": {
+                  "color": "dark-green",
+                  "index": 5,
+                  "text": "Completed"
+                },
+                "failed": {
+                  "color": "dark-red",
+                  "index": 7,
+                  "text": "Failed !"
+                },
+                "pending": {
+                  "color": "dark-blue",
+                  "index": 1,
+                  "text": "Pending…"
+                },
+                "running": {
+                  "color": "green",
+                  "index": 4,
+                  "text": "Running"
+                },
+                "starting": {
+                  "color": "super-light-blue",
+                  "index": 2,
+                  "text": "Starting…"
+                },
+                "unknown": {
+                  "color": "#808080",
+                  "index": 0,
+                  "text": "Unknown"
+                }
+              },
+              "type": "value"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -203,128 +132,86 @@
             ]
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Status"
-            },
-            "properties": [
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "pill"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 0
       },
       "id": 4,
       "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.95,
+        "showValue": "auto",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
       },
-      "pluginVersion": "12.2.1",
+      "pluginVersion": "12.3.0",
       "targets": [
         {
-          "columns": [],
-          "computed_columns": [],
           "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "af28rrswju6m8c"
+            "type": "prometheus",
+            "uid": "prom"
           },
-          "filters": [],
-          "format": "table",
-          "global_query_id": "",
-          "parser": "backend",
-          "refId": "A",
-          "root_selector": "",
-          "source": "url",
-          "type": "json",
-          "url": "/api/v1/services",
-          "url_options": {
-            "data": "",
-            "method": "GET"
-          }
+          "editorMode": "builder",
+          "expr": "process_start_time_seconds{instance=\"server:8001\"}",
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
         }
       ],
-      "title": "Services",
+      "title": "Services (click on service to view or cancel it)",
       "transformations": [
         {
-          "id": "extractFields",
+          "id": "labelsToFields",
           "options": {
-            "delimiter": ",",
-            "source": "config"
-          }
-        },
-        {
-          "id": "convertFieldType",
-          "options": {
-            "conversions": [
-              {
-                "destinationType": "time",
-                "targetField": "created_at"
-              },
-              {
-                "destinationType": "enum",
-                "enumConfig": {
-                  "text": [
-                    "unknown",
-                    "cancelled",
-                    "failed",
-                    "completed",
-                    "running",
-                    "starting",
-                    "building",
-                    "pending"
-                  ]
-                },
-                "targetField": "status"
-              }
+            "keepLabels": [
+              "status",
+              "service_id"
             ],
-            "fields": {}
+            "mode": "columns"
           }
         },
         {
-          "id": "organize",
+          "id": "filterFieldsByName",
           "options": {
-            "excludeByName": {
-              "Actions": true,
-              "Links": true,
-              "config": true,
-              "id": false
-            },
-            "includeByName": {},
-            "indexByName": {
-              "config": 6,
-              "created_at": 3,
-              "id": 0,
-              "name": 1,
-              "nodes": 5,
-              "recipe_name": 4,
-              "status": 2
-            },
-            "renameByName": {
-              "config": "",
-              "created_at": "Created at",
-              "id": "ID",
-              "name": "Name",
-              "nodes": "# of nodes",
-              "recipe_name": "Recipe name",
-              "status": "Status"
+            "byVariable": false,
+            "include": {
+              "names": [
+                "service_id",
+                "status",
+                "Time"
+              ]
             }
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "service_id",
+            "emptyValue": "null",
+            "rowField": "Time",
+            "valueField": "status"
           }
         }
       ],
-      "type": "table"
+      "type": "state-timeline"
     },
     {
       "datasource": {
@@ -336,10 +223,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 13,
+        "h": 8,
         "w": 8,
         "x": 0,
-        "y": 14
+        "y": 7
       },
       "id": 1,
       "options": {
@@ -364,15 +251,17 @@
           "elementDisplayMode": "modified",
           "title": "Confirm update request"
         },
-        "elementValueChanged": "",
+        "elementValueChanged": "const selected = context.panel.elements.find(el => el.id == \"recipe_name\").value\nif (context.panel.data.prevSelected !== selected) {\n  const data = context.panel.data.series[0].fields;\n  const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == selected)\n  const parameters = JSON.parse(data.find(s => s.name == \"resources\").values[idx])\n  context.panel.setFormValue({\n    \"recipe_name\": selected,\n    \"config.nodes\": parameters[\"nodes\"] || 1,\n    \"config.cpus\": parameters[\"cpu\"] || 1,\n    \"config.gpus\": parameters[\"gpu\"] || 0,\n    \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\")\n  })\n}\ncontext.panel.data.prevSelected = selected",
         "elements": [
           {
             "allowCustomValue": false,
             "background": "",
+            "disableIf": "",
             "getOptions": "return (context.panel.data.initial || []).map(x => ({ label: x.name, value: x.path }));",
             "id": "recipe_name",
-            "labelBackground": "",
-            "labelWidth": 20,
+            "labelBackground": "#FFB357",
+            "labelColor": "",
+            "labelWidth": 15,
             "options": [
               {
                 "id": "3",
@@ -391,7 +280,7 @@
             "queryOptions": {
               "label": "name",
               "source": "recipes",
-              "value": "path"
+              "value": "name"
             },
             "section": "",
             "title": "Recipe",
@@ -403,19 +292,124 @@
           },
           {
             "id": "config.nodes",
-            "labelWidth": 20,
+            "labelWidth": 15,
+            "max": 4,
             "min": 1,
             "section": "",
-            "title": "Number of nodes",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+            "step": 1,
+            "title": "# of nodes",
             "tooltip": "",
-            "type": "number",
+            "type": "slider",
             "uid": "0ce34aee-a245-43c0-829c-5a3bc752df65",
             "unit": "",
             "value": 0
+          },
+          {
+            "id": "config.cpus",
+            "labelWidth": 15,
+            "max": 32,
+            "min": 1,
+            "section": "",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+            "step": 1,
+            "title": "# of CPUs",
+            "tooltip": "",
+            "type": "slider",
+            "uid": "9aa3ff40-e65e-4482-9001-0bbbf768dc2f",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "id": "config.gpus",
+            "labelWidth": 15,
+            "max": 4,
+            "min": 0,
+            "section": "",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+            "step": 1,
+            "title": "# of GPUs",
+            "tooltip": "",
+            "type": "slider",
+            "uid": "265e565f-1b41-4926-901b-a247f549e629",
+            "unit": "",
+            "value": 0
+          },
+          {
+            "allowCustomValue": false,
+            "id": "config.memory",
+            "labelWidth": 15,
+            "options": [
+              {
+                "icon": "dashboard",
+                "id": "4G",
+                "label": "4 GB",
+                "type": "string",
+                "value": "4G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "8G",
+                "label": "8 GB",
+                "type": "string",
+                "value": "8G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "16G",
+                "label": "16 GB",
+                "type": "string",
+                "value": "16G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "32G",
+                "label": "32 GB",
+                "type": "string",
+                "value": "32G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "64G",
+                "label": "64 GB",
+                "type": "string",
+                "value": "64G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "128G",
+                "label": "256 GB",
+                "type": "string",
+                "value": "128G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "256G",
+                "label": "256 GB",
+                "type": "string",
+                "value": "256G"
+              },
+              {
+                "icon": "dashboard",
+                "id": "512G",
+                "label": "512 GB",
+                "type": "string",
+                "value": "512G"
+              }
+            ],
+            "optionsSource": "Custom",
+            "section": "",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\";",
+            "title": "Memory",
+            "tooltip": "",
+            "type": "select",
+            "uid": "59ef387c-be7e-4f4e-88b1-e28133db5aa0",
+            "unit": "",
+            "value": ""
           }
         ],
         "initial": {
-          "code": "context.panel.data.initial = context.panel.initial;",
+          "code": "context.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n})\ncontext.panel.data.prevSelected = null",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,
@@ -469,7 +463,7 @@
         },
         "updateEnabled": "auto"
       },
-      "pluginVersion": "6.2.0",
+      "pluginVersion": "6.3.1",
       "targets": [
         {
           "columns": [],
@@ -484,6 +478,7 @@
           "refId": "recipes",
           "root_selector": "",
           "source": "url",
+          "summarizeExpression": "",
           "type": "json",
           "url": "/api/v1/recipes",
           "url_options": {
@@ -493,6 +488,27 @@
         }
       ],
       "title": "Start service",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "base_port": true,
+              "container_def": true,
+              "deployment_config": true,
+              "environment": true,
+              "gpu_per_replica": true,
+              "health_check": true,
+              "image": true,
+              "path": true,
+              "ports": true
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
       "type": "volkovlabs-form-panel"
     },
     {
@@ -501,20 +517,139 @@
         "uid": "af28rrswju6m8c"
       },
       "fieldConfig": {
+        "defaults": {
+          "actions": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false,
+            "wrapText": true
+          },
+          "links": [],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Category"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "pill"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 16,
+        "x": 8,
+        "y": 7
+      },
+      "id": 3,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "name"
+          }
+        ]
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/recipes",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Recipes",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "includeByName": {},
+            "indexByName": {
+              "category": 3,
+              "description": 4,
+              "name": 0,
+              "path": 2,
+              "version": 1
+            },
+            "renameByName": {
+              "category": "Category",
+              "description": "Description",
+              "name": "Name",
+              "path": "Path",
+              "version": "Version"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
         "defaults": {},
         "overrides": []
       },
       "gridPos": {
-        "h": 13,
-        "w": 16,
-        "x": 8,
-        "y": 14
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 15
       },
-      "id": 2,
+      "id": 5,
       "options": {
         "buttonGroup": {
           "orientation": "center",
-          "size": "md"
+          "size": "lg"
         },
         "confirmModal": {
           "body": "Please confirm to update changed values",
@@ -536,86 +671,106 @@
         "elementValueChanged": "",
         "elements": [
           {
-            "hidden": false,
-            "id": "name",
-            "labelWidth": 20,
+            "allowCustomValue": false,
+            "getOptions": "const ids = context.panel.data.series[0].fields.find(f => f.name === \"service_id\")?.values;\nif (!ids) return []\nconst formatted = ids.map(id => id.split(':')[0])\nconst uniques = [...(new Set(formatted)).keys().map(k => ({ label: k, value: k }))]\nreturn uniques",
+            "id": "service_id",
+            "labelWidth": 15,
+            "options": [],
+            "optionsSource": "Code",
             "section": "",
-            "title": "Name of the recipe",
+            "title": "Service ID",
             "tooltip": "",
-            "type": "string",
-            "uid": "02f705de-cafa-47ce-abb3-58525ee522ee",
+            "type": "select",
+            "uid": "aae2ed60-02b9-4a66-968a-5d05376598d7",
             "unit": "",
             "value": ""
           },
           {
-            "hidden": false,
-            "id": "category",
-            "labelWidth": 20,
+            "id": "num_clients",
+            "labelWidth": 15,
+            "min": 1,
             "section": "",
-            "title": "Category",
+            "title": "# of clients",
             "tooltip": "",
-            "type": "string",
-            "uid": "e26e2092-0bc8-4227-b6ba-a3238bcb83c5",
+            "type": "number",
+            "uid": "d5701437-b86d-4d94-ae96-fd84ec75b15b",
             "unit": "",
-            "value": ""
+            "value": 0
           },
           {
-            "hidden": false,
-            "id": "description",
-            "labelWidth": 20,
+            "id": "requests_per_second",
+            "labelWidth": 15,
+            "min": 1,
             "section": "",
-            "title": "Description",
+            "title": "Req/s",
             "tooltip": "",
-            "type": "string",
-            "uid": "97654ae4-11e4-4206-8562-051a93ac581e",
+            "type": "number",
+            "uid": "8d5d6ae7-ff03-4792-a561-769bf7be5324",
             "unit": "",
-            "value": ""
+            "value": 0
           },
           {
-            "hidden": false,
-            "id": "version",
-            "labelWidth": 20,
+            "id": "duration_seconds",
+            "labelWidth": 15,
+            "min": 1,
             "section": "",
-            "title": "Version",
+            "title": "Duration",
             "tooltip": "",
-            "type": "string",
-            "uid": "56533b5b-6f42-4e23-813b-16b4199b562b",
-            "unit": "",
-            "value": ""
+            "type": "number",
+            "uid": "124316ac-6d60-440d-b228-568b1e4582e0",
+            "unit": "s",
+            "value": 0
           },
           {
-            "hidden": false,
-            "id": "path",
-            "labelWidth": 20,
+            "id": "max_tokens",
+            "labelWidth": 15,
+            "min": 1,
             "section": "",
-            "title": "Path",
+            "title": "Max tokens",
             "tooltip": "",
-            "type": "string",
-            "uid": "08874346-4cfd-4563-a023-b50683e33dbd",
+            "type": "number",
+            "uid": "0208340d-283e-4c83-a553-5a43b6403f65",
             "unit": "",
-            "value": ""
+            "value": 0
           },
           {
-            "id": "content",
-            "labelWidth": 20,
-            "rows": 10,
+            "id": "temperature",
+            "labelWidth": 15,
+            "max": 1,
+            "min": 0,
             "section": "",
-            "title": "Recipe content",
+            "step": 0.01,
+            "title": "Temperature",
             "tooltip": "",
-            "type": "textarea",
-            "uid": "a9068ed8-0dfa-4099-aed2-e112123f9cc2",
+            "type": "slider",
+            "uid": "e0b30291-dac9-49fd-aaaa-941d1841516c",
             "unit": "",
-            "value": ""
+            "value": 0
+          },
+          {
+            "allowCustomValue": true,
+            "id": "prompts",
+            "labelWidth": 15,
+            "options": [],
+            "optionsSource": "Custom",
+            "section": "",
+            "title": "Prompts",
+            "tooltip": "",
+            "type": "multiselect",
+            "uid": "5955cdab-3aa2-48c5-8d70-44de2ac82c40",
+            "unit": "",
+            "value": []
           }
         ],
         "initial": {
-          "code": "console.log(context.panel.data, context.panel.response, context.panel.initial, context.panel.elements);\n\nreturn;\n\n/**\n * Data Source\n * Requires form elements to be defined\n */\nconst dataQuery = context.utils.toDataQueryResponse(context.panel.response);\nconsole.log(dataQuery);",
+          "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_second: 100,\n  duration_seconds: 60,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,
           "highlightColor": "red",
-          "method": "-",
-          "payload": {}
+          "method": "query",
+          "payload": {},
+          "url": "http://${server}:${port}/api/v1/recipes"
         },
         "layout": {
           "orientation": "horizontal",
@@ -645,54 +800,74 @@
         "submit": {
           "backgroundColor": "purple",
           "foregroundColor": "yellow",
-          "icon": "cloud-upload",
-          "text": "Submit",
+          "icon": "play",
+          "text": "Start benchmark",
           "variant": "primary"
         },
         "sync": true,
         "update": {
-          "code": "if (context.panel.response) {\n  context.grafana.notifySuccess(['Update', 'Values updated successfully.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Update', 'An error occurred updating values.']);\n}",
+          "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
           "confirm": false,
           "contentType": "application/json",
           "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
-          "method": "-",
+          "method": "POST",
           "payload": {},
-          "payloadMode": "all"
+          "payloadMode": "all",
+          "url": "http://${server}:${client_port}/api/v1/client-groups"
         },
         "updateEnabled": "auto"
       },
-      "pluginVersion": "6.2.0",
+      "pluginVersion": "6.3.1",
       "targets": [
         {
-          "columns": [],
           "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "af28rrswju6m8c"
+            "type": "prometheus",
+            "uid": "prom"
           },
-          "filters": [],
-          "format": "table",
-          "global_query_id": "",
-          "parser": "backend",
-          "refId": "A",
-          "root_selector": "",
-          "source": "url",
-          "type": "json",
-          "url": "/api/v1/recipes/{recipe_name}",
-          "url_options": {
-            "data": "",
-            "method": "GET"
+          "editorMode": "builder",
+          "expr": "process_start_time_seconds{instance=\"server:8001\", status=\"running\"}",
+          "instant": false,
+          "legendFormat": "__auto",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Start benchmark",
+      "transformations": [
+        {
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "labelsToFields": true,
+            "mode": "seriesToRows",
+            "reducers": [
+              "max"
+            ]
           }
         },
         {
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "af28rrswju6m8c"
-          },
-          "hide": false,
-          "refId": "B"
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "Field": {
+                "aggregations": [
+                  "lastNotNull"
+                ]
+              },
+              "replica_no": {
+                "aggregations": [
+                  "count"
+                ],
+                "operation": "aggregate"
+              },
+              "service_id": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            }
+          }
         }
       ],
-      "title": "New recipe (TODO)",
       "type": "volkovlabs-form-panel"
     }
   ],
@@ -723,7 +898,7 @@
           "text": "8001",
           "value": "8001"
         },
-        "label": "Port number",
+        "label": "Server port number",
         "name": "port",
         "options": [
           {
@@ -733,6 +908,24 @@
           }
         ],
         "query": "8001",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "8003",
+          "value": "8003"
+        },
+        "description": "",
+        "label": "Client port number",
+        "name": "client_port",
+        "options": [
+          {
+            "selected": true,
+            "text": "8003",
+            "value": "8003"
+          }
+        ],
+        "query": "8003",
         "type": "custom"
       }
     ]
