@@ -49,8 +49,17 @@ def cleanup_logs():
     try:
         print(f"[cleanup] Cleaning up logs in {log_dir}...", file=sys.stderr)
 
-        # Remove all loadgen log files
-        for pattern in ["loadgen-*.out", "loadgen-*.err", "loadgen-*-container.log", "loadgen-results-*.json"]:
+        # Remove all loadgen log files (including new format with group and job IDs)
+        patterns = [
+            "loadgen-*.out", 
+            "loadgen-*.err", 
+            "loadgen-*-container.log",      # Old format
+            "loadgen-group*-container.log", # New format
+            "loadgen-results-*.json",       # Old format
+            "loadgen-group*-results.json",  # New format
+            "loadgen-group*-config.json"    # New format
+        ]
+        for pattern in patterns:
             for file in glob.glob(os.path.join(log_dir, pattern)):
                 try:
                     os.remove(file)
@@ -114,8 +123,8 @@ app.include_router(router, prefix="/api/v1")
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="AI Factory Client Service")
-    parser.add_argument("server_addr", nargs="?", default="http://localhost:8001", 
-                       help="Server address (default: http://localhost:8001)")
+    parser.add_argument("server_addr", nargs="?", default=None, 
+                       help="Server address (default: $SERVER_URL or http://server:8001)")
     parser.add_argument("--host", default="0.0.0.0", 
                        help="Host to bind to (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8002, 
@@ -127,8 +136,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Extract values
-    server_addr = args.server_addr
+    # Extract values - prefer environment variable over hardcoded default
+    server_addr = args.server_addr or os.environ.get("SERVER_URL", "http://server:8001")
     host = args.host
     logging.debug(f"args.port: {args.port}")
     port = args.port

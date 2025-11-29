@@ -202,8 +202,9 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             rsync_cmd.extend([
                 "--include", f"loadgen-{group_id}-*.out",        # SLURM stdout
                 "--include", f"loadgen-{group_id}-*.err",        # SLURM stderr
-                "--include", f"loadgen-{group_id}-container.log", # Container logs
-                "--include", f"loadgen-results-{group_id}.json",  # Results
+                "--include", f"loadgen-group{group_id}-*-container.log", # Container logs
+                "--include", f"loadgen-group{group_id}-*-results.json",  # Results
+                "--include", f"loadgen-group{group_id}-*-config.json",   # Config
                 "--include", "*/",  # Include directories for recursive search
                 "--exclude", "*",   # Exclude everything else
             ])
@@ -213,7 +214,9 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             rsync_cmd.extend([
                 "--include", pattern,
                 "--include", pattern.replace('.out', '.err'),
-                "--include", "loadgen-results-*.json",
+                "--include", "loadgen-group*-results.json",
+                "--include", "loadgen-group*-config.json",
+                "--include", "loadgen-group*-container.log",
                 "--include", "*/",
                 "--exclude", "*",
             ])
@@ -223,8 +226,9 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             rsync_cmd.extend([
                 "--include", "loadgen-*.out",
                 "--include", "loadgen-*.err",
-                "--include", "loadgen-*-container.log",
-                "--include", "loadgen-results-*.json",
+                "--include", "loadgen-group*-container.log",
+                "--include", "loadgen-group*-results.json",
+                "--include", "loadgen-group*-config.json",
                 "--include", "*/",
                 "--exclude", "*",
             ])
@@ -261,7 +265,15 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
                 # Fix permissions on synced files so they're readable by the user
                 try:
                     import glob
-                    for pattern in ["loadgen-*.out", "loadgen-*.err", "loadgen-*.json", "loadgen-*-container.log"]:
+                    patterns = [
+                        "loadgen-*.out", 
+                        "loadgen-*.err", 
+                        "loadgen-*.json",              # Old format
+                        "loadgen-group*.json",         # New format (config/results)
+                        "loadgen-*-container.log",     # Old format
+                        "loadgen-group*-container.log" # New format
+                    ]
+                    for pattern in patterns:
                         for file in glob.glob(os.path.join(local_logs_dir, pattern)):
                             try:
                                 os.chmod(file, 0o644)
@@ -369,7 +381,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             "prompts": self._load_config.get('prompts'),
             "max_tokens": self._load_config.get('max_tokens', 100),
             "temperature": self._load_config.get('temperature', 0.7),
-            "results_file": f"/app/logs/loadgen-results-{group_id}.json"
+            "results_file": f"/app/logs/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-results.json"
         }
         prompts_json_config = json.dumps(load_config, indent=2)
         
@@ -411,13 +423,13 @@ echo "Log directory: {log_dir}"
 echo "Container sif: {sif_path}"
 echo "==========================="
 
-# Generate the JSON config file for this load test
+# Generate the JSON config file for this load test with job ID in filename
 echo "Generating load test configuration..."
-cat > {log_dir}/loadgen-config-{group_id}.json << 'CONFIG_EOF'
+cat > {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json << 'CONFIG_EOF'
 {prompts_json_config}
 CONFIG_EOF
 
-echo "Configuration file created: {log_dir}/loadgen-config-{group_id}.json"
+echo "Configuration file created: {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json"
 
 # Build container if needed
 if [ ! -f {sif_path} ]; then
@@ -465,21 +477,21 @@ mkdir -p {log_dir}
 
 # Run the load test inside the container
 echo "Starting container..."
-echo "Running load test container with config: loadgen-config-{group_id}.json"
+echo "Running load test container with config: loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json"
 
 # Mount the config file and Python script, then run
 # Redirect container output to a log file
-apptainer run \\
-    --bind {log_dir}:/app/logs \\
-    --bind {log_dir}/loadgen-config-{group_id}.json:/app/config.json:ro \\
-     --bind {self._remote_base_path}/src/client/loadgen_template.py:/app/main.py:ro \\
-    --env LOADGEN_CONFIG=/app/config.json \\
-    {sif_path} > {log_dir}/loadgen-{group_id}-container.log 2>&1
+apptainer run \
+    --bind {log_dir}:/app/logs \
+    --bind {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json:/app/config.json:ro \
+     --bind {self._remote_base_path}/src/client/loadgen_template.py:/app/main.py:ro \
+    --env LOADGEN_CONFIG=/app/config.json \
+    {sif_path} > {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-container.log 2>&1
 container_exit_code=$?
 
 echo ""
 echo "Container exited with code: $container_exit_code"
-echo "Container logs saved to: {log_dir}/loadgen-{group_id}-container.log"
+echo "Container logs saved to: {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-container.log"
 echo "Load test completed at $(date)"
 
 exit $container_exit_code
