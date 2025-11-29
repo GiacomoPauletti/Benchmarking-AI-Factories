@@ -33,8 +33,8 @@ from utils.utils import (
 # API endpoints
 SERVER_API = "http://localhost:8001/api/v1"
 SERVER_BASE = "http://localhost:8001"
-CLIENT_API = "http://localhost:8003/api/v1"
-CLIENT_BASE = "http://localhost:8003"
+CLIENT_API = "http://localhost:8002/api/v1"
+CLIENT_BASE = "http://localhost:8002"
 
 def create_vllm_service_group() -> str:
     """Create a vLLM replica service group and return its group_id."""
@@ -218,7 +218,7 @@ def main():
             SERVER_BASE,
             service_group_id,
             min_healthy=1,
-            timeout=600,
+            timeout=3000,
         )
 
         if not ready:

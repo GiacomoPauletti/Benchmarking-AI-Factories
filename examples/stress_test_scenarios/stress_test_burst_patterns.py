@@ -33,8 +33,8 @@ from utils.dataset_loader import DatasetLoader, get_dataset_preset, DATASET_PRES
 # API endpoints
 SERVER_API = "http://localhost:8001/api/v1"
 SERVER_BASE = "http://localhost:8001"
-CLIENT_API = "http://localhost:8003/api/v1"
-CLIENT_BASE = "http://localhost:8003"
+CLIENT_API = "http://localhost:8002/api/v1"
+CLIENT_BASE = "http://localhost:8002"
 
 
 LOAD_PATTERNS = {
