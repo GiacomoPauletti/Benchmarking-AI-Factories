@@ -434,23 +434,38 @@ Answer:"""
         }
     
     def _prompt_single_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Send a prompt to a single VLLM service (not a group).
+        """Send a prompt to a single VLLM service (not a group) or a replica.
         
         Tries chat endpoint first (for instruction-tuned models).
         Falls back to completions endpoint if chat template error occurs (for base models).
         
         Optimized with model caching and combined readiness+discovery check.
+        Handles both standalone services and replicas (replica IDs contain ':').
         """
-        # Try to get service info directly (works for just-created services too)
-        service_info = self.service_manager.get_service(service_id)
-        if not service_info:
-            # Service doesn't exist at all
-            return {
-                "success": False,
-                "error": f"VLLM service {service_id} not found",
-                "message": "The requested vLLM service could not be found. It may not exist or may have been stopped.",
-                "service_id": service_id
-            }
+        # Check if this is a replica ID (format: "job_id:port")
+        is_replica = ":" in service_id
+        
+        if is_replica:
+            # Look up replica info from parent group
+            service_info = self.service_manager.get_replica_info(service_id)
+            if not service_info:
+                return {
+                    "success": False,
+                    "error": f"Replica {service_id} not found",
+                    "message": "The requested replica could not be found in any service group.",
+                    "service_id": service_id
+                }
+        else:
+            # Try to get service info directly (works for just-created services too)
+            service_info = self.service_manager.get_service(service_id)
+            if not service_info:
+                # Service doesn't exist at all
+                return {
+                    "success": False,
+                    "error": f"VLLM service {service_id} not found",
+                    "message": "The requested vLLM service could not be found. It may not exist or may have been stopped.",
+                    "service_id": service_id
+                }
         
         # Check if it's a VLLM service
         if "inference/vllm" not in service_info.get("recipe_name", ""):

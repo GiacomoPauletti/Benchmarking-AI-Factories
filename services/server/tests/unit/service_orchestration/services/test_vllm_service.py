@@ -182,6 +182,91 @@ class TestVllmServiceUnit:
         assert "error" in result
         assert "not found" in result["error"].lower()
 
+    def test_prompt_single_service_handles_replica_id(self, vllm_service, mock_service_manager, mock_endpoint_resolver):
+        """Test that _prompt_single_service correctly handles replica IDs (containing ':')"""
+        # Replica IDs are in format "job_id:port" like "12345:8001"
+        replica_id = "12345:8001"
+        
+        # Mock get_replica_info to return replica info with recipe_name
+        mock_service_manager.get_replica_info.return_value = {
+            "id": replica_id,
+            "port": 8001,
+            "job_id": "12345",
+            "gpu_id": 0,
+            "status": "running",
+            "group_id": "group-123",
+            "recipe_name": "inference/vllm-single-node",
+            "node": "compute-node-001"
+        }
+        
+        # get_service should NOT be called for replica IDs
+        mock_service_manager.get_service.return_value = None
+        
+        # Mock endpoint resolution failure to trigger early return
+        mock_endpoint_resolver.resolve.return_value = None
+        
+        result = vllm_service._prompt_single_service(replica_id, "test prompt")
+        
+        # Should have used get_replica_info, not get_service
+        mock_service_manager.get_replica_info.assert_called_once_with(replica_id)
+        mock_service_manager.get_service.assert_not_called()
+        
+        # Result should indicate endpoint not available (we mocked that)
+        assert result["success"] is False
+        assert "endpoint" in result["error"].lower()
+
+    def test_prompt_single_service_handles_regular_service_id(self, vllm_service, mock_service_manager, mock_endpoint_resolver):
+        """Test that _prompt_single_service uses get_service for non-replica IDs"""
+        # Regular service IDs don't contain ':'
+        service_id = "12345"
+        
+        mock_service_manager.get_service.return_value = {
+            "id": service_id,
+            "name": "vllm-test",
+            "status": "running",
+            "recipe_name": "inference/vllm-single-node"
+        }
+        
+        # Mock endpoint resolution failure to trigger early return
+        mock_endpoint_resolver.resolve.return_value = None
+        
+        result = vllm_service._prompt_single_service(service_id, "test prompt")
+        
+        # Should have used get_service, not get_replica_info
+        mock_service_manager.get_service.assert_called_once_with(service_id)
+        # get_replica_info should NOT have been called
+        mock_service_manager.get_replica_info.assert_not_called()
+
+    def test_prompt_single_service_replica_not_found(self, vllm_service, mock_service_manager):
+        """Test that _prompt_single_service handles missing replica correctly"""
+        replica_id = "99999:8001"
+        
+        mock_service_manager.get_replica_info.return_value = None
+        
+        result = vllm_service._prompt_single_service(replica_id, "test prompt")
+        
+        assert result["success"] is False
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+        assert replica_id in result["error"]
+
+    def test_prompt_single_service_replica_not_vllm(self, vllm_service, mock_service_manager):
+        """Test that _prompt_single_service rejects non-vLLM replicas"""
+        replica_id = "12345:8001"
+        
+        mock_service_manager.get_replica_info.return_value = {
+            "id": replica_id,
+            "port": 8001,
+            "job_id": "12345",
+            "group_id": "group-123",
+            "recipe_name": "database/postgres",  # Not a vLLM service
+        }
+        
+        result = vllm_service._prompt_single_service(replica_id, "test prompt")
+        
+        assert result["success"] is False
+        assert "not a vLLM service" in result["error"]
+
     @patch('service_orchestration.services.base_service.requests')
     def test_get_models_uses_correct_endpoint(self, mock_requests, vllm_service, mock_service_manager, mock_endpoint_resolver):
         """Test that get_models() uses the resolved endpoint correctly.

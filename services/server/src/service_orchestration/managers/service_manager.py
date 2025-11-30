@@ -269,6 +269,34 @@ class ServiceManager:
         with self._instance_lock:
             return self._replica_to_group.get(replica_id)
     
+    def get_replica_info(self, replica_id: str) -> Optional[Dict[str, Any]]:
+        """Get replica information including parent group's recipe_name.
+        
+        Returns a dict with replica info plus 'recipe_name' from the parent group,
+        or None if the replica is not found.
+        """
+        with self._instance_lock:
+            group_id = self._replica_to_group.get(replica_id)
+            if not group_id:
+                return None
+            
+            group = self._groups.get(group_id)
+            if not group:
+                return None
+            
+            # Find the replica in the group
+            for node_job in group.get("node_jobs", []):
+                for replica in node_job["replicas"]:
+                    if replica["id"] == replica_id:
+                        # Return replica info with parent group's recipe_name
+                        return {
+                            **replica,
+                            "group_id": group_id,
+                            "recipe_name": group.get("recipe_name", "unknown"),
+                            "node": node_job.get("node")
+                        }
+            return None
+    
     def update_replica_status(self, replica_id: str, status: str) -> None:
         """Update the status of a specific replica."""
         with self._instance_lock:
