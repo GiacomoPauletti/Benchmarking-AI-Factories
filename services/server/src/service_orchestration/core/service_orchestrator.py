@@ -131,16 +131,19 @@ class ServiceOrchestrator:
             }
             job_id = self.slurm_client.submit_job(job_payload)
             
+            # Use canonical recipe path for consistent storage (e.g., "inference/vllm-single-node")
+            canonical_recipe_name = recipe.path or recipe_name
+            
             # Check if this is a replica group recipe
             if recipe.is_replica_group:
                 # This is a replica group - create group and pre-register replicas
-                return self._start_replica_group(job_id, recipe_name, recipe, config)
+                return self._start_replica_group(job_id, canonical_recipe_name, recipe, config)
             else:
                 # Regular single-service job
                 service_data = {
                     "id": job_id,
-                    "name": f"{recipe_name}-{job_id}",
-                    "recipe_name": recipe_name,
+                    "name": f"{canonical_recipe_name}-{job_id}",
+                    "recipe_name": canonical_recipe_name,
                     "status": "pending",
                     "config": config,
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")
