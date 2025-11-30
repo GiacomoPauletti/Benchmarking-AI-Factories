@@ -21,8 +21,6 @@ class ServiceManager:
     - Individual service registration and status tracking
     - Service groups (replica groups for data-parallel workloads)
     - Health tracking for recently-used services
-    
-    TODO: To be replaced with a database or persistent store in the future.
     """
     
     _instance = None

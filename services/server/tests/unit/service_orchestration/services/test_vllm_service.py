@@ -175,6 +175,7 @@ class TestVllmServiceUnit:
         """Test that prompt() handles missing service correctly"""
         mock_service_manager.get_service.return_value = None
         mock_service_manager.is_group.return_value = False
+        mock_service_manager.get_group_info.return_value = None  # No group exists
 
         result = vllm_service.prompt("nonexistent", "test prompt")
 
@@ -182,42 +183,69 @@ class TestVllmServiceUnit:
         assert "error" in result
         assert "not found" in result["error"].lower()
 
+    def test_prompt_maps_job_id_to_group_id(self, vllm_service, mock_service_manager, mock_endpoint_resolver):
+        """Test that prompt() maps plain job ID to sg-{job_id} when group exists"""
+        job_id = "3793899"
+        group_id = f"sg-{job_id}"
+        
+        # is_group returns False for plain job ID (no sg- prefix)
+        mock_service_manager.is_group.return_value = False
+        # But get_group_info finds the group with sg- prefix
+        mock_service_manager.get_group_info.return_value = {
+            "id": group_id,
+            "recipe_name": "inference/vllm-single-node",
+            "status": "running"
+        }
+        # get_all_replicas_flat returns replicas for load balancing
+        mock_service_manager.get_all_replicas_flat.return_value = [
+            {"id": f"{job_id}:8001", "status": "running", "port": 8001}
+        ]
+        # get_replica_info returns replica info for _prompt_single_service
+        mock_service_manager.get_replica_info.return_value = {
+            "id": f"{job_id}:8001",
+            "port": 8001,
+            "recipe_name": "inference/vllm-single-node",
+            "group_id": group_id
+        }
+        
+        # Mock endpoint resolution to fail (to get early return)
+        mock_endpoint_resolver.resolve.return_value = None
+        
+        # Create a mock load balancer
+        vllm_service.load_balancer.select_replica = Mock(return_value={"id": f"{job_id}:8001", "status": "running"})
+        
+        result = vllm_service.prompt(job_id, "test prompt")
+        
+        # Should have called get_group_info with sg-{job_id}
+        mock_service_manager.get_group_info.assert_called_with(group_id)
+
     def test_prompt_single_service_handles_replica_id(self, vllm_service, mock_service_manager, mock_endpoint_resolver):
         """Test that _prompt_single_service correctly handles replica IDs (containing ':')"""
-        # Replica IDs are in format "job_id:port" like "12345:8001"
         replica_id = "12345:8001"
         
-        # Mock get_replica_info to return replica info with recipe_name
         mock_service_manager.get_replica_info.return_value = {
             "id": replica_id,
             "port": 8001,
             "job_id": "12345",
             "gpu_id": 0,
             "status": "running",
-            "group_id": "group-123",
+            "group_id": "sg-12345",
             "recipe_name": "inference/vllm-single-node",
             "node": "compute-node-001"
         }
         
-        # get_service should NOT be called for replica IDs
-        mock_service_manager.get_service.return_value = None
-        
-        # Mock endpoint resolution failure to trigger early return
         mock_endpoint_resolver.resolve.return_value = None
         
         result = vllm_service._prompt_single_service(replica_id, "test prompt")
         
-        # Should have used get_replica_info, not get_service
         mock_service_manager.get_replica_info.assert_called_once_with(replica_id)
         mock_service_manager.get_service.assert_not_called()
         
-        # Result should indicate endpoint not available (we mocked that)
         assert result["success"] is False
         assert "endpoint" in result["error"].lower()
 
     def test_prompt_single_service_handles_regular_service_id(self, vllm_service, mock_service_manager, mock_endpoint_resolver):
         """Test that _prompt_single_service uses get_service for non-replica IDs"""
-        # Regular service IDs don't contain ':'
         service_id = "12345"
         
         mock_service_manager.get_service.return_value = {
@@ -227,14 +255,11 @@ class TestVllmServiceUnit:
             "recipe_name": "inference/vllm-single-node"
         }
         
-        # Mock endpoint resolution failure to trigger early return
         mock_endpoint_resolver.resolve.return_value = None
         
         result = vllm_service._prompt_single_service(service_id, "test prompt")
         
-        # Should have used get_service, not get_replica_info
         mock_service_manager.get_service.assert_called_once_with(service_id)
-        # get_replica_info should NOT have been called
         mock_service_manager.get_replica_info.assert_not_called()
 
     def test_prompt_single_service_replica_not_found(self, vllm_service, mock_service_manager):
@@ -246,7 +271,6 @@ class TestVllmServiceUnit:
         result = vllm_service._prompt_single_service(replica_id, "test prompt")
         
         assert result["success"] is False
-        assert "error" in result
         assert "not found" in result["error"].lower()
         assert replica_id in result["error"]
 
@@ -258,7 +282,7 @@ class TestVllmServiceUnit:
             "id": replica_id,
             "port": 8001,
             "job_id": "12345",
-            "group_id": "group-123",
+            "group_id": "sg-12345",
             "recipe_name": "database/postgres",  # Not a vLLM service
         }
         

@@ -43,6 +43,20 @@ class TestServiceManagerReplicaHandling:
         assert group_info["replicas_per_node"] == 4
         assert group_info["total_replicas"] == 8
 
+    def test_create_replica_group_with_job_id(self, service_manager):
+        """Test that create_replica_group uses sg-{job_id} format when job_id provided."""
+        group_id = service_manager.create_replica_group(
+            recipe_name="inference/vllm-single-node",
+            num_nodes=1,
+            replicas_per_node=4,
+            total_replicas=4,
+            job_id="3793899"
+        )
+
+        assert group_id == "sg-3793899"
+        group_info = service_manager.get_group_info(group_id)
+        assert group_info is not None
+
     def test_add_replica_to_group(self, service_manager):
         """Test that add_replica correctly adds replicas to a group."""
         group_id = service_manager.create_replica_group(

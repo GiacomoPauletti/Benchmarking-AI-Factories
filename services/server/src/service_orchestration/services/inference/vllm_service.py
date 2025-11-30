@@ -218,10 +218,28 @@ class VllmService(InferenceService):
         For service groups: Uses round-robin load balancing to route to healthy replicas.
         For single services: Routes directly.
         
+        Handles multiple service ID formats:
+        - "sg-12345": Explicit service group ID
+        - "12345": SLURM job ID (will check if sg-12345 exists as a group)
+        - "12345:8001": Replica ID (job_id:port format)
+        
         Tries chat endpoint first, falls back to completions for base models.
         """
+        # Check if it's already a group ID (sg- prefix)
         if self.service_manager.is_group(service_id):
             return self._prompt_service_group(service_id, prompt, **kwargs)
+        
+        # Check if it's a replica ID (contains ':')
+        if ":" in service_id:
+            return self._prompt_single_service(service_id, prompt, **kwargs)
+        
+        # Check if sg-{service_id} exists as a group (user passed job ID without sg- prefix)
+        potential_group_id = f"sg-{service_id}"
+        if self.service_manager.get_group_info(potential_group_id):
+            self.logger.info(f"Mapped service_id {service_id} to group {potential_group_id}")
+            return self._prompt_service_group(potential_group_id, prompt, **kwargs)
+        
+        # Fall back to single service handling
         return self._prompt_single_service(service_id, prompt, **kwargs)
 
     def rag_prompt(self, service_id: str, prompt: str, qdrant_service, 
