@@ -672,7 +672,7 @@
         "elements": [
           {
             "allowCustomValue": false,
-            "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst ids = context.panel.data.series[0].fields?.find(f => f.name === \"service_id\")?.values;\nif (!ids) return []\nconst formatted = ids.map(id => id.split(':')[0])\nconst uniques = [...(new Set(formatted)).keys().map(k => ({ label: k, value: k }))]\nreturn uniques",
+            "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst statuses = fields?.find(f => f.name === \"status\")?.values;\nif (!ids || !statuses) return [];\nconst runningIds = ids.filter((id, i) => id && statuses[i] === \"running\");\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
             "id": "service_id",
             "labelWidth": 15,
             "options": [],
@@ -804,7 +804,7 @@
           "text": "Start benchmark",
           "variant": "primary"
         },
-        "sync": true,
+        "sync": false,
         "update": {
           "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
           "confirm": false,
@@ -825,10 +825,10 @@
             "uid": "prom"
           },
           "editorMode": "builder",
-          "expr": "process_start_time_seconds{instance=\"server:8001\"}",
-          "instant": false,
+          "expr": "process_start_time_seconds",
+          "instant": true,
           "legendFormat": "__auto",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ],
