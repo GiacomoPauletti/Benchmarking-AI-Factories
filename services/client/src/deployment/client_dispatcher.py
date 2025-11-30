@@ -137,167 +137,6 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             raise RuntimeError(f"Failed to build load generator container: {stderr}")
 
 
-    def get_job_logs(self, job_id: str, group_id: int) -> str:
-        """Get logs from a SLURM job via SSH.
-        
-        Args:
-            job_id: SLURM job ID
-            group_id: Client group ID
-            
-        Returns:
-            Formatted log content or error message
-        """
-        if not job_id:
-            return "=== NO JOB ID ===\nJob ID not available"
-        
-        stdout_remote = f"{self._remote_logs_dir}/loadgen-{group_id}-{job_id}.out"
-        stderr_remote = f"{self._remote_logs_dir}/loadgen-{group_id}-{job_id}.err"
-        
-        # Fetch stdout using tail for last 200 lines
-        stdout_cmd = f"tail -n 200 {stdout_remote} 2>/dev/null || echo 'Log not yet available'"
-        success_out, stdout_content, _ = self._ssh_manager.execute_remote_command(stdout_cmd, timeout=10)
-        
-        # Fetch stderr using tail for last 100 lines
-        stderr_cmd = f"tail -n 100 {stderr_remote} 2>/dev/null || echo 'No errors logged'"
-        success_err, stderr_content, _ = self._ssh_manager.execute_remote_command(stderr_cmd, timeout=10)
-        
-        # Format combined output
-        log_output = f"=== SLURM STDOUT (last 200 lines) ===\n"
-        if success_out:
-            log_output += stdout_content if stdout_content else "Log not yet available"
-        else:
-            log_output += "Failed to fetch stdout"
-        
-        log_output += f"\n\n=== SLURM STDERR (last 100 lines) ===\n"
-        if success_err:
-            log_output += stderr_content if stderr_content else "No errors logged"
-        else:
-            log_output += "Failed to fetch stderr"
-        
-        return log_output
-
-    def sync_logs_from_remote(self, local_logs_dir: str = "./logs", pattern: str = None, group_id: int = None):
-        """Sync SLURM logs from remote MeluXina to local directory.
-        
-        Args:
-            local_logs_dir: Local directory to sync logs to
-            pattern: Glob pattern for log files to sync (deprecated, use group_id)
-            group_id: Specific group ID to sync logs for (syncs .out, .err, and .json files)
-            
-        Returns:
-            Tuple of (success: bool, message: str)
-        """
-        logger.info(f"Syncing logs from {self._remote_logs_dir} to {local_logs_dir}...")
-        
-        # Ensure local logs directory exists with proper permissions
-        os.makedirs(local_logs_dir, exist_ok=True)
-        
-        # Build rsync command based on parameters
-        rsync_cmd = [
-            "rsync", "-avz",
-        ]
-        
-        if group_id is not None:
-            # Sync specific group files only
-            rsync_cmd.extend([
-                "--include", f"loadgen-{group_id}-*.out",        # SLURM stdout
-                "--include", f"loadgen-{group_id}-*.err",        # SLURM stderr
-                "--include", f"loadgen-group{group_id}-*-container.log", # Container logs
-                "--include", f"loadgen-group{group_id}-*-results.json",  # Results
-                "--include", f"loadgen-group{group_id}-*-config.json",   # Config
-                "--include", "*/",  # Include directories for recursive search
-                "--exclude", "*",   # Exclude everything else
-            ])
-            logger.debug(f"Syncing logs for group {group_id}")
-        elif pattern:
-            # Legacy: use pattern (for backwards compatibility)
-            rsync_cmd.extend([
-                "--include", pattern,
-                "--include", pattern.replace('.out', '.err'),
-                "--include", "loadgen-group*-results.json",
-                "--include", "loadgen-group*-config.json",
-                "--include", "loadgen-group*-container.log",
-                "--include", "*/",
-                "--exclude", "*",
-            ])
-            logger.debug(f"Syncing logs with pattern {pattern}")
-        else:
-            # Sync all loadgen logs
-            rsync_cmd.extend([
-                "--include", "loadgen-*.out",
-                "--include", "loadgen-*.err",
-                "--include", "loadgen-group*-container.log",
-                "--include", "loadgen-group*-results.json",
-                "--include", "loadgen-group*-config.json",
-                "--include", "*/",
-                "--exclude", "*",
-            ])
-            logger.debug("Syncing all loadgen logs")
-        
-        # Add source and destination
-        rsync_cmd.extend([
-            f"{self._ssh_manager.ssh_user}@{self._ssh_manager.ssh_host}:{self._remote_logs_dir}/",
-            f"{local_logs_dir}/"
-        ])
-        
-        # Add SSH port option
-        rsync_cmd.insert(2, "-e")
-        rsync_cmd.insert(3, f"ssh -p {self._ssh_manager.ssh_port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
-        
-        logger.debug(f"Running rsync command: {' '.join(rsync_cmd)}")
-        
-        try:
-            import subprocess
-            result = subprocess.run(
-                rsync_cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=os.environ.copy()
-            )
-            
-            if result.returncode == 0:
-                logger.info(f"Logs synced successfully")
-                logger.debug(f"Rsync stdout: {result.stdout}")
-                if result.stderr:
-                    logger.debug(f"Rsync stderr: {result.stderr}")
-                
-                # Fix permissions on synced files so they're readable by the user
-                try:
-                    import glob
-                    patterns = [
-                        "loadgen-*.out", 
-                        "loadgen-*.err", 
-                        "loadgen-*.json",              # Old format
-                        "loadgen-group*.json",         # New format (config/results)
-                        "loadgen-*-container.log",     # Old format
-                        "loadgen-group*-container.log" # New format
-                    ]
-                    for pattern in patterns:
-                        for file in glob.glob(os.path.join(local_logs_dir, pattern)):
-                            try:
-                                os.chmod(file, 0o644)
-                                logger.debug(f"Fixed permissions for {file}")
-                            except Exception as e:
-                                logger.warning(f"Could not fix permissions for {file}: {e}")
-                except Exception as e:
-                    logger.warning(f"Error fixing file permissions: {e}")
-                
-                return True, "Logs synced successfully"
-            else:
-                logger.error(f"Rsync failed with return code {result.returncode}")
-                logger.error(f"Rsync stderr: {result.stderr}")
-                logger.debug(f"Rsync stdout: {result.stdout}")
-                return False, f"Rsync failed: {result.stderr}"
-                
-        except subprocess.TimeoutExpired:
-            logger.error("Rsync timeout")
-            return False, "Rsync timeout after 60 seconds"
-        except Exception as e:
-            logger.exception(f"Error syncing logs: {e}")
-            return False, f"Error: {str(e)}"
-
-
 
     def dispatch(self, group_id: int, time_limit: int):
         """
@@ -368,10 +207,14 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         1. Loads required modules (env, Apptainer)
         2. Builds the container if it doesn't exist
         3. Runs the load test inside the container with configuration
+        
+        Note: The config JSON is generated at runtime in the bash script so that
+        $SLURM_JOB_ID is properly resolved in filenames.
         """
         # Build the JSON configuration for the load test. Include `prompt_url`
         # when available so the in-container load generator can call the
         # orchestrator data-plane directly.
+        # Note: results_file will be set in the bash script where $SLURM_JOB_ID is available
         load_config = {
             "prompt_url": self._load_config.get('prompt_url'),
             "service_id": self._load_config.get('service_id'),
@@ -381,9 +224,11 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
             "prompts": self._load_config.get('prompts'),
             "max_tokens": self._load_config.get('max_tokens', 100),
             "temperature": self._load_config.get('temperature', 0.7),
-            "results_file": f"/app/logs/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-results.json"
         }
+        # Generate JSON without results_file - we'll add it in bash where $SLURM_JOB_ID is resolved
         prompts_json_config = json.dumps(load_config, indent=2)
+        # Remove the closing brace so we can append results_file in bash
+        prompts_json_config_without_close = prompts_json_config.rstrip().rstrip('}')
         
         log_dir = self._remote_base_path.rstrip("/") + "/logs"
         sif_path = self._remote_base_path.rstrip("/") + "/containers/client.sif"
@@ -424,12 +269,19 @@ echo "Container sif: {sif_path}"
 echo "==========================="
 
 # Generate the JSON config file for this load test with job ID in filename
+# Note: We generate it here so $SLURM_JOB_ID is properly resolved
 echo "Generating load test configuration..."
-cat > {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json << 'CONFIG_EOF'
-{prompts_json_config}
+CONFIG_FILE="{log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json"
+RESULTS_FILE="/app/logs/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-results.json"
+
+cat > "$CONFIG_FILE" << CONFIG_EOF
+{prompts_json_config_without_close},
+  "results_file": "$RESULTS_FILE"
+}}
 CONFIG_EOF
 
-echo "Configuration file created: {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json"
+echo "Configuration file created: $CONFIG_FILE"
+cat "$CONFIG_FILE"
 
 # Build container if needed
 if [ ! -f {sif_path} ]; then
@@ -477,21 +329,22 @@ mkdir -p {log_dir}
 
 # Run the load test inside the container
 echo "Starting container..."
-echo "Running load test container with config: loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json"
+echo "Running load test container with config: $CONFIG_FILE"
 
 # Mount the config file and Python script, then run
 # Redirect container output to a log file
+CONTAINER_LOG="{log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-container.log"
 apptainer run \
     --bind {log_dir}:/app/logs \
-    --bind {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-config.json:/app/config.json:ro \
-     --bind {self._remote_base_path}/src/client/loadgen_template.py:/app/main.py:ro \
+    --bind "$CONFIG_FILE":/app/config.json:ro \
+    --bind {self._remote_base_path}/src/client/loadgen_template.py:/app/main.py:ro \
     --env LOADGEN_CONFIG=/app/config.json \
-    {sif_path} > {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-container.log 2>&1
+    {sif_path} > "$CONTAINER_LOG" 2>&1
 container_exit_code=$?
 
 echo ""
 echo "Container exited with code: $container_exit_code"
-echo "Container logs saved to: {log_dir}/loadgen-group{group_id}-job${{SLURM_JOB_ID}}-container.log"
+echo "Container logs saved to: $CONTAINER_LOG"
 echo "Load test completed at $(date)"
 
 exit $container_exit_code
