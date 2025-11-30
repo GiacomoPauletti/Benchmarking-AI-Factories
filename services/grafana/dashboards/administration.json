@@ -455,10 +455,10 @@
           "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Service started', 'Service has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start service', 'An error occurred starting the service.']);\n}",
           "confirm": false,
           "contentType": "application/json",
-          "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+          "getPayload": "const payload = { config: { resources: {} } };\ncontext.panel.elements.forEach((element) => {\n  if (element.value === undefined || element.value === null || element.value === '') return;\n  if (element.id === 'recipe_name') {\n    payload.recipe_name = element.value;\n  } else if (element.id === 'config.nodes') {\n    payload.config.nodes = parseInt(element.value) || 1;\n  } else if (element.id === 'config.cpus') {\n    payload.config.resources.cpu = parseInt(element.value) || 1;\n  } else if (element.id === 'config.gpus') {\n    payload.config.resources.gpu = parseInt(element.value) || 0;\n  } else if (element.id === 'config.memory') {\n    payload.config.resources.memory = element.value;\n  }\n});\nconsole.log('Sending payload:', JSON.stringify(payload));\nreturn payload;",
           "method": "POST",
           "payload": {},
-          "payloadMode": "all",
+          "payloadMode": "custom",
           "url": "http://${server}:${port}/api/v1/services"
         },
         "updateEnabled": "auto"
