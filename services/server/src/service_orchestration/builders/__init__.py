@@ -1,5 +1,4 @@
-"""Recipe and job building modules."""
+"""Job building modules."""
 from .job_builder import JobBuilder
-from .recipe_loader import RecipeLoader
 
-__all__ = ['JobBuilder', 'RecipeLoader']
+__all__ = ['JobBuilder']

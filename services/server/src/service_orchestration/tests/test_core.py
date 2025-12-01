@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
-from ..core.service_orchestrator import ServiceOrchestrator, VLLMEndpoint
+from ..core.service_orchestrator import ServiceOrchestrator
+from .conftest import create_mock_recipe
 
 class TestServiceOrchestratorCore:
     
@@ -35,98 +36,68 @@ class TestServiceOrchestratorCore:
         mock_slurm_client.cancel_job.assert_called_with(service_id)
         mock_service_manager.update_service_status.assert_called_with(service_id, "cancelled")
 
-    def test_register_service(self, orchestrator, mock_service_manager):
-        """Test registering a service"""
+    def test_register_endpoint(self, orchestrator, mock_service_manager, mock_endpoint_resolver):
+        """Test registering a service endpoint"""
         service_id = "12345"
         host = "node1"
         port = 8001
-        model = "gpt2"
         
-        # Mock asyncio.create_task to avoid needing an event loop
-        with patch("asyncio.create_task") as mock_create_task:
-            result = orchestrator.register_service(service_id, host, port, model)
-            
-            assert result["status"] == "registered"
-            assert service_id in orchestrator.endpoints
-            assert orchestrator.endpoints[service_id].url == f"http://{host}:{port}"
-            mock_service_manager.update_service_status.assert_called_with(service_id, "running")
-            mock_create_task.assert_called_once()
+        result = orchestrator.register_endpoint(service_id, host, port, {"model": "gpt2"})
+        
+        assert result["status"] == "registered"
+        assert service_id in orchestrator.registered_endpoints
+        assert orchestrator.registered_endpoints[service_id]["url"] == f"http://{host}:{port}"
+        mock_service_manager.update_service_status.assert_called_with(service_id, "running")
+        mock_endpoint_resolver.register.assert_called_with(service_id, host, port)
 
-    @pytest.mark.asyncio
-    async def test_forward_completion_success(self, orchestrator):
-        """Test forwarding completion request"""
-        # Setup endpoint
-        endpoint = VLLMEndpoint("123", "node1", 8001, "gpt2", status="healthy")
-        orchestrator.endpoints["123"] = endpoint
+    def test_unregister_endpoint(self, orchestrator):
+        """Test unregistering a service endpoint"""
+        # First register an endpoint
+        orchestrator.registered_endpoints["12345"] = {
+            "service_id": "12345",
+            "host": "node1",
+            "port": 8001,
+            "url": "http://node1:8001"
+        }
         
-        # Mock http response
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"choices": []}
-        orchestrator._http_client.post.return_value = mock_response
+        result = orchestrator.unregister_endpoint("12345")
         
-        request_data = {"prompt": "Hello"}
-        result = await orchestrator.forward_completion(request_data)
-        
-        assert "_orchestrator_meta" in result
-        assert result["_orchestrator_meta"]["service_id"] == "123"
-        orchestrator._http_client.post.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_forward_completion_no_endpoints(self, orchestrator):
-        """Test forwarding when no endpoints available"""
-        orchestrator.endpoints = {}
-        
-        with pytest.raises(RuntimeError, match="No healthy vLLM services available"):
-            await orchestrator.forward_completion({"prompt": "Hello"})
-
-    def test_load_balancer_round_robin(self, orchestrator):
-        """Test round robin load balancing"""
-        # Setup endpoints
-        ep1 = VLLMEndpoint("1", "node1", 8001, "gpt2", status="healthy")
-        ep2 = VLLMEndpoint("2", "node2", 8001, "gpt2", status="healthy")
-        
-        endpoints = [ep1, ep2]
-        
-        # We need to run async method
-        import asyncio
-        
-        async def run_test():
-            selected1 = await orchestrator.load_balancer.select_endpoint(endpoints)
-            selected2 = await orchestrator.load_balancer.select_endpoint(endpoints)
-            selected_again = await orchestrator.load_balancer.select_endpoint(endpoints)
-            
-            assert selected1 != selected2
-            assert selected_again == selected1
-            
-        asyncio.run(run_test())
+        assert result["status"] == "unregistered"
+        assert "12345" not in orchestrator.registered_endpoints
 
     def test_start_replica_group(self, orchestrator, mock_slurm_client, mock_service_manager, mock_recipe_loader):
         """Test starting a replica group"""
         recipe_name = "test-replica-recipe"
         config = {"nodes": 2, "gpu_per_replica": 1}
         
-        # Mock recipe loader to return a recipe with gpu_per_replica
-        mock_recipe_loader.load.return_value = (f"bob/${recipe_name}", {"name": recipe_name, "gpu_per_replica": 1, "resources": {"gpu": 4}})
+        # Mock recipe loader to return a replica group Recipe
+        mock_recipe = create_mock_recipe(
+            name=recipe_name, 
+            category="inference", 
+            is_replica=True, 
+            gpu=4, 
+            nodes=1
+        )
+        mock_recipe_loader.load.return_value = mock_recipe
         
-        # Mock group manager
-        mock_service_manager.group_manager.create_replica_group.return_value = "sg-123"
+        # Mock service manager group methods
+        mock_service_manager.create_replica_group.return_value = "sg-123"
         mock_service_manager.get_group_info.return_value = {"id": "sg-123", "replicas": []}
         
         result = orchestrator.start_service(recipe_name, config)
         
         assert result["status"] == "submitted"
         assert result["group_id"] == "sg-123"
-        mock_service_manager.group_manager.create_replica_group.assert_called_once()
-        # Should add replicas: 2 nodes * (4 GPUs / 1 per replica) = 8 replicas
-        assert mock_service_manager.group_manager.add_replica.call_count == 8
+        mock_service_manager.create_replica_group.assert_called_once()
+        # Should add replicas: config nodes=2 * (4 GPUs / 1 per replica) = 8 replicas
+        assert mock_service_manager.add_replica.call_count == 8
 
     def test_stop_service_group(self, orchestrator, mock_slurm_client, mock_service_manager):
         """Test stopping a service group"""
         group_id = "sg-123"
         
         # Mock group info
-        mock_service_manager.group_manager.get_group.return_value = {
+        mock_service_manager.get_group_info.return_value = {
             "node_jobs": [{"job_id": "job1"}, {"job_id": "job2"}]
         }
         
@@ -136,36 +107,29 @@ class TestServiceOrchestratorCore:
         assert result["stopped"] == 2
         mock_slurm_client.cancel_job.assert_any_call("job1")
         mock_slurm_client.cancel_job.assert_any_call("job2")
-        mock_service_manager.group_manager.update_group_status.assert_called_with(group_id, "cancelled")
+        mock_service_manager.update_group_status.assert_called_with(group_id, "cancelled")
 
     @pytest.mark.asyncio
-    async def test_check_endpoint_healthy(self, orchestrator):
-        """Test health check for healthy endpoint"""
-        endpoint = VLLMEndpoint("123", "node1", 8001, "gpt2", status="unknown")
-        
-        # Mock http response
+    async def test_check_vllm_health_success(self, orchestrator):
+        """Test VLLM health check for healthy endpoint"""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        orchestrator._http_client.get.return_value = mock_response
+        orchestrator._http_client.get = AsyncMock(return_value=mock_response)
         
-        await orchestrator._check_endpoint(endpoint)
+        result = await orchestrator._check_vllm_health("http://node1:8001")
         
-        assert endpoint.status == "healthy"
-        assert endpoint.last_health_check > 0
+        assert result is True
 
     @pytest.mark.asyncio
-    async def test_check_endpoint_unhealthy(self, orchestrator):
-        """Test health check for unhealthy endpoint"""
-        endpoint = VLLMEndpoint("123", "node1", 8001, "gpt2", status="healthy")
-        
-        # Mock http response
+    async def test_check_vllm_health_failure(self, orchestrator):
+        """Test VLLM health check for unhealthy endpoint"""
         mock_response = MagicMock()
         mock_response.status_code = 500
-        orchestrator._http_client.get.return_value = mock_response
+        orchestrator._http_client.get = AsyncMock(return_value=mock_response)
         
-        await orchestrator._check_endpoint(endpoint)
+        result = await orchestrator._check_vllm_health("http://node1:8001")
         
-        assert endpoint.status == "unhealthy"
+        assert result is False
 
     def test_get_metrics(self, orchestrator):
         """Test getting aggregated metrics"""
@@ -173,17 +137,22 @@ class TestServiceOrchestratorCore:
         orchestrator.metrics["total_requests"] = 100
         orchestrator.metrics["failed_requests"] = 5
         
-        # Setup an endpoint
-        ep = VLLMEndpoint("123", "node1", 8001, "gpt2", status="healthy")
-        ep.total_requests = 50
-        orchestrator.endpoints["123"] = ep
+        # Register an endpoint using the new dict format
+        orchestrator.registered_endpoints["123"] = {
+            "service_id": "123",
+            "host": "node1",
+            "port": 8001,
+            "url": "http://node1:8001",
+            "status": "healthy",
+            "registered_at": 1234567890
+        }
         
         metrics = orchestrator.get_metrics()
         
         assert metrics["global"]["total_requests"] == 100
         assert metrics["global"]["failed_requests"] == 5
         assert "123" in metrics["services"]
-        assert metrics["services"]["123"]["total_requests"] == 50
+        assert metrics["services"]["123"]["status"] == "healthy"
 
     def test_get_service_metrics_success(self, orchestrator, mock_service_manager, mock_endpoint_resolver):
         """Test getting Prometheus metrics for a service"""
@@ -224,17 +193,6 @@ class TestServiceOrchestratorCore:
         assert result["success"] is False
         assert "not ready" in result["error"]
 
-    def test_configure_load_balancer(self, orchestrator):
-        """Test configuring load balancer strategy"""
-        result = orchestrator.configure_load_balancer("least_loaded")
-        
-        assert result["status"] == "configured"
-        assert orchestrator.load_balancer.strategy == "least_loaded"
-        
-        # Test invalid strategy
-        result = orchestrator.configure_load_balancer("invalid")
-        assert result["status"] == "error"
-
     def test_get_job_logs(self, orchestrator, mock_slurm_client):
         """Test getting job logs"""
         job_id = "123"
@@ -251,3 +209,32 @@ class TestServiceOrchestratorCore:
                 result = orchestrator.get_service_logs(job_id)
                 
                 assert result["logs"] == "Log content"
+
+    def test_get_service_returns_group_info(self, orchestrator, mock_service_manager):
+        """Test get_service returns group info when service_id is a group"""
+        mock_service_manager.is_group.return_value = True
+        mock_service_manager.get_group_info.return_value = {
+            "id": "sg-123",
+            "replicas": [{"id": "r1"}, {"id": "r2"}]
+        }
+        
+        result = orchestrator.get_service("sg-123")
+        
+        assert result["id"] == "sg-123"
+        assert len(result["replicas"]) == 2
+
+    def test_get_service_group_status_counts(self, orchestrator, mock_service_manager):
+        """Group status summary should aggregate replica states"""
+        mock_service_manager.get_group_info.return_value = {"id": "sg-1"}
+        mock_service_manager.get_all_replicas_flat.return_value = [
+            {"id": "r1", "status": "running"},
+            {"id": "r2", "status": "starting"},
+            {"id": "r3", "status": "failed"}
+        ]
+        orchestrator.service_manager = mock_service_manager
+        
+        result = orchestrator.get_service_group_status("sg-1")
+        
+        assert result["overall_status"] == "degraded"
+        assert result["healthy_replicas"] == 1
+        assert result["failed_replicas"] == 1

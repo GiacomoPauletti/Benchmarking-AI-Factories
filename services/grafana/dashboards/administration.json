@@ -251,7 +251,7 @@
           "elementDisplayMode": "modified",
           "title": "Confirm update request"
         },
-        "elementValueChanged": "const selected = context.panel.elements.find(el => el.id == \"recipe_name\").value\nif (context.panel.data.prevSelected !== selected) {\n  const data = context.panel.data.series[0].fields;\n  const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == selected)\n  const parameters = JSON.parse(data.find(s => s.name == \"resources\").values[idx])\n  context.panel.setFormValue({\n    \"recipe_name\": selected,\n    \"config.nodes\": parameters[\"nodes\"] || 1,\n    \"config.cpus\": parameters[\"cpu\"] || 1,\n    \"config.gpus\": parameters[\"gpu\"] || 0,\n    \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\")\n  })\n}\ncontext.panel.data.prevSelected = selected",
+        "elementValueChanged": "const selected = context.panel.elements.find(el => el.id == \"recipe_name\").value\nif (context.panel.data.prevSelected !== selected && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == selected)\n    const parameters = JSON.parse(data.find(s => s.name == \"resources\").values[idx])\n    context.panel.setFormValue({\n      \"recipe_name\": selected,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\")\n    })\n  }\n}\ncontext.panel.data.prevSelected = selected",
         "elements": [
           {
             "allowCustomValue": false,
@@ -447,18 +447,18 @@
           "backgroundColor": "purple",
           "foregroundColor": "yellow",
           "icon": "play",
-          "text": "Start benchmark",
+          "text": "Start service",
           "variant": "primary"
         },
         "sync": true,
         "update": {
-          "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
+          "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Service started', 'Service has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start service', 'An error occurred starting the service.']);\n}",
           "confirm": false,
           "contentType": "application/json",
-          "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+          "getPayload": "const payload = { config: { resources: {} } };\ncontext.panel.elements.forEach((element) => {\n  if (element.value === undefined || element.value === null || element.value === '') return;\n  if (element.id === 'recipe_name') {\n    payload.recipe_name = element.value;\n  } else if (element.id === 'config.nodes') {\n    payload.config.nodes = parseInt(element.value) || 1;\n  } else if (element.id === 'config.cpus') {\n    payload.config.resources.cpu = parseInt(element.value) || 1;\n  } else if (element.id === 'config.gpus') {\n    payload.config.resources.gpu = parseInt(element.value) || 0;\n  } else if (element.id === 'config.memory') {\n    payload.config.resources.memory = element.value;\n  }\n});\nconsole.log('Sending payload:', JSON.stringify(payload));\nreturn payload;",
           "method": "POST",
           "payload": {},
-          "payloadMode": "all",
+          "payloadMode": "custom",
           "url": "http://${server}:${port}/api/v1/services"
         },
         "updateEnabled": "auto"
@@ -672,7 +672,7 @@
         "elements": [
           {
             "allowCustomValue": false,
-            "getOptions": "const ids = context.panel.data.series[0].fields.find(f => f.name === \"service_id\")?.values;\nif (!ids) return []\nconst formatted = ids.map(id => id.split(':')[0])\nconst uniques = [...(new Set(formatted)).keys().map(k => ({ label: k, value: k }))]\nreturn uniques",
+            "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst statuses = fields?.find(f => f.name === \"status\")?.values;\nif (!ids || !statuses) return [];\nconst runningIds = ids.filter((id, i) => id && statuses[i] === \"running\");\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
             "id": "service_id",
             "labelWidth": 15,
             "options": [],
@@ -804,7 +804,7 @@
           "text": "Start benchmark",
           "variant": "primary"
         },
-        "sync": true,
+        "sync": false,
         "update": {
           "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
           "confirm": false,
@@ -825,45 +825,33 @@
             "uid": "prom"
           },
           "editorMode": "builder",
-          "expr": "process_start_time_seconds{instance=\"server:8001\", status=\"running\"}",
-          "instant": false,
+          "expr": "process_start_time_seconds",
+          "instant": true,
           "legendFormat": "__auto",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ],
       "title": "Start benchmark",
       "transformations": [
         {
-          "id": "reduce",
+          "id": "labelsToFields",
           "options": {
-            "includeTimeField": false,
-            "labelsToFields": true,
-            "mode": "seriesToRows",
-            "reducers": [
-              "max"
-            ]
+            "keepLabels": [
+              "service_id",
+              "status"
+            ],
+            "mode": "columns"
           }
         },
         {
-          "id": "groupBy",
+          "id": "filterFieldsByName",
           "options": {
-            "fields": {
-              "Field": {
-                "aggregations": [
-                  "lastNotNull"
-                ]
-              },
-              "replica_no": {
-                "aggregations": [
-                  "count"
-                ],
-                "operation": "aggregate"
-              },
-              "service_id": {
-                "aggregations": [],
-                "operation": "groupby"
-              }
+            "include": {
+              "names": [
+                "service_id",
+                "status"
+              ]
             }
           }
         }
@@ -912,8 +900,8 @@
       },
       {
         "current": {
-          "text": "8003",
-          "value": "8003"
+          "text": "8002",
+          "value": "8002"
         },
         "description": "",
         "label": "Client port number",
@@ -921,11 +909,11 @@
         "options": [
           {
             "selected": true,
-            "text": "8003",
-            "value": "8003"
+            "text": "8002",
+            "value": "8002"
           }
         ],
-        "query": "8003",
+        "query": "8002",
         "type": "custom"
       }
     ]

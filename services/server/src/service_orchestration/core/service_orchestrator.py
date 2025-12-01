@@ -1,13 +1,17 @@
 """
 ServiceOrchestrator runs on Meluxina and handles:
-1. Load balancing across vLLM instances
-2. Receiving requests from clients (no SSH)
-3. Health checking vLLM services
+1. Managing SLURM jobs and services (start, stop, status)
+2. Service registration and discovery
+3. Health checking services (generic)
 4. Collecting metrics
-5. Managing SLURM jobs and services
+5. Routing requests to service-specific handlers (vLLM, Qdrant, etc.)
 
 This is a pure business logic class with no FastAPI dependencies.
 The FastAPI application is created separately in main.py using the api module.
+
+Service-specific logic (prompting, model discovery, etc.) is delegated to:
+- VllmService for inference operations
+- QdrantService for vector database operations
 """
 
 import asyncio
@@ -17,101 +21,28 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
 from collections import defaultdict
 import httpx
 
 from service_orchestration.core.slurm_client import SlurmClient
-from service_orchestration.builders import JobBuilder, RecipeLoader
+from service_orchestration.builders import JobBuilder
+from service_orchestration.recipes import RecipeLoader, Recipe, InferenceRecipe
 from service_orchestration.managers import ServiceManager
 from service_orchestration.networking import EndpointResolver
 
 logger = logging.getLogger().getChild("service_orchestrator")
 
 
-@dataclass
-class VLLMEndpoint:
-    """Represents a vLLM service endpoint"""
-    service_id: str
-    host: str
-    port: int
-    model: str
-    status: str = "unknown"  # unknown, healthy, unhealthy
-    last_health_check: float = 0.0
-    total_requests: int = 0
-    failed_requests: int = 0
-    avg_latency_ms: float = 0.0
-    
-    @property
-    def url(self) -> str:
-        return f"http://{self.host}:{self.port}"
-    
-    @property
-    def health_score(self) -> float:
-        """Calculate health score (0-1) based on success rate and latency"""
-        if self.total_requests == 0:
-            return 1.0
-        success_rate = 1 - (self.failed_requests / self.total_requests)
-        # Penalize high latency (assuming 100ms is good, 1000ms is bad)
-        latency_score = max(0, 1 - (self.avg_latency_ms / 1000.0))
-        return (success_rate * 0.7) + (latency_score * 0.3)
-
-
-class LoadBalancer:
-    """Load balancer with multiple strategies"""
-    
-    def __init__(self, strategy: str = "round_robin"):
-        self.strategy = strategy
-        self._round_robin_index = 0
-        self._lock = asyncio.Lock()
-    
-    async def select_endpoint(self, endpoints: List[VLLMEndpoint]) -> Optional[VLLMEndpoint]:
-        """Select next endpoint based on strategy"""
-        healthy_endpoints = [e for e in endpoints if e.status == "healthy"]
-        
-        if not healthy_endpoints:
-            # Fallback to unknown status endpoints if no healthy ones
-            healthy_endpoints = [e for e in endpoints if e.status == "unknown"]
-            
-        if not healthy_endpoints:
-            logger.warning("No healthy endpoints available")
-            return None
-        
-        if self.strategy == "round_robin":
-            return await self._round_robin(healthy_endpoints)
-        elif self.strategy == "least_loaded":
-            return await self._least_loaded(healthy_endpoints)
-        elif self.strategy == "best_health":
-            return await self._best_health(healthy_endpoints)
-        else:
-            return healthy_endpoints[0]
-    
-    async def _round_robin(self, endpoints: List[VLLMEndpoint]) -> VLLMEndpoint:
-        """Simple round-robin selection"""
-        async with self._lock:
-            endpoint = endpoints[self._round_robin_index % len(endpoints)]
-            self._round_robin_index += 1
-            return endpoint
-    
-    async def _least_loaded(self, endpoints: List[VLLMEndpoint]) -> VLLMEndpoint:
-        """Select endpoint with fewest requests"""
-        return min(endpoints, key=lambda e: e.total_requests)
-    
-    async def _best_health(self, endpoints: List[VLLMEndpoint]) -> VLLMEndpoint:
-        """Select endpoint with best health score"""
-        return max(endpoints, key=lambda e: e.health_score)
-
-
 class ServiceOrchestrator:
     """
-    Orchestrates vLLM services on Meluxina.
+    Orchestrates AI services (vLLM, Qdrant, etc.) on Meluxina.
     Receives commands from local Server via SSH API.
-    Handles client requests locally (no SSH).
+    Delegates service-specific operations to specialized handlers.
     """
     
     def __init__(self):
-        self.endpoints: Dict[str, VLLMEndpoint] = {}
-        self.load_balancer = LoadBalancer(strategy="round_robin")
+        # Service registry for tracking endpoints
+        self.registered_endpoints: Dict[str, Dict[str, Any]] = {}
         
         # Initialize managers
         self.slurm_client = SlurmClient()
@@ -127,7 +58,7 @@ class ServiceOrchestrator:
         self.recipe_loader = RecipeLoader(recipes_dir)
         self.endpoint_resolver = EndpointResolver(self.slurm_client, self.service_manager, self.recipe_loader)
         
-        # Initialize service handlers (for data plane operations)
+        # Initialize service handlers (lazy-loaded for data plane operations)
         self._vllm_service = None
         self._qdrant_service = None
         
@@ -184,14 +115,14 @@ class ServiceOrchestrator:
         """Start a new service (job) or service group (replica group)"""
         try:
             config = config or {}
-            # Load recipe to check if it's a replica group
-            recipe_name, recipe = self.recipe_loader.load(recipe_name)
+            # Load validated recipe
+            recipe = self.recipe_loader.load(recipe_name)
             if not recipe:
                 raise ValueError(f"Recipe '{recipe_name}' not found")
             
-            # Build job payload
+            # Build job payload using Recipe object
             account = config.get("account") or self.default_account
-            build_result = self.job_builder.build_job(recipe_name, config, account)
+            build_result = self.job_builder.build_job(recipe, config, account)
             
             # Submit job - pass the complete payload with script and job
             job_payload = {
@@ -200,18 +131,19 @@ class ServiceOrchestrator:
             }
             job_id = self.slurm_client.submit_job(job_payload)
             
-            # Check if this is a replica group recipe
-            gpu_per_replica = recipe.get("gpu_per_replica") or config.get("gpu_per_replica")
+            # Use canonical recipe path for consistent storage (e.g., "inference/vllm-single-node")
+            canonical_recipe_name = recipe.path or recipe_name
             
-            if gpu_per_replica:
+            # Check if this is a replica group recipe
+            if recipe.is_replica_group:
                 # This is a replica group - create group and pre-register replicas
-                return self._start_replica_group(job_id, recipe_name, recipe, config)
+                return self._start_replica_group(job_id, canonical_recipe_name, recipe, config)
             else:
                 # Regular single-service job
                 service_data = {
                     "id": job_id,
-                    "name": f"{recipe_name}-{job_id}",
-                    "recipe_name": recipe_name,
+                    "name": f"{canonical_recipe_name}-{job_id}",
+                    "recipe_name": canonical_recipe_name,
                     "status": "pending",
                     "config": config,
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -225,31 +157,40 @@ class ServiceOrchestrator:
             return {"status": "error", "message": str(e)}
     
     def _start_replica_group(self, job_id: str, recipe_name: str, 
-                           recipe: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+                           recipe: Recipe, config: Dict[str, Any]) -> Dict[str, Any]:
         """Start a replica group and pre-register replicas.
         
         Args:
             job_id: The SLURM job ID
             recipe_name: Name of the recipe
-            recipe: Recipe configuration
+            recipe: Validated Recipe object
             config: User-provided config overrides
             
         Returns:
             Service group data with pre-registered replicas
         """
-        # Extract configuration
-        resources = recipe.get("resources", {})
-        num_nodes = int(config.get("nodes") or resources.get("nodes", 1))
-        total_gpus = int(config.get("gpu") or resources.get("gpu", 4))
-        gpu_per_replica = int(config.get("gpu_per_replica") or recipe.get("gpu_per_replica", 1))
-        base_port = int(config.get("base_port") or recipe.get("base_port", 8001))
+        # Get merged recipe with config
+        merged_recipe = recipe.merge_config(config)
+        resources = merged_recipe.resources
+        
+        # Extract configuration from merged recipe
+        num_nodes = resources.nodes
+        total_gpus = resources.gpu or 4
+        
+        # Get replica-specific settings (only available on InferenceRecipe)
+        if isinstance(merged_recipe, InferenceRecipe):
+            gpu_per_replica = merged_recipe.gpu_per_replica or 1
+            base_port = merged_recipe.base_port
+        else:
+            gpu_per_replica = 1
+            base_port = 8001
         
         # Calculate replicas
         replicas_per_node = total_gpus // gpu_per_replica
         total_replicas = num_nodes * replicas_per_node
         
         # Create service group using job_id in group_id
-        group_id = self.service_manager.group_manager.create_replica_group(
+        group_id = self.service_manager.create_replica_group(
             recipe_name=recipe_name,
             num_nodes=num_nodes,
             replicas_per_node=replicas_per_node,
@@ -266,7 +207,7 @@ class ServiceOrchestrator:
             
             for gpu_idx in range(replicas_per_node):
                 port = base_port + replica_idx
-                self.service_manager.group_manager.add_replica(
+                self.service_manager.add_replica(
                     group_id=group_id,
                     job_id=node_job_id,
                     node_index=node_idx,
@@ -300,38 +241,45 @@ class ServiceOrchestrator:
             success = self.slurm_client.cancel_job(service_id)
             if success:
                 self.service_manager.update_service_status(service_id, "cancelled")
-                # Also remove from endpoints if present
-                if service_id in self.endpoints:
-                    self.endpoints.pop(service_id)
+                # Also remove from registered endpoints if present
+                if service_id in self.registered_endpoints:
+                    self.registered_endpoints.pop(service_id)
             return {"status": "cancelled" if success else "failed", "service_id": service_id}
         except Exception as e:
             logger.error(f"Failed to stop service {service_id}: {e}")
             return {"status": "error", "message": str(e)}
 
-    def register_service(self, service_id: str, host: str, port: int, model: str) -> Dict[str, Any]:
-        """Register a new vLLM service endpoint (called when service is ready)"""
-        endpoint = VLLMEndpoint(
-            service_id=service_id,
-            host=host,
-            port=port,
-            model=model,
-            status="unknown"
-        )
-        self.endpoints[service_id] = endpoint
-        logger.info(f"Registered service {service_id} at {endpoint.url}")
+    def register_endpoint(self, service_id: str, host: str, port: int, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Register a service endpoint (called when service is ready).
+        
+        This is a generic registration method used by all service types.
+        Service-specific metadata (e.g., model name for vLLM) can be passed via metadata dict.
+        """
+        url = f"http://{host}:{port}"
+        endpoint_info = {
+            "service_id": service_id,
+            "host": host,
+            "port": port,
+            "url": url,
+            "status": "unknown",
+            "registered_at": time.time(),
+            **(metadata or {})
+        }
+        self.registered_endpoints[service_id] = endpoint_info
+        logger.info(f"Registered service {service_id} at {url}")
         
         # Update status in ServiceManager
         self.service_manager.update_service_status(service_id, "running")
         
-        # Trigger immediate health check
-        asyncio.create_task(self._check_endpoint(endpoint))
+        # Register with endpoint resolver for discovery
+        self.endpoint_resolver.register(service_id, host, port)
         
-        return {"status": "registered", "service_id": service_id, "url": endpoint.url}
+        return {"status": "registered", "service_id": service_id, "url": url}
     
-    def unregister_service(self, service_id: str) -> Dict[str, Any]:
-        """Unregister a vLLM service"""
-        if service_id in self.endpoints:
-            endpoint = self.endpoints.pop(service_id)
+    def unregister_endpoint(self, service_id: str) -> Dict[str, Any]:
+        """Unregister a service endpoint"""
+        if service_id in self.registered_endpoints:
+            self.registered_endpoints.pop(service_id)
             logger.info(f"Unregistered service {service_id}")
             return {"status": "unregistered", "service_id": service_id}
         return {"status": "not_found", "service_id": service_id}
@@ -355,34 +303,24 @@ class ServiceOrchestrator:
         }
     
     def get_metrics(self) -> Dict[str, Any]:
-        """Get aggregated metrics"""
+        """Get aggregated metrics across all services"""
         # Convert defaultdict to regular dict for JSON serialization
         metrics_copy = {k: v for k, v in self.metrics.items() if k != "requests_per_service"}
         metrics_copy["requests_per_service"] = dict(self.metrics["requests_per_service"])
         
+        # Build per-service metrics from registered endpoints
+        service_metrics = {}
+        for service_id, endpoint_info in self.registered_endpoints.items():
+            service_metrics[service_id] = {
+                "status": endpoint_info.get("status", "unknown"),
+                "url": endpoint_info.get("url"),
+                "registered_at": endpoint_info.get("registered_at")
+            }
+        
         return {
             "global": metrics_copy,
-            "services": {
-                service_id: {
-                    "total_requests": ep.total_requests,
-                    "failed_requests": ep.failed_requests,
-                    "avg_latency_ms": ep.avg_latency_ms,
-                    "health_score": ep.health_score,
-                    "status": ep.status
-                }
-                for service_id, ep in self.endpoints.items()
-            }
+            "services": service_metrics
         }
-    
-    def configure_load_balancer(self, strategy: str) -> Dict[str, Any]:
-        """Configure load balancing strategy"""
-        valid_strategies = ["round_robin", "least_loaded", "best_health"]
-        if strategy not in valid_strategies:
-            return {"status": "error", "message": f"Invalid strategy. Valid: {valid_strategies}"}
-        
-        self.load_balancer = LoadBalancer(strategy=strategy)
-        logger.info(f"Load balancer strategy set to: {strategy}")
-        return {"status": "configured", "strategy": strategy}
     
     def get_service(self, service_id: str) -> Optional[Dict[str, Any]]:
         """Get details of a specific service or service group"""
@@ -583,12 +521,13 @@ class ServiceOrchestrator:
             }
     
     def list_recipes(self) -> List[Dict[str, Any]]:
-        """List all available service recipes"""
-        return self.recipe_loader.list_all()
+        """List all available service recipes with simplified API format"""
+        recipes = self.recipe_loader.list_all()
+        return [recipe.to_api_response() for recipe in recipes]
     
     def list_service_groups(self) -> List[Dict[str, Any]]:
         """List all service groups"""
-        return self.service_manager.group_manager.list_groups()
+        return self.service_manager.list_groups()
     
     def get_service_group(self, group_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a service group"""
@@ -601,7 +540,7 @@ class ServiceOrchestrator:
             return None
         
         # Count replicas by status
-        all_replicas = self.service_manager.group_manager.get_all_replicas_flat(group_id)
+        all_replicas = self.service_manager.get_all_replicas_flat(group_id)
         status_counts = {
             "healthy": 0,
             "starting": 0,
@@ -644,7 +583,7 @@ class ServiceOrchestrator:
     
     def stop_service_group(self, group_id: str) -> Dict[str, Any]:
         """Stop all replicas in a service group"""
-        group_info = self.service_manager.group_manager.get_group(group_id)
+        group_info = self.service_manager.get_group_info(group_id)
         if not group_info:
             return {"status": "error", "message": f"Group {group_id} not found"}
         
@@ -675,7 +614,7 @@ class ServiceOrchestrator:
                 failed_jobs.append(job_id)
         
         # Update group status
-        self.service_manager.group_manager.update_group_status(group_id, "cancelled")
+        self.service_manager.update_group_status(group_id, "cancelled")
         
         if failed_jobs:
             return {
@@ -706,7 +645,7 @@ class ServiceOrchestrator:
         Returns:
             Dict with status and operation details
         """
-        group_info = self.service_manager.group_manager.get_group(group_id)
+        group_info = self.service_manager.get_group_info(group_id)
         if not group_info:
             return {"status": "error", "message": f"Group {group_id} not found"}
         
@@ -745,10 +684,10 @@ class ServiceOrchestrator:
                 failed_jobs.append(job_id)
         
         # Update group status
-        self.service_manager.group_manager.update_group_status(group_id, "cancelled")
+        self.service_manager.update_group_status(group_id, "cancelled")
         
         # Update all replica statuses
-        replica_ids = self.service_manager.group_manager.get_all_replica_ids(group_id)
+        replica_ids = self.service_manager.get_all_replica_ids(group_id)
         replicas_updated = 0
         for replica_id in replica_ids:
             self.service_manager.update_service_status(replica_id, "cancelled")
@@ -800,73 +739,16 @@ class ServiceOrchestrator:
         except Exception as e:
             return {"status": "error", "message": str(e)}
     
-    # ===== Client-facing API (local network, no SSH) =====
-    
-    async def forward_completion(self, request_data: dict) -> Dict[str, Any]:
-        """
-        Forward completion request to a vLLM service.
-        This is called by clients on Meluxina - no SSH overhead.
-        """
-        # Select endpoint
-        endpoint = await self.load_balancer.select_endpoint(list(self.endpoints.values()))
-        if endpoint is None:
-            raise RuntimeError("No healthy vLLM services available")
-        
-        # Track timing
-        start_time = time.perf_counter()
-        
-        try:
-            # Forward to vLLM
-            response = await self._http_client.post(
-                f"{endpoint.url}/v1/completions",
-                json=request_data
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            # Calculate latency
-            latency_ms = (time.perf_counter() - start_time) * 1000
-            
-            # Update endpoint metrics
-            endpoint.total_requests += 1
-            # Update running average
-            if endpoint.avg_latency_ms == 0:
-                endpoint.avg_latency_ms = latency_ms
-            else:
-                endpoint.avg_latency_ms = (
-                    (endpoint.avg_latency_ms * (endpoint.total_requests - 1) + latency_ms) 
-                    / endpoint.total_requests
-                )
-            
-            # Update global metrics
-            self.metrics["total_requests"] += 1
-            self.metrics["total_latency_ms"] += latency_ms
-            self.metrics["requests_per_service"][endpoint.service_id] += 1
-            
-            # Add metadata
-            result["_orchestrator_meta"] = {
-                "service_id": endpoint.service_id,
-                "latency_ms": latency_ms,
-                "endpoint": endpoint.url
-            }
-            
-            logger.debug(f"Request forwarded to {endpoint.service_id}, latency: {latency_ms:.2f}ms")
-            return result
-            
-        except Exception as e:
-            endpoint.failed_requests += 1
-            self.metrics["failed_requests"] += 1
-            logger.error(f"Request to {endpoint.service_id} failed: {e}")
-            raise RuntimeError(f"vLLM service error: {str(e)}")
-    
     # ===== Health checking =====
     
     async def _health_check_loop(self):
-        """Periodically health check all endpoints and replica groups"""
+        """Periodically health check all replica groups.
+        
+        Service-specific health checks are delegated to the respective service handlers.
+        """
         while True:
             try:
                 await asyncio.sleep(10)  # Check every 10 seconds
-                await self._check_all_endpoints()
                 await self._check_all_replica_groups()
             except asyncio.CancelledError:
                 break
@@ -874,41 +756,42 @@ class ServiceOrchestrator:
                 logger.error(f"Health check loop error: {e}")
                 await asyncio.sleep(5)  # Wait before retrying
     
-    async def _check_all_endpoints(self):
-        """Check health of all registered endpoints"""
-        if not self.endpoints:
-            return
-            
-        tasks = [self._check_endpoint(ep) for ep in self.endpoints.values()]
-        await asyncio.gather(*tasks, return_exceptions=True)
-    
     async def _check_all_replica_groups(self):
-        """Check health of all replicas in all groups"""
-        groups = self.service_manager.group_manager.list_groups()
+        """Check health of all replicas in all groups.
+        
+        Determines service type from recipe and delegates to appropriate handler.
+        """
+        groups = self.service_manager.list_groups()
         if not groups:
             return
         
-        logger.info(f"Checking replica groups: {len(groups)} groups found")
+        logger.debug(f"Checking replica groups: {len(groups)} groups found")
         
         tasks = []
         for group in groups:
             group_id = group["id"]
-            replicas = self.service_manager.group_manager.get_all_replicas_flat(group_id)
+            recipe_name = group.get("recipe_name", "")
+            replicas = self.service_manager.get_all_replicas_flat(group_id)
+            
             for replica in replicas:
                 # Only check replicas that aren't already "ready"
                 if replica.get("status") != "ready":
-                    logger.info(f"Will check replica {replica['id']} in group {group_id}")
-                    tasks.append(self._check_replica(group_id, replica))
+                    logger.debug(f"Will check replica {replica['id']} in group {group_id}")
+                    tasks.append(self._check_replica(group_id, replica, recipe_name))
         
         if tasks:
-            logger.info(f"Checking {len(tasks)} replicas...")
+            logger.debug(f"Checking {len(tasks)} replicas...")
             await asyncio.gather(*tasks, return_exceptions=True)
     
-    async def _check_replica(self, group_id: str, replica: Dict[str, Any]):
-        """Check if a single replica is ready"""
+    async def _check_replica(self, group_id: str, replica: Dict[str, Any], recipe_name: str):
+        """Check if a single replica is ready.
+        
+        Uses service-type-specific health check endpoints:
+        - vLLM: /v1/models
+        - Qdrant: /collections
+        """
         replica_id = replica["id"]
         job_id = replica["job_id"]
-        logger.info(f"Checking replica {replica_id} for job {job_id}...")
         port = replica["port"]
         
         try:
@@ -932,62 +815,74 @@ class ServiceOrchestrator:
             if not node:
                 return
             
-            # Try to reach the replica's /v1/models endpoint
-            url = f"http://{node}:{port}/v1/models"
-            response = await self._http_client.get(url, timeout=5.0)
+            # Determine health check endpoint based on service type
+            if "vllm" in recipe_name.lower() or "inference" in recipe_name.lower():
+                health_url = f"http://{node}:{port}/v1/models"
+                is_ready = await self._check_vllm_health(health_url)
+            elif "qdrant" in recipe_name.lower() or "vector-db" in recipe_name.lower():
+                health_url = f"http://{node}:{port}/collections"
+                is_ready = await self._check_qdrant_health(health_url)
+            else:
+                # Generic health check - try /health endpoint
+                health_url = f"http://{node}:{port}/health"
+                is_ready = await self._check_generic_health(health_url)
             
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("object") == "list" and "data" in data:
-                    # Replica is ready!
-                    self.service_manager.group_manager.update_replica_status(replica_id, "ready")
-                    
-                    # Update node info in the group if not set
-                    self.service_manager.group_manager.update_node_info(group_id, job_id, node)
-                    
-                    # Register replica as an endpoint so it can be used for data plane operations
-                    # Use the composite replica_id (e.g., "3751387:8001") as service_id
-                    group_info = self.service_manager.group_manager.get_group(group_id)
-                    if group_info:
-                        recipe_name = group_info.get("recipe_name", "inference/vllm-replicas")
-                        replica_no = replica.get('replica_index', '')
-                        self.service_manager.register_service({
-                            "id": replica_id,
-                            "name": f"{job_id}-replica-{replica_no}",
-                            "job_id": job_id,
-                            "recipe_name": recipe_name,
-                            "config": {},
-                            "status": "running",
-                            "created_at": replica.get("added_at", "")
-                        })
-                        # Register the endpoint
-                        self.endpoint_resolver.register(replica_id, node, port)
-                        logger.debug(f"Registered endpoint for replica {replica_id}: http://{node}:{port}")
-                    
-                    logger.info(f"Replica {replica_id} in group {group_id} is now ready on {node}:{port}")
+            if is_ready:
+                # Replica is ready!
+                self.service_manager.update_replica_status(replica_id, "ready")
+                
+                # Update node info in the group if not set
+                self.service_manager.update_node_info(group_id, job_id, node)
+                
+                # Register replica as an endpoint so it can be used for data plane operations
+                group_info = self.service_manager.get_group_info(group_id)
+                if group_info:
+                    self.service_manager.register_service({
+                        "id": replica_id,
+                        "job_id": job_id,
+                        "recipe_name": recipe_name,
+                        "config": {},
+                        "status": "running",
+                        "created_at": replica.get("added_at", "")
+                    })
+                    # Register the endpoint
+                    self.endpoint_resolver.register(replica_id, node, port)
+                    logger.debug(f"Registered endpoint for replica {replica_id}: http://{node}:{port}")
+                
+                logger.info(f"Replica {replica_id} in group {group_id} is now ready on {node}:{port}")
                     
         except Exception as e:
             # Replica not ready yet - this is normal during startup
             logger.debug(f"Replica {replica_id} not ready yet: {e}")
     
-    async def _check_endpoint(self, endpoint: VLLMEndpoint):
-        """Check if a single endpoint is healthy"""
+    async def _check_vllm_health(self, url: str) -> bool:
+        """Check if a vLLM endpoint is healthy via /v1/models."""
         try:
-            response = await self._http_client.get(
-                f"{endpoint.url}/health",
-                timeout=5.0
-            )
+            response = await self._http_client.get(url, timeout=5.0)
             if response.status_code == 200:
-                if endpoint.status != "healthy":
-                    logger.info(f"Service {endpoint.service_id} is now healthy")
-                endpoint.status = "healthy"
-            else:
-                if endpoint.status != "unhealthy":
-                    logger.warning(f"Service {endpoint.service_id} is unhealthy (status {response.status_code})")
-                endpoint.status = "unhealthy"
-        except Exception as e:
-            if endpoint.status != "unhealthy":
-                logger.warning(f"Health check failed for {endpoint.service_id}: {e}")
-            endpoint.status = "unhealthy"
-        
-        endpoint.last_health_check = time.time()
+                data = response.json()
+                return data.get("object") == "list" and "data" in data
+        except Exception:
+            pass
+        return False
+    
+    async def _check_qdrant_health(self, url: str) -> bool:
+        """Check if a Qdrant endpoint is healthy via /collections."""
+        try:
+            response = await self._http_client.get(url, timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()
+                # Qdrant returns {"result": {"collections": [...]}} or similar
+                return "result" in data or "collections" in data
+        except Exception:
+            pass
+        return False
+    
+    async def _check_generic_health(self, url: str) -> bool:
+        """Check if a generic endpoint is healthy via /health."""
+        try:
+            response = await self._http_client.get(url, timeout=5.0)
+            return response.status_code == 200
+        except Exception:
+            pass
+        return False

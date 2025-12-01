@@ -7,7 +7,7 @@ Unifies the logic for resolving HTTP endpoints of services running on SLURM.
 from typing import Optional
 import logging
 
-from service_orchestration.builders import RecipeLoader
+from service_orchestration.recipes import RecipeLoader
 
 
 class EndpointResolver:

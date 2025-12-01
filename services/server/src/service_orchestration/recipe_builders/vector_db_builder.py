@@ -7,8 +7,11 @@ can override methods to customize behavior (e.g., QdrantVectorDbBuilder).
 """
 
 import os
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 from .base import RecipeScriptBuilder, ScriptPaths
+
+if TYPE_CHECKING:
+    from service_orchestration.recipes import Recipe, RecipeResources
 
 
 class VectorDbRecipeBuilder(RecipeScriptBuilder):
@@ -87,8 +90,8 @@ if ! apptainer inspect --all {paths.sif_path}; then
 fi
 """
     
-    def build_run_block(self, paths: ScriptPaths, resources: Dict[str, Any],
-                       recipe: Dict[str, Any]) -> str:
+    def build_run_block(self, paths: ScriptPaths, resources: "RecipeResources",
+                       recipe: "Recipe") -> str:
         """Build single-node container run block for vector database (generic).
         
         This provides a generic implementation. Override this method in subclasses

@@ -1,97 +1,54 @@
 """
 Job Builder for Service Orchestrator.
-Handles recipe loading, config merging, and SLURM payload generation.
+Handles config merging and SLURM payload generation from Recipe objects.
 """
 
 import os
-import yaml
 import logging
 from pathlib import Path
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any
+
 from service_orchestration.recipe_builders import BuilderRegistry, ScriptPaths
+from service_orchestration.recipes import Recipe, InferenceRecipe
 
 logger = logging.getLogger(__name__)
 
-def parse_time_limit(time_str):
-    """Parse time limit string to minutes."""
-    if not time_str:
-        return 60
-    if isinstance(time_str, int):
-        return time_str
-    # Simple parser, can be expanded
-    try:
-        if ':' in time_str:
-            parts = time_str.split(':')
-            if len(parts) == 3: # HH:MM:SS
-                return int(parts[0])*60 + int(parts[1])
-            elif len(parts) == 2: # MM:SS
-                return int(parts[0])
-        return int(time_str)
-    except:
-        return 60
 
 class JobBuilder:
+    """Builds SLURM job payloads and scripts from Recipe objects."""
+    
     def __init__(self, base_path: str):
         self.base_path = Path(base_path)
         self.recipes_dir = self.base_path / "src" / "recipes"
         self.logs_dir = self.base_path / "logs"
         self.env_module = os.getenv("MELUXINA_ENV_MODULE", "env/release/2023.1")
         self.apptainer_module = os.getenv("APPTAINER_MODULE", "Apptainer/1.2.4-GCCcore-12.3.0")
-        
-    def _find_recipe(self, recipe_name: str) -> Path:
-        """Find recipe file by name."""
-        if "/" in recipe_name:
-            category, name = recipe_name.split("/", 1)
-            recipe_path = self.recipes_dir / category / f"{name}.yaml"
-        else:
-            # Search all categories
-            for yaml_file in self.recipes_dir.rglob(f"{recipe_name}.yaml"):
-                return yaml_file
-            recipe_path = None
-        
-        if not recipe_path or not recipe_path.exists():
-            raise FileNotFoundError(f"Recipe '{recipe_name}' not found in {self.recipes_dir}")
-        return recipe_path
 
-    def build_job(self, recipe_name: str, config: Dict[str, Any], account: str) -> Dict[str, Any]:
-        """Build SLURM job payload and script."""
-        # Load recipe
-        recipe_path = self._find_recipe(recipe_name)
-        with open(recipe_path, 'r') as f:
-            recipe = yaml.safe_load(f)
-            
-        # Merge resources
-        resources = recipe.get("resources", {}).copy()
-        if "resources" in config:
-            resources.update(config["resources"])
-        for key in ['nodes', 'cpu', 'memory', 'gpu', 'time_limit']:
-            if key in config:
-                resources[key] = config[key]
-                
-        # Merge environment
-        merged_env = recipe.get("environment", {}).copy()
-        if "environment" in config:
-            merged_env.update(config["environment"])
-        if "replica_port" in config:
-            merged_env["VLLM_PORT"] = str(config["replica_port"])
-            
-        # Calculate tasks/gpus
-        gpu_per_replica = recipe.get("gpu_per_replica")
-        total_gpus = resources.get("gpu")
+    def build_job(self, recipe: Recipe, config: Dict[str, Any], account: str) -> Dict[str, Any]:
+        """Build SLURM job payload and script from a Recipe object.
         
-        if gpu_per_replica and total_gpus:
-            replicas_per_node = int(total_gpus) // int(gpu_per_replica)
-            ntasks = replicas_per_node
-            gpus_per_task = int(gpu_per_replica)
+        Args:
+            recipe: Validated Recipe object
+            config: User-provided configuration overrides
+            account: SLURM account to use
+            
+        Returns:
+            Dict with 'script' (bash script) and 'job' (SLURM job description)
+        """
+        # Merge config into recipe
+        merged_recipe = recipe.merge_config(config)
+        resources = merged_recipe.resources
+        
+        # Calculate tasks/gpus for replica groups
+        if isinstance(merged_recipe, InferenceRecipe) and merged_recipe.is_replica_group:
+            ntasks = merged_recipe.replicas_per_node
+            gpus_per_task = merged_recipe.gpu_per_replica
         else:
             ntasks = 1
-            gpus_per_task = int(total_gpus) if total_gpus else 0
+            gpus_per_task = resources.gpu if resources.gpu else 0
             
         # Generate script
-        script = self._create_script(recipe, recipe_path, merged_env, resources, config)
-        
-        # Build job description
-        time_limit = parse_time_limit(resources.get("time_limit"))
+        script = self._create_script(merged_recipe, config)
         
         # Build environment as object/dict (required by Slurm REST API v0.0.40)
         env_dict = {
@@ -99,16 +56,15 @@ class JobBuilder:
             "USER": os.getenv('USER', 'unknown'),
             "BASH_ENV": "/etc/profile"
         }
-        env_dict.update(merged_env)
+        env_dict.update(merged_recipe.environment)
         
         # Build job description for Slurm REST API v0.0.40
-        # Start with absolute minimum, then add fields carefully
-        job_name = recipe.get('name', recipe_name)
+        job_name = merged_recipe.name
         job_desc = {
-            "account": account,  # Use the account parameter passed in
+            "account": account,
             "qos": "short",
             "time_limit": {
-                "number": int(time_limit),
+                "number": resources.time_limit,
                 "set": True
             },
             "current_working_directory": str(self.logs_dir),
@@ -118,12 +74,11 @@ class JobBuilder:
         }
         
         # Add resource specifications
-        job_desc["partition"] = "gpu" if resources.get("gpu") else "cpu"
+        job_desc["partition"] = "gpu" if resources.gpu else "cpu"
         job_desc["name"] = job_name
         
         # Add node allocation
-        num_nodes = resources.get("nodes", 1)
-        job_desc["nodes"] = str(num_nodes)
+        job_desc["nodes"] = str(resources.nodes)
         
         # Add task allocation (for multi-replica jobs)
         if ntasks > 1:
@@ -131,65 +86,74 @@ class JobBuilder:
             job_desc["tasks_per_node"] = ntasks
         
         # Add GPU allocation if requested
-        gpu_count = resources.get("gpu")
-        if gpu_count and str(gpu_count) != "0":
-            # GRES format for GPU allocation
+        if resources.gpu and resources.gpu > 0:
             if gpus_per_task > 0:
                 job_desc["gres"] = f"gpu:{gpus_per_task}"
             else:
-                job_desc["gres"] = f"gpu:{gpu_count}"
+                job_desc["gres"] = f"gpu:{resources.gpu}"
         
-        logger.info(f"Building job with nodes={num_nodes}, GPU config: gpu_count={gpu_count}, gpus_per_task={gpus_per_task}, ntasks={ntasks}, gres={job_desc.get('gres')}")
+        logger.info(
+            f"Building job with nodes={resources.nodes}, "
+            f"GPU config: gpu_count={resources.gpu}, gpus_per_task={gpus_per_task}, "
+            f"ntasks={ntasks}, gres={job_desc.get('gres')}"
+        )
         
         return {
             "script": script,
             "job": job_desc
         }
 
-    def _create_script(self, recipe, recipe_path, env, resources, config):
-        category = recipe_path.parent.name
-        recipe_name = recipe.get('name', '')
+    def _create_script(self, recipe: Recipe, config: Dict[str, Any]) -> str:
+        """Create the SLURM job script from a Recipe object.
         
-        # Paths
-        container_def = recipe.get("container_def", f"{recipe_name}.def")
-        image_name = recipe.get("image", f"{recipe_name}.sif")
-        
-        # Use absolute paths based on base_path
-        def_path = str(self.recipes_dir / category / container_def)
-        sif_path = str(self.recipes_dir / category / image_name)
+        Args:
+            recipe: Merged Recipe object with all configuration applied
+            config: Original user config (for recipe builder compatibility)
+            
+        Returns:
+            Complete bash script as string
+        """
+        # Get container paths from recipe
+        container_paths = recipe.get_container_paths(str(self.recipes_dir))
         
         paths = ScriptPaths(
-            def_path=def_path,
-            sif_path=sif_path,
+            def_path=container_paths["def_path"],
+            sif_path=container_paths["sif_path"],
             log_dir=str(self.logs_dir),
             remote_base_path=str(self.base_path)
         )
         
-        # Builder
+        # Get the appropriate builder
+        category = recipe.category.value
         try:
             builder = BuilderRegistry.create_builder(
                 category, 
-                recipe_name=recipe_name,
+                recipe_name=recipe.name,
                 remote_base_path=str(self.base_path)
             )
         except ValueError:
             builder = BuilderRegistry.create_builder('inference', remote_base_path=str(self.base_path))
             
         # Build sections
-        env_section = builder.build_environment_section(env)
+        env_section = builder.build_environment_section(recipe.environment)
         build_block = builder.build_container_build_block(paths)
         
+        # Build merged config for replica group - user config overrides
         merged_config = {}
-        for key in ['gpu_per_replica', 'base_port', 'nproc_per_node', 'master_port', 
-                    'model', 'max_model_len', 'gpu_memory_utilization']:
-            if key in recipe:
-                merged_config[key] = recipe[key]
+        if isinstance(recipe, InferenceRecipe):
+            merged_config['gpu_per_replica'] = recipe.gpu_per_replica
+            merged_config['base_port'] = recipe.base_port
+            if recipe.nproc_per_node:
+                merged_config['nproc_per_node'] = recipe.nproc_per_node
+            if recipe.master_port:
+                merged_config['master_port'] = recipe.master_port
         merged_config.update(config or {})
         
-        if merged_config and builder.supports_distributed():
-            run_block = builder.build_replica_group_run_block(paths, resources, recipe, merged_config)
+        # Pass Recipe and RecipeResources objects directly to builders
+        if recipe.is_replica_group and builder.supports_distributed():
+            run_block = builder.build_replica_group_run_block(paths, recipe.resources, recipe, merged_config)
         else:
-            run_block = builder.build_run_block(paths, resources, recipe)
+            run_block = builder.build_run_block(paths, recipe.resources, recipe)
             
         return f"""#!/bin/bash -l
 
@@ -206,3 +170,4 @@ mkdir -p {self.logs_dir}
 
 exit $container_exit_code
 """
+

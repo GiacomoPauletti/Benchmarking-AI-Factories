@@ -1,16 +1,24 @@
 """Abstract base class for inference services (vLLM, TGI, etc.)."""
 
-from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional
+from abc import abstractmethod
+from typing import Dict, List, Any, Optional, Tuple
 from service_orchestration.services.base_service import BaseService
 
 
-class InferenceService(BaseService, ABC):
+class InferenceService(BaseService):
     """Abstract base class for all inference service implementations.
     
     This class defines the common interface that all inference services
     (vLLM, Text Generation Inference, etc.) must implement.
+    
+    Inherits from BaseService which provides:
+    - HTTP request helpers (_make_request, _success_response, _error_response)
+    - Service validation helpers (_validate_service_exists)
+    - Readiness checking (_check_service_ready_http)
     """
+    
+    # Default health check path for inference services
+    HEALTH_CHECK_PATH = "/v1/models"
 
     @abstractmethod
     def get_models(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
@@ -43,18 +51,9 @@ class InferenceService(BaseService, ABC):
         """
         pass
 
-    @abstractmethod
-    def _check_ready_and_discover_model(self, service_id: str, service_info: Dict[str, Any]) -> tuple[bool, str, Any]:
-        """Check if an inference service is ready AND discover its model name in one call.
+    def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> Tuple[bool, str]:
+        """Check if an inference service is ready using base class HTTP health check.
         
-        This method should implement service-specific readiness checks and model discovery
-        to eliminate redundant HTTP calls.
-        
-        Args:
-            service_id: The service ID to check
-            service_info: The service information dict
-            
-        Returns:
-            Tuple of (is_ready: bool, status: str, model: Optional[str])
+        Subclasses can override this for custom readiness checks.
         """
-        pass
+        return self._check_service_ready_http(service_id, self.HEALTH_CHECK_PATH)

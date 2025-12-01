@@ -3,7 +3,6 @@
 from typing import Dict, List, Optional, Any, Tuple
 import requests
 import time
-import json
 from .inference_service import InferenceService
 from service_orchestration.networking import LoadBalancer
 
@@ -13,7 +12,16 @@ TIMEOUT_PER_EXTRA_NODE = 30  # Additional timeout per extra node beyond first
 
 
 class VllmService(InferenceService):
-    """Handles all vLLM-specific inference operations."""
+    """Handles all vLLM-specific inference operations.
+    
+    Features:
+    - Model name caching to avoid redundant /v1/models calls
+    - Load balancing for service groups (replica groups)
+    - Chat/completions endpoint fallback for base models
+    - RAG-augmented prompting support
+    
+    Uses BaseService helpers for HTTP requests and response formatting.
+    """
     
     def __init__(self, deployer, service_manager, endpoint_resolver, logger):
         """Initialize VllmService with load balancer support and model caching."""
@@ -22,39 +30,34 @@ class VllmService(InferenceService):
         
         # Model name cache: {service_id: {"model": str, "endpoint": str, "timestamp": float}}
         self._model_cache: Dict[str, Dict[str, Any]] = {}
-        self._model_cache_ttl = 3600  # Cache for 1 hour (models don't change during service lifetime)
+        self._model_cache_ttl = 3600  # Cache for 1 hour
+
+    # ========== BaseService Abstract Properties ==========
     
+    @property
+    def default_port(self) -> int:
+        return DEFAULT_VLLM_PORT
+    
+    @property
+    def service_type_name(self) -> str:
+        return "vLLM"
+
+    # ========== Model Caching ==========
+
     def _get_cached_model(self, service_id: str, endpoint: str) -> Optional[str]:
-        """Get cached model name if available and fresh.
-        
-        Args:
-            service_id: The service ID
-            endpoint: The current endpoint (must match cached endpoint)
-            
-        Returns:
-            Cached model name or None
-        """
+        """Get cached model name if available and fresh."""
         if service_id in self._model_cache:
             cache_entry = self._model_cache[service_id]
             age = time.time() - cache_entry["timestamp"]
-            
-            # Verify cache is fresh and endpoint matches
             if age < self._model_cache_ttl and cache_entry["endpoint"] == endpoint:
                 self.logger.debug(f"Model cache HIT for {service_id}: {cache_entry['model']} (age: {age:.1f}s)")
                 return cache_entry["model"]
             else:
-                self.logger.debug(f"Model cache STALE for {service_id} (age: {age:.1f}s or endpoint mismatch)")
-        
+                self.logger.debug(f"Model cache STALE for {service_id}")
         return None
     
     def _cache_model(self, service_id: str, endpoint: str, model: str):
-        """Cache the model name for a service.
-        
-        Args:
-            service_id: The service ID
-            endpoint: The endpoint URL
-            model: The model name to cache
-        """
+        """Cache the model name for a service."""
         self._model_cache[service_id] = {
             "model": model,
             "endpoint": endpoint,
@@ -62,8 +65,10 @@ class VllmService(InferenceService):
         }
         self.logger.debug(f"Model cached for {service_id}: {model}")
 
+    # ========== Service Discovery ==========
+
     def find_services(self) -> List[Dict[str, Any]]:
-        """Find running VLLM services and their endpoints."""
+        """Find running vLLM services and their endpoints."""
         def is_vllm(service):
             service_name = service.get("name", "").lower()
             recipe_name = service.get("recipe_name", "").lower()
@@ -75,17 +80,13 @@ class VllmService(InferenceService):
         
         services = self._filter_services(is_vllm)
         self.logger.debug(f"Found {len(services)} vLLM services after filtering")
-        vllm_services = []
         
+        vllm_services = []
         for service in services:
             job_id = service.get("id")
-            endpoint = self.endpoint_resolver.resolve(job_id, default_port=DEFAULT_VLLM_PORT)
-            if endpoint:
-                self.logger.debug("Resolved endpoint for vllm job %s -> %s", job_id, endpoint)
-            else:
-                self.logger.debug("No endpoint yet for vllm job %s (status: %s)", job_id, service.get("status"))
+            endpoint_parts = self._resolve_endpoint_parts(job_id)
+            endpoint = f"http://{endpoint_parts[0]}:{endpoint_parts[1]}" if endpoint_parts else None
             
-            # Get detailed service-specific status instead of basic SLURM status
             try:
                 is_ready, status, _ = self._check_ready_and_discover_model(job_id, service)
             except Exception as e:
@@ -102,260 +103,278 @@ class VllmService(InferenceService):
         
         return vllm_services
 
+    # ========== Readiness Check with Model Discovery ==========
 
-    def get_models(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
-        """Query a running VLLM service for available models.
+    def _check_service_ready(self, service_id: str, service_info: Dict[str, Any]) -> Tuple[bool, str]:
+        """Check if service is ready (simplified, without model discovery)."""
+        is_ready, status, _ = self._check_ready_and_discover_model(service_id, service_info)
+        return is_ready, status
 
-        Returns a dict with either:
-        - {"success": True, "models": [list of model ids]}
-        - {"success": False, "error": "...", "message": "...", ...}
-        """
-        try:
-            # Check if service exists and is ready
-            service_info = self.service_manager.get_service(service_id)
-            if not service_info:
-                return {
-                    "success": False,
-                    "error": f"Service {service_id} not found",
-                    "message": "The requested vLLM service could not be found.",
-                    "models": []
-                }
-            
-            is_ready, status, _ = self._check_ready_and_discover_model(service_id, service_info)
-            if not is_ready:
-                return {
-                    "success": False,
-                    "error": f"Service is not ready yet (status: {status})",
-                    "message": f"The vLLM service is still starting up (status: {status}). Please wait a moment and try again.",
-                    "service_id": service_id,
-                    "status": status,
-                    "models": []
-                }
-            
-            endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
-            if not endpoint:
-                self.logger.debug("No endpoint found for service %s when querying models", service_id)
-                return {
-                    "success": False,
-                    "error": "Service endpoint not available",
-                    "message": "The vLLM service endpoint is not available yet.",
-                    "service_id": service_id,
-                    "status": status,
-                    "models": []
-                }
-
-            # Parse endpoint URL and make direct HTTP request to compute node
-            from urllib.parse import urlparse
-            parsed = urlparse(endpoint)
-            remote_host = parsed.hostname
-            remote_port = parsed.port or 8001
-            path = "/v1/models"
-            
-            self.logger.debug("Querying models: %s:%s%s", remote_host, remote_port, path)
-            
-            # Direct HTTP request to compute node
-            try:
-                response = requests.get(
-                    f"http://{remote_host}:{remote_port}{path}",
-                    timeout=timeout
-                )
-            except Exception as e:
-                self.logger.warning("Model discovery for %s failed: %s", service_id, str(e))
-                return {
-                    "success": False,
-                    "error": f"Connection failed: {str(e)}",
-                    "message": "Failed to connect to vLLM service for model discovery.",
-                    "service_id": service_id,
-                    "endpoint": endpoint,
-                    "models": []
-                }
-            
-            if not response.ok:
-                self.logger.warning("Model discovery for %s returned %s: %s", service_id, response.status_code, response.text)
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code} from models endpoint",
-                    "message": f"Failed to query models from vLLM service (HTTP {response.status_code}).",
-                    "service_id": service_id,
-                    "endpoint": endpoint,
-                    "models": []
-                }
-
-            self.logger.debug("Model discovery response for %s: %s", service_id, response.text)
-
-            data = response.json()
-            models = []
-            
-            # vLLM returns {"object": "list", "data": [...]}
-            if isinstance(data, dict):
-                # Try standard OpenAI format (data field)
-                candidates = data.get('data', [])
-                # Fallback to other possible formats
-                if not candidates:
-                    candidates = data.get('models') or data.get('served_models') or []
-                
-                if isinstance(candidates, list):
-                    for item in candidates:
-                        if isinstance(item, str):
-                            models.append(item)
-                        elif isinstance(item, dict):
-                            model_id = item.get('id') or item.get('model')
-                            if model_id:
-                                models.append(model_id)
-            elif isinstance(data, list):
-                # Direct list format
-                for item in data:
-                    if isinstance(item, str):
-                        models.append(item)
-                    elif isinstance(item, dict):
-                        model_id = item.get('id') or item.get('model')
-                        if model_id:
-                            models.append(model_id)
-
-            return {
-                "success": True,
-                "models": models,
-                "service_id": service_id,
-                "endpoint": endpoint
-            }
-        except Exception as e:
-            self.logger.exception("Failed to discover models for service %s", service_id)
-            return {
-                "success": False,
-                "error": f"Exception during model discovery: {str(e)}",
-                "message": "An error occurred while querying the vLLM service for models.",
-                "service_id": service_id,
-                "models": []
-            }
-
-    
     def _check_ready_and_discover_model(self, service_id: str, service_info: Dict[str, Any]) -> Tuple[bool, str, Optional[str]]:
-        """Check if a vLLM service is ready AND discover its model name in ONE HTTP call.
+        """Check if vLLM service is ready AND discover model in ONE HTTP call.
         
-        This combines readiness checking with model discovery to eliminate duplicate
-        HTTP requests to the /v1/models endpoint, reducing latency by ~2 seconds.
-        
-        Uses a hybrid approach:
-        1. For replicas (composite IDs), skip SLURM check and test HTTP directly
-        2. For regular services, check SLURM status first (fast, eliminates pending/building jobs)
-        3. For RUNNING jobs, test HTTP connection to /v1/models endpoint AND parse model list
-        
-        Args:
-            service_id: The service ID to check (may be composite like "job_id:port")
-            service_info: The service information dict
-            
-        Returns:
-            Tuple of (is_ready: bool, status: str, model: Optional[str])
-            - is_ready: True if service is ready for prompts
-            - status: Current service status ("running", "starting", etc.)
-            - model: First model name from /v1/models, or None if not available
+        This optimized method combines readiness checking with model discovery
+        to eliminate redundant HTTP requests, reducing latency by ~2 seconds.
         """
-        # For composite replica IDs (e.g., "3713478:8001"), skip SLURM check
-        # The SLURM job may be "completed" while replicas continue running as background processes
+        # For composite replica IDs, skip SLURM check
         if ":" in service_id:
-            # Replicas: test HTTP connection directly without checking SLURM status
-            self.logger.debug(f"Checking replica {service_id} via direct HTTP test (skipping SLURM status)")
-            basic_status = "running"  # Assume running and let HTTP test determine actual state
+            self.logger.debug(f"Checking replica {service_id} via direct HTTP test")
+            basic_status = "running"
         else:
-            # Regular services: Get the current LIVE status from SLURM
             try:
                 basic_status = self.deployer.get_job_status(service_id).lower()
             except Exception as e:
                 self.logger.warning(f"Failed to get status for service {service_id}: {e}")
                 basic_status = service_info.get("status", "unknown").lower()
         
-        # If not running yet, return basic status (no need to test connection)
         if basic_status != "running":
             is_ready = basic_status not in ["pending", "building", "starting"]
             return is_ready, basic_status, None
         
-        # For RUNNING jobs, test actual HTTP connection to confirm vLLM is ready
-        # This replaces log parsing with a definitive connection test
-        endpoint = self.endpoint_resolver.resolve(service_id, default_port=DEFAULT_VLLM_PORT)
-        if not endpoint:
-            # Job is running but endpoint not available yet
+        # Test HTTP connection to /v1/models
+        endpoint_parts = self._resolve_endpoint_parts(service_id)
+        if not endpoint_parts:
             self.logger.info(f"Service {service_id} is RUNNING but endpoint not resolved yet")
             return False, "starting", None
         
-        # Try lightweight HTTP GET to /v1/models with short timeout
-        # This SINGLE call both checks readiness AND discovers the model
+        hostname, port = endpoint_parts
+        endpoint = f"http://{hostname}:{port}"
+        
         try:
-            from urllib.parse import urlparse
-            parsed = urlparse(endpoint)
-            remote_host = parsed.hostname
-            remote_port = parsed.port or 8001
-            path = "/v1/models"
+            self.logger.info(f"Testing readiness + discovering model via {hostname}:{port}/v1/models")
+            response = requests.get(f"http://{hostname}:{port}/v1/models", timeout=8)
             
-            self.logger.info(f"Testing readiness + discovering model via {remote_host}:{remote_port}{path}")
-            
-            # Direct HTTP request to compute node (orchestrator runs on MeluXina)
-            try:
-                response = requests.get(
-                    f"http://{remote_host}:{remote_port}{path}",
-                    timeout=8
-                )
-                status_code = response.status_code
-                body = response.text
-            except Exception as e:
-                self.logger.info(f"Direct HTTP request to {remote_host}:{remote_port} failed: {e}")
-                return False, "starting", None
-            
-            # Connection succeeded and got valid HTTP response
-            if status_code >= 200 and status_code < 300:
-                self.logger.info(f"Service {service_id} is ready (HTTP {status_code})")
+            if 200 <= response.status_code < 300:
+                self.logger.info(f"Service {service_id} is ready (HTTP {response.status_code})")
                 
-                # Parse model list from response
+                # Parse model from response
                 model = None
                 try:
-                    # vLLM returns {"object": "list", "data": [...]}
+                    data = response.json()
                     if isinstance(data, dict):
                         candidates = data.get('data', [])
                         if isinstance(candidates, list) and candidates:
-                            # Extract first model ID
                             first_item = candidates[0]
-                            if isinstance(first_item, dict):
-                                model = first_item.get('id')
-                            elif isinstance(first_item, str):
-                                model = first_item
+                            model = first_item.get('id') if isinstance(first_item, dict) else first_item
                     
                     if model:
-                        self.logger.debug(f"Discovered model for {service_id}: {model}")
-                        # Cache the model for future use
                         self._cache_model(service_id, endpoint, model)
-                    else:
-                        self.logger.debug(f"Could not extract model from /v1/models response for {service_id}")
-                        
                 except Exception as e:
-                    self.logger.debug(f"Failed to parse models from response for {service_id}: {e}")
+                    self.logger.debug(f"Failed to parse models from response: {e}")
                 
                 return True, "running", model
             else:
-                # Connected but got error response - likely still initializing
-                self.logger.debug(f"Service {service_id} on {remote_host}:{remote_port} returned HTTP {status_code}")
+                self.logger.debug(f"Service {service_id} returned HTTP {response.status_code}")
                 return False, "starting", None
                 
         except Exception as e:
-            # Connection failed - service not ready yet
-            self.logger.debug(f"Service {service_id} connection test to {remote_host}:{remote_port} failed: {e}")
+            self.logger.debug(f"Service {service_id} connection test failed: {e}")
             return False, "starting", None
 
+    # ========== InferenceService Abstract Methods ==========
+
+    def get_models(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
+        """Query a running vLLM service for available models."""
+        exists, service_info, error = self._validate_service_exists(service_id)
+        if not exists:
+            error["models"] = []
+            return error
+        
+        is_ready, status, discovered_model = self._check_ready_and_discover_model(service_id, service_info)
+        if not is_ready:
+            return self._error_response(
+                error=f"Service is not ready yet (status: {status})",
+                message=f"The vLLM service is still starting up (status: {status}). Please wait.",
+                service_id=service_id, status=status, models=[]
+            )
+        
+        result = self._make_request(service_id, "/v1/models", timeout=timeout)
+        if not result["success"]:
+            result["models"] = []
+            return result
+        
+        # Parse vLLM response format: {"object": "list", "data": [...]}
+        data = result.get("data", {})
+        models = []
+        candidates = data.get('data', []) or data.get('models', []) or data.get('served_models', [])
+        
+        for item in candidates:
+            if isinstance(item, str):
+                models.append(item)
+            elif isinstance(item, dict):
+                model_id = item.get('id') or item.get('model')
+                if model_id:
+                    models.append(model_id)
+        
+        return self._success_response(
+            models=models,
+            service_id=service_id,
+            endpoint=result.get("endpoint")
+        )
+
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Send a prompt to a running VLLM service or service group.
+        """Send a prompt to a running vLLM service or service group.
         
         For service groups: Uses round-robin load balancing to route to healthy replicas.
         For single services: Routes directly.
         
-        Tries chat endpoint first (for instruction-tuned models).
-        Falls back to completions endpoint if chat template error occurs (for base models).
+        Handles multiple service ID formats:
+        - "sg-12345": Explicit service group ID
+        - "12345": SLURM job ID (will check if sg-12345 exists as a group)
+        - "12345:8001": Replica ID (job_id:port format)
         
-        Optimized: Skips expensive status checks for services that were recently used successfully.
+        Tries chat endpoint first, falls back to completions for base models.
         """
-        # Check if this is a service group
+        # Check if it's already a group ID (sg- prefix)
         if self.service_manager.is_group(service_id):
             return self._prompt_service_group(service_id, prompt, **kwargs)
         
-        # Single service flow (existing logic)
+        # Check if it's a replica ID (contains ':')
+        if ":" in service_id:
+            return self._prompt_single_service(service_id, prompt, **kwargs)
+        
+        # Check if sg-{service_id} exists as a group (user passed job ID without sg- prefix)
+        potential_group_id = f"sg-{service_id}"
+        if self.service_manager.get_group_info(potential_group_id):
+            self.logger.info(f"Mapped service_id {service_id} to group {potential_group_id}")
+            return self._prompt_service_group(potential_group_id, prompt, **kwargs)
+        
+        # Fall back to single service handling
         return self._prompt_single_service(service_id, prompt, **kwargs)
+
+    def rag_prompt(self, service_id: str, prompt: str, qdrant_service, 
+                   qdrant_service_id: str, collection_name: str, 
+                   top_k: int = 3, **kwargs) -> Dict[str, Any]:
+        """Send a RAG-augmented prompt to a vLLM service.
+        
+        This method:
+        1. Searches the Qdrant collection for relevant context using text similarity
+        2. Augments the original prompt with retrieved context
+        3. Sends the augmented prompt to the vLLM service
+        
+        Args:
+            service_id: The vLLM service ID to send the prompt to
+            prompt: The original user prompt/question
+            qdrant_service: The QdrantService instance to use for retrieval
+            qdrant_service_id: The Qdrant service ID to search
+            collection_name: The collection name to search in
+            top_k: Number of context chunks to retrieve (default: 3)
+            **kwargs: Additional parameters for vLLM (max_tokens, temperature, etc.)
+            
+        Returns:
+            Dict with:
+            - On success: {"success": True, "response": "...", "rag_context": [...], ...}
+            - On failure: {"success": False, "error": "...", ...}
+        """
+        self.logger.info(f"RAG prompt for service {service_id}, collection {collection_name}, top_k={top_k}")
+        
+        # Step 1: Retrieve relevant context from Qdrant
+        try:
+            search_result = qdrant_service.search_with_text(
+                service_id=qdrant_service_id,
+                collection_name=collection_name,
+                query_text=prompt,
+                limit=top_k
+            )
+            
+            if not search_result.get("success"):
+                # Qdrant search failed - decide whether to proceed without context or fail
+                self.logger.warning(f"RAG context retrieval failed: {search_result.get('error')}")
+                # Proceed without RAG context (graceful degradation)
+                return self._prompt_without_rag(service_id, prompt, search_result, **kwargs)
+            
+            # Extract context from search results
+            retrieved_contexts = []
+            for result in search_result.get("results", []):
+                payload = result.get("payload", {})
+                # Common payload fields: 'text', 'content', 'chunk', 'document'
+                text = payload.get("text") or payload.get("content") or payload.get("chunk") or payload.get("document")
+                if text:
+                    retrieved_contexts.append({
+                        "text": text,
+                        "score": result.get("score", 0),
+                        "id": result.get("id")
+                    })
+            
+            self.logger.debug(f"Retrieved {len(retrieved_contexts)} context chunks")
+            
+        except Exception as e:
+            self.logger.exception(f"Error during RAG context retrieval: {e}")
+            # Proceed without RAG context (graceful degradation)
+            return self._prompt_without_rag(service_id, prompt, {"error": str(e)}, **kwargs)
+        
+        # Step 2: Format augmented prompt
+        augmented_prompt = self._format_rag_prompt(prompt, retrieved_contexts)
+        self.logger.debug(f"Augmented prompt length: {len(augmented_prompt)} chars")
+        
+        # Step 3: Send augmented prompt to vLLM
+        result = self.prompt(service_id, augmented_prompt, **kwargs)
+        
+        # Add RAG metadata to result
+        result["rag_enabled"] = True
+        result["rag_context"] = retrieved_contexts
+        result["rag_collection"] = collection_name
+        result["original_prompt"] = prompt
+        
+        return result
+
+    def _format_rag_prompt(self, question: str, contexts: List[Dict[str, Any]]) -> str:
+        """Format the RAG-augmented prompt with retrieved context.
+        
+        Uses a simple but effective template that works well with most LLMs.
+        
+        Args:
+            question: The original user question
+            contexts: List of context dicts with 'text' and 'score' fields
+            
+        Returns:
+            Formatted prompt string with context prepended
+        """
+        if not contexts:
+            return question
+        
+        # Build context section
+        context_parts = []
+        for i, ctx in enumerate(contexts, 1):
+            text = ctx.get("text", "").strip()
+            if text:
+                context_parts.append(f"[{i}] {text}")
+        
+        if not context_parts:
+            return question
+        
+        context_section = "\n\n".join(context_parts)
+        
+        # Format the augmented prompt
+        augmented_prompt = f"""Use the following context to answer the question. If the context doesn't contain relevant information, say so and answer based on your knowledge.
+
+Context:
+{context_section}
+
+Question: {question}
+
+Answer:"""
+        
+        return augmented_prompt
+
+    def _prompt_without_rag(self, service_id: str, prompt: str, 
+                            retrieval_error: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """Send prompt without RAG augmentation when retrieval fails.
+        
+        This provides graceful degradation - the prompt still works,
+        just without the context augmentation.
+        """
+        self.logger.info(f"Proceeding without RAG context due to retrieval failure")
+        
+        result = self.prompt(service_id, prompt, **kwargs)
+        
+        # Add metadata about the failed RAG attempt
+        result["rag_enabled"] = False
+        result["rag_context"] = []
+        result["rag_error"] = retrieval_error.get("error", "Unknown retrieval error")
+        result["original_prompt"] = prompt
+        
+        return result
     
     def _prompt_service_group(self, group_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a service group using load balancing with automatic failover.
@@ -374,7 +393,7 @@ class VllmService(InferenceService):
             }
         
         # Get all replicas (regardless of status) - must use flattened list
-        all_replicas = self.service_manager.group_manager.get_all_replicas_flat(group_id)
+        all_replicas = self.service_manager.get_all_replicas_flat(group_id)
         if not all_replicas:
             return {
                 "success": False,
@@ -433,23 +452,38 @@ class VllmService(InferenceService):
         }
     
     def _prompt_single_service(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
-        """Send a prompt to a single VLLM service (not a group).
+        """Send a prompt to a single VLLM service (not a group) or a replica.
         
         Tries chat endpoint first (for instruction-tuned models).
         Falls back to completions endpoint if chat template error occurs (for base models).
         
         Optimized with model caching and combined readiness+discovery check.
+        Handles both standalone services and replicas (replica IDs contain ':').
         """
-        # Try to get service info directly (works for just-created services too)
-        service_info = self.service_manager.get_service(service_id)
-        if not service_info:
-            # Service doesn't exist at all
-            return {
-                "success": False,
-                "error": f"VLLM service {service_id} not found",
-                "message": "The requested vLLM service could not be found. It may not exist or may have been stopped.",
-                "service_id": service_id
-            }
+        # Check if this is a replica ID (format: "job_id:port")
+        is_replica = ":" in service_id
+        
+        if is_replica:
+            # Look up replica info from parent group
+            service_info = self.service_manager.get_replica_info(service_id)
+            if not service_info:
+                return {
+                    "success": False,
+                    "error": f"Replica {service_id} not found",
+                    "message": "The requested replica could not be found in any service group.",
+                    "service_id": service_id
+                }
+        else:
+            # Try to get service info directly (works for just-created services too)
+            service_info = self.service_manager.get_service(service_id)
+            if not service_info:
+                # Service doesn't exist at all
+                return {
+                    "success": False,
+                    "error": f"VLLM service {service_id} not found",
+                    "message": "The requested vLLM service could not be found. It may not exist or may have been stopped.",
+                    "service_id": service_id
+                }
         
         # Check if it's a VLLM service
         if "inference/vllm" not in service_info.get("recipe_name", ""):

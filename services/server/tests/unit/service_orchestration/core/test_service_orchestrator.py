@@ -14,7 +14,66 @@ from unittest.mock import Mock, MagicMock, AsyncMock, patch
 
 import pytest
 
-from service_orchestration.core.service_orchestrator import ServiceOrchestrator, VLLMEndpoint
+from service_orchestration.core.service_orchestrator import ServiceOrchestrator
+from service_orchestration.recipes import (
+    Recipe, InferenceRecipe, VectorDbRecipe, StorageRecipe,
+    RecipeResources, RecipeCategory
+)
+
+
+def create_mock_recipe(
+    name: str = "test-recipe",
+    category: str = "inference",
+    is_replica: bool = False,
+    gpu: int = 1,
+    nodes: int = 1
+) -> Recipe:
+    """Create a mock Recipe object for testing."""
+    resources = RecipeResources(nodes=nodes, cpu=4, memory="16G", gpu=gpu, time_limit=60)
+    
+    if is_replica:
+        return InferenceRecipe(
+            name=name,
+            category=RecipeCategory.INFERENCE,
+            container_def=f"{name}.def",
+            image=f"{name}.sif",
+            resources=resources,
+            environment={"TEST": "1"},
+            gpu_per_replica=1,
+            base_port=8001
+        )
+    
+    if category == "inference":
+        return InferenceRecipe(
+            name=name,
+            category=RecipeCategory.INFERENCE,
+            container_def=f"{name}.def",
+            image=f"{name}.sif",
+            resources=resources,
+            environment={"TEST": "1"},
+            gpu_per_replica=None,
+            base_port=8001
+        )
+    elif category == "vector-db":
+        return VectorDbRecipe(
+            name=name,
+            category=RecipeCategory.VECTOR_DB,
+            container_def=f"{name}.def",
+            image=f"{name}.sif",
+            resources=resources,
+            environment={"TEST": "1"},
+            port=6333
+        )
+    else:
+        return StorageRecipe(
+            name=name,
+            category=RecipeCategory.STORAGE,
+            container_def=f"{name}.def",
+            image=f"{name}.sif",
+            resources=resources,
+            environment={"TEST": "1"},
+            port=9000
+        )
 
 
 @pytest.fixture
@@ -40,13 +99,12 @@ def mock_service_manager():
 
 @pytest.fixture
 def mock_recipe_loader():
-    """Mock recipe loader"""
+    """Mock recipe loader - returns Recipe objects"""
     mock = MagicMock()
-    mock.load.return_value = ("test/test-recipe", {
-        "name": "test-recipe",
-        "resources": {"gpu": 1, "nodes": 1},
-        "environment": {}
-    })
+    default_recipe = create_mock_recipe("test-recipe", "inference", is_replica=False, gpu=1, nodes=1)
+    mock.load.return_value = default_recipe
+    mock.list_all.return_value = [default_recipe]
+    mock.get_recipe_port.return_value = 8001
     return mock
 
 
@@ -62,13 +120,23 @@ def mock_job_builder():
 
 
 @pytest.fixture
-def orchestrator(mock_slurm_client, mock_service_manager, mock_recipe_loader, mock_job_builder):
+def mock_endpoint_resolver():
+    """Mock endpoint resolver"""
+    mock = MagicMock()
+    mock.resolve.return_value = "http://node1:8001"
+    mock.register.return_value = None
+    return mock
+
+
+@pytest.fixture
+def orchestrator(mock_slurm_client, mock_service_manager, mock_recipe_loader, mock_job_builder, mock_endpoint_resolver):
     """Create a ServiceOrchestrator with mocked dependencies"""
     orch = ServiceOrchestrator()
     orch.slurm_client = mock_slurm_client
     orch.service_manager = mock_service_manager
     orch.recipe_loader = mock_recipe_loader
     orch.job_builder = mock_job_builder
+    orch.endpoint_resolver = mock_endpoint_resolver
 
     mock_http = MagicMock()
     mock_http.aclose = AsyncMock()
@@ -118,56 +186,36 @@ class TestServiceOrchestratorCore:
         mock_slurm_client.cancel_job.assert_called_with("12345")
         mock_service_manager.update_service_status.assert_called_with("12345", "cancelled")
 
-    def test_register_service(self, orchestrator, mock_service_manager):
-        """Test registering a service"""
-        with patch("asyncio.create_task") as mock_create_task:
-            result = orchestrator.register_service("12345", "node1", 8001, "gpt2")
+    def test_register_endpoint(self, orchestrator, mock_service_manager, mock_endpoint_resolver):
+        """Test registering a service endpoint"""
+        result = orchestrator.register_endpoint("12345", "node1", 8001, {"model": "gpt2"})
 
-            assert result["status"] == "registered"
-            assert "12345" in orchestrator.endpoints
-            assert orchestrator.endpoints["12345"].url == "http://node1:8001"
-            mock_service_manager.update_service_status.assert_called_with("12345", "running")
-            mock_create_task.assert_called_once()
+        assert result["status"] == "registered"
+        assert "12345" in orchestrator.registered_endpoints
+        assert orchestrator.registered_endpoints["12345"]["url"] == "http://node1:8001"
+        mock_service_manager.update_service_status.assert_called_with("12345", "running")
+        mock_endpoint_resolver.register.assert_called_with("12345", "node1", 8001)
 
-    @pytest.mark.asyncio
-    async def test_forward_completion_success(self, orchestrator):
-        """Test forwarding completion request"""
-        endpoint = VLLMEndpoint("123", "node1", 8001, "gpt2", status="healthy")
-        orchestrator.endpoints["123"] = endpoint
+    def test_unregister_endpoint(self, orchestrator):
+        """Test unregistering a service endpoint"""
+        # First register an endpoint
+        orchestrator.registered_endpoints["12345"] = {
+            "service_id": "12345",
+            "host": "node1",
+            "port": 8001,
+            "url": "http://node1:8001"
+        }
+        
+        result = orchestrator.unregister_endpoint("12345")
+        
+        assert result["status"] == "unregistered"
+        assert "12345" not in orchestrator.registered_endpoints
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"choices": [{"text": "test"}]}
-        orchestrator._http_client.post = AsyncMock(return_value=mock_response)
-
-        result = await orchestrator.forward_completion({"prompt": "Hello"})
-
-        assert "_orchestrator_meta" in result
-        assert result["_orchestrator_meta"]["service_id"] == "123"
-        orchestrator._http_client.post.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_forward_completion_no_endpoints(self, orchestrator):
-        """Test forwarding when no endpoints available"""
-        orchestrator.endpoints = {}
-
-        with pytest.raises(RuntimeError, match="No healthy vLLM services available"):
-            await orchestrator.forward_completion({"prompt": "Hello"})
-
-    def test_load_balancer_round_robin(self, orchestrator):
-        """Test round robin load balancing"""
-        ep1 = VLLMEndpoint("1", "node1", 8001, "gpt2", status="healthy")
-        ep2 = VLLMEndpoint("2", "node2", 8001, "gpt2", status="healthy")
-
-        async def run_test():
-            selected1 = await orchestrator.load_balancer.select_endpoint([ep1, ep2])
-            selected2 = await orchestrator.load_balancer.select_endpoint([ep1, ep2])
-            selected_again = await orchestrator.load_balancer.select_endpoint([ep1, ep2])
-
-            assert selected1 != selected2
-            assert selected_again == selected1
-
-        asyncio.run(run_test())
+    def test_unregister_endpoint_not_found(self, orchestrator):
+        """Test unregistering a non-existent endpoint"""
+        result = orchestrator.unregister_endpoint("nonexistent")
+        
+        assert result["status"] == "not_found"
 
     def test_list_services_refreshes_status(self, orchestrator, mock_service_manager, mock_slurm_client):
         """list_services should refresh non-terminal statuses from SLURM"""
@@ -187,27 +235,31 @@ class TestServiceOrchestratorCore:
         recipe_name = "test-replica-recipe"
         config = {"nodes": 2, "gpu_per_replica": 1}
 
-        mock_recipe_loader.load.return_value = (f"bob/${recipe_name}", {
-            "name": recipe_name,
-            "gpu_per_replica": 1,
-            "resources": {"gpu": 4, "nodes": 2}
-        })
+        # Mock recipe loader to return a replica group Recipe
+        mock_recipe = create_mock_recipe(
+            name=recipe_name,
+            category="inference",
+            is_replica=True,
+            gpu=4,
+            nodes=1
+        )
+        mock_recipe_loader.load.return_value = mock_recipe
         mock_job_builder.build_job.return_value = {
             "script": "#!/bin/bash\necho test",
             "job": {"name": "test-job"}
         }
-        mock_service_manager.group_manager.create_replica_group.return_value = "sg-123"
+        mock_service_manager.create_replica_group.return_value = "sg-123"
         mock_service_manager.get_group_info.return_value = {"id": "sg-123", "replicas": []}
 
         result = orchestrator.start_service(recipe_name, config)
 
         assert result["status"] == "submitted"
         assert result["group_id"] == "sg-123"
-        mock_service_manager.group_manager.create_replica_group.assert_called_once()
+        mock_service_manager.create_replica_group.assert_called_once()
 
     def test_stop_service_group(self, orchestrator, mock_slurm_client, mock_service_manager):
         """Test stopping a service group"""
-        mock_service_manager.group_manager.get_group.return_value = {
+        mock_service_manager.get_group_info.return_value = {
             "node_jobs": [{"job_id": "job1"}, {"job_id": "job2"}]
         }
 
@@ -220,7 +272,7 @@ class TestServiceOrchestratorCore:
 
     def test_stop_service_group_missing(self, orchestrator, mock_service_manager):
         """stop_service_group should return error when group not found"""
-        mock_service_manager.group_manager.get_group.return_value = None
+        mock_service_manager.get_group_info.return_value = None
 
         result = orchestrator.stop_service_group("sg-missing")
 
@@ -228,36 +280,47 @@ class TestServiceOrchestratorCore:
         assert "sg-missing" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_check_endpoint_healthy(self, orchestrator):
-        """Test health check for healthy endpoint"""
-        endpoint = VLLMEndpoint("123", "node1", 8001, "gpt2", status="unknown")
-
+    async def test_check_vllm_health_success(self, orchestrator):
+        """Test VLLM health check for healthy endpoint"""
         mock_response = MagicMock()
         mock_response.status_code = 200
+        # vLLM returns {"object": "list", "data": [...]} for /v1/models
+        mock_response.json.return_value = {"object": "list", "data": [{"id": "model1"}]}
         orchestrator._http_client.get = AsyncMock(return_value=mock_response)
 
-        await orchestrator._check_endpoint(endpoint)
+        result = await orchestrator._check_vllm_health("http://node1:8001")
 
-        assert endpoint.status == "healthy"
-        assert endpoint.last_health_check > 0
+        assert result is True
+        orchestrator._http_client.get.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_check_endpoint_unhealthy(self, orchestrator):
-        """Test health check for unhealthy endpoint"""
-        endpoint = VLLMEndpoint("123", "node1", 8001, "gpt2", status="healthy")
-
+    async def test_check_vllm_health_failure(self, orchestrator):
+        """Test VLLM health check for unhealthy endpoint"""
         mock_response = MagicMock()
         mock_response.status_code = 500
-        orchestrator._http_client.get.return_value = mock_response
+        orchestrator._http_client.get = AsyncMock(return_value=mock_response)
 
-        await orchestrator._check_endpoint(endpoint)
+        result = await orchestrator._check_vllm_health("http://node1:8001")
 
-        assert endpoint.status == "unhealthy"
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_check_qdrant_health_success(self, orchestrator):
+        """Test Qdrant health check for healthy endpoint"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        # Qdrant returns {"result": {"collections": [...]}}
+        mock_response.json.return_value = {"result": {"collections": []}}
+        orchestrator._http_client.get = AsyncMock(return_value=mock_response)
+
+        result = await orchestrator._check_qdrant_health("http://node1:6333")
+
+        assert result is True
 
     def test_get_service_group_status_counts(self, orchestrator, mock_service_manager):
         """Group status summary should aggregate replica states"""
         mock_service_manager.get_group_info.return_value = {"id": "sg-1"}
-        mock_service_manager.group_manager.get_all_replicas_flat.return_value = [
+        mock_service_manager.get_all_replicas_flat.return_value = [
             {"id": "r1", "status": "running"},
             {"id": "r2", "status": "starting"},
             {"id": "r3", "status": "failed"}
@@ -299,22 +362,45 @@ class TestServiceOrchestratorCore:
         orchestrator.metrics["total_requests"] = 100
         orchestrator.metrics["failed_requests"] = 5
 
-        ep = VLLMEndpoint("123", "node1", 8001, "gpt2", status="healthy")
-        ep.total_requests = 50
-        orchestrator.endpoints["123"] = ep
+        # Register an endpoint using the new dict format
+        orchestrator.registered_endpoints["123"] = {
+            "service_id": "123",
+            "host": "node1",
+            "port": 8001,
+            "url": "http://node1:8001",
+            "status": "healthy",
+            "registered_at": 1234567890
+        }
 
         metrics = orchestrator.get_metrics()
 
         assert metrics["global"]["total_requests"] == 100
         assert metrics["global"]["failed_requests"] == 5
-        assert metrics["services"]["123"]["total_requests"] == 50
+        assert "123" in metrics["services"]
+        assert metrics["services"]["123"]["status"] == "healthy"
 
-    def test_configure_load_balancer(self, orchestrator):
-        """Test configuring load balancer strategy"""
-        result = orchestrator.configure_load_balancer("least_loaded")
+    def test_get_service_returns_group_info(self, orchestrator, mock_service_manager):
+        """Test get_service returns group info when service_id is a group"""
+        mock_service_manager.is_group.return_value = True
+        mock_service_manager.get_group_info.return_value = {
+            "id": "sg-123",
+            "replicas": [{"id": "r1"}, {"id": "r2"}]
+        }
+        
+        result = orchestrator.get_service("sg-123")
+        
+        assert result["id"] == "sg-123"
+        assert len(result["replicas"]) == 2
 
-        assert result["status"] == "configured"
-        assert orchestrator.load_balancer.strategy == "least_loaded"
-
-        result = orchestrator.configure_load_balancer("invalid")
-        assert result["status"] == "error"
+    def test_get_service_resolves_endpoint(self, orchestrator, mock_service_manager, mock_endpoint_resolver):
+        """Test get_service resolves endpoint for running service"""
+        mock_service_manager.is_group.return_value = False
+        mock_service_manager.get_service.return_value = {
+            "id": "svc-1",
+            "status": "running"
+        }
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8001"
+        
+        result = orchestrator.get_service("svc-1")
+        
+        assert result["endpoint"] == "http://node1:8001"
