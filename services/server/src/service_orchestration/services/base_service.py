@@ -262,7 +262,7 @@ class BaseService(ABC):
                 timeout=timeout
             )
             
-            if 200 <= response.status_code < 300:
+            if response.ok:
                 self.logger.debug(f"Service {service_id} is ready (HTTP {response.status_code})")
                 return True, "running"
             else:
