@@ -49,7 +49,8 @@ COPY pytest.ini .
 COPY src/ ./src/
 COPY tests/ ./tests/
 
-CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--color=yes"]
+# Run unit tests only (exclude integration tests that require live services)
+CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "--color=yes", "-m", "not integration"]
 
 FROM base AS prod
 

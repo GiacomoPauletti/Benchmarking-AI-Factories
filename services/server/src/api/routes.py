@@ -324,8 +324,22 @@ async def get_service_metrics(service_id: str, orchestrator = Depends(get_orches
     from fastapi.responses import PlainTextResponse
     
     # Route to appropriate service-specific metrics endpoint
+    result = orchestrator.get_service_metrics(service_id)
+    
+    if isinstance(result, dict):
+        if result.get("success"):
+            return PlainTextResponse(
+                content=result.get("metrics", ""),
+                media_type="text/plain; version=0.0.4"
+            )
+        else:
+            # If metrics retrieval failed, return 500 so Prometheus marks target as down
+            error_msg = result.get("error", "Unknown error fetching metrics")
+            raise HTTPException(status_code=500, detail=error_msg)
+            
+    # Fallback for unexpected return types
     return PlainTextResponse(
-        content=orchestrator.get_service_metrics(service_id),
+        content=str(result),
         media_type="text/plain; version=0.0.4"
     )
 
