@@ -48,13 +48,13 @@
           "type": "prometheus",
           "uid": "prom"
         },
-        "definition": "label_values(process_start_time_seconds{status=\"running\"},service_id)",
+        "definition": "label_values(service_status_info{status=~\"running|starting\"},service_id)",
         "label": "Service",
         "name": "service",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(process_start_time_seconds{status=\"running\"},service_id)",
+          "query": "label_values(service_status_info{status=~\"running|starting\"},service_id)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,

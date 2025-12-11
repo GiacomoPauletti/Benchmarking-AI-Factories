@@ -80,7 +80,7 @@
   "targets": [
     {
       "editorMode": "builder",
-      "expr": "irate(process_start_time_seconds{service_id=\"$service\", status=\"running\"}[$__interval])",
+      "expr": "irate(process_start_time_seconds{service_id=\"$service\"}[$__interval])",
       "legendFormat": "Run time",
       "range": true,
       "refId": "A"
@@ -91,7 +91,7 @@
         "uid": "prom"
       },
       "editorMode": "builder",
-      "expr": "irate(process_cpu_seconds_total{service_id=\"$service\", status=\"running\"}[$__interval])",
+      "expr": "irate(process_cpu_seconds_total{service_id=\"$service\"}[$__interval])",
       "hide": false,
       "legendFormat": "Total time",
       "range": true,

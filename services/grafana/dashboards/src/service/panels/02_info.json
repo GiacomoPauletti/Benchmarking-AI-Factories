@@ -112,7 +112,7 @@
       },
       "editorMode": "builder",
       "exemplar": false,
-      "expr": "process_start_time_seconds{service_id=\"$service\"}",
+      "expr": "service_status_info{service_id=\"$service\"}",
       "instant": false,
       "legendFormat": "__auto",
       "range": true,

@@ -24,40 +24,35 @@
       "mappings": [
         {
           "options": {
-            "building": {
-              "color": "light-blue",
-              "index": 1,
-              "text": "Building\u2026"
-            },
-            "cancelled": {
-              "color": "red",
-              "index": 6,
-              "text": "Cancelled"
-            },
-            "completed": {
-              "color": "dark-green",
-              "index": 4,
-              "text": "Completed"
-            },
-            "failed": {
-              "color": "dark-red",
-              "index": 5,
-              "text": "Failed !"
-            },
-            "pending": {
+            "0": {
               "color": "super-light-blue",
               "index": 0,
-              "text": "Pending\u2026"
+              "text": "Pending…"
             },
-            "running": {
+            "1": {
+              "color": "blue",
+              "index": 1,
+              "text": "Starting…"
+            },
+            "2": {
               "color": "green",
-              "index": 3,
+              "index": 2,
               "text": "Running"
             },
-            "starting": {
-              "color": "blue",
-              "index": 2,
-              "text": "Starting\u2026"
+            "3": {
+              "color": "dark-green",
+              "index": 3,
+              "text": "Completed"
+            },
+            "4": {
+              "color": "dark-red",
+              "index": 4,
+              "text": "Failed !"
+            },
+            "5": {
+              "color": "red",
+              "index": 5,
+              "text": "Cancelled"
             }
           },
           "type": "value"
@@ -106,7 +101,7 @@
         "uid": "prom"
       },
       "editorMode": "builder",
-      "expr": "process_start_time_seconds{service_id=\"$service\", instance=\"server:8001\"}",
+      "expr": "service_status_info{service_id=\"$service\", instance=\"server:8001\"}",
       "instant": false,
       "legendFormat": "__auto",
       "range": true,
@@ -118,10 +113,8 @@
     {
       "id": "labelsToFields",
       "options": {
-        "keepLabels": [
-          "status"
-        ],
-        "mode": "columns"
+        "mode": "columns",
+        "valueLabel": "status"
       }
     },
     {
@@ -134,7 +127,7 @@
         "include": {
           "names": [
             "Time",
-            "status"
+            "Value"
           ]
         }
       }
