@@ -146,45 +146,35 @@
           "mappings": [
             {
               "options": {
-                "building": {
-                  "color": "blue",
-                  "index": 3,
-                  "text": "Building\u2026"
-                },
-                "cancelled": {
-                  "color": "yellow",
-                  "index": 6,
-                  "text": "Cancelled"
-                },
-                "completed": {
-                  "color": "dark-green",
-                  "index": 5,
-                  "text": "Completed"
-                },
-                "failed": {
-                  "color": "dark-red",
-                  "index": 7,
-                  "text": "Failed !"
-                },
-                "pending": {
+                "0": {
                   "color": "dark-blue",
-                  "index": 1,
+                  "index": 0,
                   "text": "Pending\u2026"
                 },
-                "running": {
-                  "color": "green",
-                  "index": 4,
-                  "text": "Running"
-                },
-                "starting": {
+                "1": {
                   "color": "super-light-blue",
-                  "index": 2,
+                  "index": 1,
                   "text": "Starting\u2026"
                 },
-                "unknown": {
-                  "color": "#808080",
-                  "index": 0,
-                  "text": "Unknown"
+                "2": {
+                  "color": "green",
+                  "index": 2,
+                  "text": "Running"
+                },
+                "3": {
+                  "color": "dark-green",
+                  "index": 3,
+                  "text": "Completed"
+                },
+                "4": {
+                  "color": "dark-red",
+                  "index": 4,
+                  "text": "Failed !"
+                },
+                "5": {
+                  "color": "yellow",
+                  "index": 5,
+                  "text": "Cancelled"
                 }
               },
               "type": "value"
@@ -232,8 +222,8 @@
             "type": "prometheus",
             "uid": "prom"
           },
-          "editorMode": "builder",
-          "expr": "process_start_time_seconds{instance=\"server:8001\"}",
+          "editorMode": "code",
+          "expr": "service_status_info{instance=\"server:8001\"}",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
@@ -246,10 +236,10 @@
           "id": "labelsToFields",
           "options": {
             "keepLabels": [
-              "status",
               "service_id"
             ],
-            "mode": "columns"
+            "mode": "columns",
+            "valueLabel": "status"
           }
         },
         {
@@ -259,7 +249,7 @@
             "include": {
               "names": [
                 "service_id",
-                "status",
+                "Value",
                 "Time"
               ]
             }
@@ -275,7 +265,7 @@
             "columnField": "service_id",
             "emptyValue": "null",
             "rowField": "Time",
-            "valueField": "status"
+            "valueField": "Value"
           }
         }
       ],
