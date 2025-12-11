@@ -404,6 +404,7 @@ class ServiceOrchestrator:
         """Get Prometheus metrics for a service by auto-detecting service type"""
         import requests
         from urllib.parse import urlparse
+        from datetime import datetime
         
         logger.info(f"Getting metrics for service: {service_id}")
         
@@ -442,6 +443,36 @@ class ServiceOrchestrator:
         
         # Check if service is ready
         if status not in ["running", "RUNNING", "ready"]:
+            # Generate synthetic metrics for pending/starting services
+            if status.lower() in ["pending", "starting"]:
+                # Try to get creation time
+                created_at_str = service.get("created_at")
+                start_timestamp = time.time() # Default to now if not found
+                if created_at_str:
+                    try:
+                        # Parse "2025-12-11T10:00:00" format
+                        dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S")
+                        start_timestamp = dt.timestamp()
+                    except Exception:
+                        pass
+                
+                metric_name = "process_start_time_seconds"
+                metric_value = start_timestamp
+                
+                metrics = [
+                    f'# HELP {metric_name} Start time of the process since unix epoch in seconds.',
+                    f'# TYPE {metric_name} gauge',
+                    f'{metric_name} {metric_value}'
+                ]
+                
+                return {
+                    "success": True,
+                    "metrics": "\n".join(metrics),
+                    "service_id": service_id,
+                    "endpoint": "synthetic",
+                    "metrics_format": "prometheus_text_format"
+                }
+
             return {
                 "success": False,
                 "error": f"Service is not ready yet (status: {status})",

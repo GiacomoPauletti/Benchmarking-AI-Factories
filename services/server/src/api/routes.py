@@ -51,6 +51,9 @@ async def create_service(
     **POST /api/services/start** on the orchestrator service.
     """
     try:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] create_service received: recipe_name={request.recipe_name}, config={request.config}")
         response = orchestrator.start_service(
             recipe_name=request.recipe_name,
             config=request.config or {}
@@ -130,17 +133,21 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
             
             # Only include running services with resolved endpoints
             status = service_details.get("status", "").lower()
-            if status not in ["running", "RUNNING"]:
+            if status not in ["running", "RUNNING", "pending", "PENDING", "starting", "STARTING"]:
                 continue
             
             # Extract endpoint - it's in format "http://host:port"
             endpoint = service_details.get("endpoint")
             if not endpoint:
-                # Skip services without resolved endpoints
-                continue
-            
-            # Strip protocol to get "host:port" format for Prometheus
-            target = endpoint.replace("http://", "").replace("https://", "")
+                # If pending, we might not have an endpoint yet.
+                # Use a placeholder so Prometheus still discovers it.
+                if status in ["pending", "PENDING", "starting", "STARTING"]:
+                     target = f"pending-{service_id}"
+                else:
+                     continue
+            else:
+                # Strip protocol to get "host:port" format for Prometheus
+                target = endpoint.replace("http://", "").replace("https://", "")
             
             targets.append({
                 "targets": [target],
@@ -390,17 +397,16 @@ async def update_service_status(
     
     # Currently only support cancelling services
     if new_status == "cancelled":
-        success = orchestrator.stop_service(service_id)
-        if success:
-            # Update the service status in the service manager
-            orchestrator.service_manager.update_service_status(service_id, "cancelled")
+        try:
+            result = orchestrator.stop_service(service_id)
+            # The orchestrator handles status updates internally
             return {
                 "message": f"Service {service_id} status updated to {new_status}",
                 "service_id": service_id,
                 "status": new_status
             }
-        else:
-            raise HTTPException(status_code=404, detail="Service not found or failed to stop")
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"Service not found or failed to stop: {e}")
     else:
         raise HTTPException(
             status_code=400,

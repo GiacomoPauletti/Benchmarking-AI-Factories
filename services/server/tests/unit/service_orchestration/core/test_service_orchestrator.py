@@ -342,20 +342,39 @@ class TestServiceOrchestratorCore:
 
         assert result is None
 
-    def test_get_service_metrics_not_ready(self, orchestrator, mock_service_manager):
-        """get_service_metrics should report pending services as unavailable"""
+    def test_get_service_metrics_starting(self, orchestrator, mock_service_manager):
+        """get_service_metrics should return synthetic metrics for starting services"""
         mock_service_manager.is_group.return_value = False
         mock_service_manager.get_service.return_value = {
             "id": "svc-1",
             "recipe_name": "inference/vllm-single-node",
-            "status": "starting"
+            "status": "starting",
+            "created_at": "2025-12-11T10:00:00"
         }
         orchestrator.service_manager = mock_service_manager
 
         result = orchestrator.get_service_metrics("svc-1")
 
-        assert result["success"] is False
-        assert "starting" in result["error"] or "starting" in result.get("message", "")
+        assert result["success"] is True
+        assert "process_start_time_seconds" in result["metrics"]
+        assert result["endpoint"] == "synthetic"
+
+    def test_get_service_metrics_pending(self, orchestrator, mock_service_manager):
+        """get_service_metrics should return synthetic metrics for pending services"""
+        mock_service_manager.is_group.return_value = False
+        mock_service_manager.get_service.return_value = {
+            "id": "svc-2",
+            "recipe_name": "inference/vllm-single-node",
+            "status": "pending",
+            "created_at": "2025-12-11T10:00:00"
+        }
+        orchestrator.service_manager = mock_service_manager
+
+        result = orchestrator.get_service_metrics("svc-2")
+
+        assert result["success"] is True
+        assert "process_start_time_seconds" in result["metrics"]
+        assert result["endpoint"] == "synthetic"
 
     def test_get_metrics(self, orchestrator):
         """Test getting aggregated metrics"""
