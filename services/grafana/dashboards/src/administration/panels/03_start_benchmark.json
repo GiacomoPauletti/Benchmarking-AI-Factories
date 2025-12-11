@@ -1,0 +1,228 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 15
+  },
+  "id": 5,
+  "options": {
+    "buttonGroup": {
+      "orientation": "center",
+      "size": "lg"
+    },
+    "confirmModal": {
+      "body": "Please confirm to update changed values",
+      "cancel": "Cancel",
+      "columns": {
+        "include": [
+          "name",
+          "oldValue",
+          "newValue"
+        ],
+        "name": "Label",
+        "newValue": "New Value",
+        "oldValue": "Old Value"
+      },
+      "confirm": "Confirm",
+      "elementDisplayMode": "modified",
+      "title": "Confirm update request"
+    },
+    "elementValueChanged": "",
+    "elements": [
+      {
+        "allowCustomValue": false,
+        "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst statuses = fields?.find(f => f.name === \"status\")?.values;\nif (!ids || !statuses) return [];\nconst runningIds = ids.filter((id, i) => id && statuses[i] === \"running\");\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
+        "id": "service_id",
+        "labelWidth": 15,
+        "options": [],
+        "optionsSource": "Code",
+        "section": "",
+        "title": "Service ID",
+        "tooltip": "",
+        "type": "select",
+        "uid": "aae2ed60-02b9-4a66-968a-5d05376598d7",
+        "unit": "",
+        "value": ""
+      },
+      {
+        "id": "num_clients",
+        "labelWidth": 15,
+        "min": 1,
+        "section": "",
+        "title": "# of clients",
+        "tooltip": "",
+        "type": "number",
+        "uid": "d5701437-b86d-4d94-ae96-fd84ec75b15b",
+        "unit": "",
+        "value": 0
+      },
+      {
+        "id": "requests_per_second",
+        "labelWidth": 15,
+        "min": 1,
+        "section": "",
+        "title": "Req/s",
+        "tooltip": "",
+        "type": "number",
+        "uid": "8d5d6ae7-ff03-4792-a561-769bf7be5324",
+        "unit": "",
+        "value": 0
+      },
+      {
+        "id": "duration_seconds",
+        "labelWidth": 15,
+        "min": 1,
+        "section": "",
+        "title": "Duration",
+        "tooltip": "",
+        "type": "number",
+        "uid": "124316ac-6d60-440d-b228-568b1e4582e0",
+        "unit": "s",
+        "value": 0
+      },
+      {
+        "id": "max_tokens",
+        "labelWidth": 15,
+        "min": 1,
+        "section": "",
+        "title": "Max tokens",
+        "tooltip": "",
+        "type": "number",
+        "uid": "0208340d-283e-4c83-a553-5a43b6403f65",
+        "unit": "",
+        "value": 0
+      },
+      {
+        "id": "temperature",
+        "labelWidth": 15,
+        "max": 1,
+        "min": 0,
+        "section": "",
+        "step": 0.01,
+        "title": "Temperature",
+        "tooltip": "",
+        "type": "slider",
+        "uid": "e0b30291-dac9-49fd-aaaa-941d1841516c",
+        "unit": "",
+        "value": 0
+      },
+      {
+        "allowCustomValue": true,
+        "id": "prompts",
+        "labelWidth": 15,
+        "options": [],
+        "optionsSource": "Custom",
+        "section": "",
+        "title": "Prompts",
+        "tooltip": "",
+        "type": "multiselect",
+        "uid": "5955cdab-3aa2-48c5-8d70-44de2ac82c40",
+        "unit": "",
+        "value": []
+      }
+    ],
+    "initial": {
+      "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_second: 100,\n  duration_seconds: 60,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
+      "contentType": "application/json",
+      "getPayload": "return {}",
+      "highlight": false,
+      "highlightColor": "red",
+      "method": "query",
+      "payload": {},
+      "url": "http://${server}:${port}/api/v1/recipes"
+    },
+    "layout": {
+      "orientation": "horizontal",
+      "padding": 10,
+      "sectionVariant": "default",
+      "variant": "single"
+    },
+    "reset": {
+      "backgroundColor": "purple",
+      "foregroundColor": "yellow",
+      "icon": "process",
+      "text": "Reset",
+      "variant": "hidden"
+    },
+    "resetAction": {
+      "code": "if (context.panel.response) {\n  context.grafana.notifySuccess(['Update', 'Values updated successfully.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Update', 'An error occurred updating values.']);\n}",
+      "confirm": false,
+      "getPayload": "return {}",
+      "mode": "initial",
+      "payload": {}
+    },
+    "saveDefault": {
+      "icon": "save",
+      "text": "Save Default",
+      "variant": "hidden"
+    },
+    "submit": {
+      "backgroundColor": "purple",
+      "foregroundColor": "yellow",
+      "icon": "play",
+      "text": "Start benchmark",
+      "variant": "primary"
+    },
+    "sync": false,
+    "update": {
+      "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
+      "confirm": false,
+      "contentType": "application/json",
+      "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+      "method": "POST",
+      "payload": {},
+      "payloadMode": "all",
+      "url": "http://${server}:${client_port}/api/v1/client-groups"
+    },
+    "updateEnabled": "auto"
+  },
+  "pluginVersion": "6.3.1",
+  "targets": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "editorMode": "builder",
+      "expr": "process_start_time_seconds",
+      "instant": true,
+      "legendFormat": "__auto",
+      "range": false,
+      "refId": "A"
+    }
+  ],
+  "title": "Start benchmark",
+  "transformations": [
+    {
+      "id": "labelsToFields",
+      "options": {
+        "keepLabels": [
+          "service_id",
+          "status"
+        ],
+        "mode": "columns"
+      }
+    },
+    {
+      "id": "filterFieldsByName",
+      "options": {
+        "include": {
+          "names": [
+            "service_id",
+            "status"
+          ]
+        }
+      }
+    }
+  ],
+  "type": "volkovlabs-form-panel"
+}

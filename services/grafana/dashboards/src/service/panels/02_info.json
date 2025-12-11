@@ -1,0 +1,183 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "color": {
+        "fixedColor": "dark-purple",
+        "mode": "shades"
+      },
+      "mappings": [
+        {
+          "options": {
+            "building": {
+              "color": "light-blue",
+              "index": 1,
+              "text": "Building\u2026"
+            },
+            "cancelled": {
+              "color": "red",
+              "index": 6,
+              "text": "Cancelled"
+            },
+            "completed": {
+              "color": "dark-green",
+              "index": 4,
+              "text": "Completed"
+            },
+            "failed": {
+              "color": "dark-red",
+              "index": 5,
+              "text": "Failed !"
+            },
+            "pending": {
+              "color": "super-light-blue",
+              "index": 0,
+              "text": "Pending\u2026"
+            },
+            "running": {
+              "color": "green",
+              "index": 3,
+              "text": "Running"
+            },
+            "starting": {
+              "color": "blue",
+              "index": 2,
+              "text": "Starting\u2026"
+            }
+          },
+          "type": "value"
+        }
+      ],
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "dark-purple",
+            "value": 0
+          }
+        ]
+      }
+    },
+    "overrides": [
+      {
+        "matcher": {
+          "id": "byName",
+          "options": "Start time"
+        },
+        "properties": [
+          {
+            "id": "unit",
+            "value": "dateTimeAsIso"
+          }
+        ]
+      }
+    ]
+  },
+  "gridPos": {
+    "h": 4,
+    "w": 15,
+    "x": 9,
+    "y": 1
+  },
+  "id": 16,
+  "options": {
+    "colorMode": "background_solid",
+    "graphMode": "none",
+    "justifyMode": "auto",
+    "orientation": "auto",
+    "percentChangeColorMode": "standard",
+    "reduceOptions": {
+      "calcs": [
+        "lastNotNull"
+      ],
+      "fields": "/.*/",
+      "values": false
+    },
+    "showPercentChange": false,
+    "text": {
+      "titleSize": 20
+    },
+    "textMode": "value_and_name",
+    "wideLayout": true
+  },
+  "pluginVersion": "12.3.0",
+  "targets": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "editorMode": "builder",
+      "exemplar": false,
+      "expr": "process_start_time_seconds{service_id=\"$service\"}",
+      "instant": false,
+      "legendFormat": "__auto",
+      "range": true,
+      "refId": "A"
+    }
+  ],
+  "title": "Info",
+  "transformations": [
+    {
+      "id": "labelsToFields",
+      "options": {
+        "keepLabels": [
+          "recipe_name"
+        ],
+        "mode": "columns"
+      }
+    },
+    {
+      "id": "merge",
+      "options": {}
+    },
+    {
+      "id": "calculateField",
+      "options": {
+        "alias": "start_time",
+        "binary": {
+          "left": {
+            "matcher": {
+              "id": "byName",
+              "options": "process_start_time_seconds"
+            }
+          },
+          "operator": "*",
+          "right": {
+            "fixed": "1000"
+          }
+        },
+        "mode": "binary",
+        "reduce": {
+          "reducer": "sum"
+        },
+        "unary": {
+          "fieldName": "process_start_time_seconds",
+          "operator": "abs"
+        }
+      }
+    },
+    {
+      "id": "organize",
+      "options": {
+        "excludeByName": {
+          "Time": true,
+          "process_start_time_seconds": true,
+          "recipe_name": false,
+          "start_time": false
+        },
+        "includeByName": {},
+        "indexByName": {},
+        "renameByName": {
+          "process_start_time_seconds": "",
+          "recipe_name": "Recipe name",
+          "start_time": "Start time"
+        }
+      }
+    }
+  ],
+  "type": "stat"
+}
