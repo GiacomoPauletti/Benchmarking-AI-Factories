@@ -1,0 +1,32 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "title": "Inter-Token Latency (ITL)",
+  "type": "timeseries",
+  "id": 103,
+  "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 14
+  },
+  "targets": [
+    {
+      "expr": "rate(vllm:time_per_output_token_seconds_sum{service_id=\"$service\"}[$__interval]) / rate(vllm:time_per_output_token_seconds_count{service_id=\"$service\"}[$__interval])",
+      "legendFormat": "Avg ITL",
+      "refId": "A"
+    },
+    {
+      "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:time_per_output_token_seconds_bucket{service_id=\"$service\"}[$__interval])))",
+      "legendFormat": "P99 ITL",
+      "refId": "B"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "s"
+    }
+  }
+}

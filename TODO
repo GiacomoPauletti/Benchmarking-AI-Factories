@@ -37,7 +37,7 @@ Logs:
 Grafana:
 - I would like that the "Start service" Add model choice possibility to vllm recipe service panel. And time limit
 - Make all replicas (from all nodes) selectable in the services tab. Make it clearer in general
- in the dashboard start service that we are launching replicas.
+ in the dashboard start service that we are launching replicas. Maybe let the user just specify 
+ the number of replicas and we map them to nodes automatically.
 - Fix recipes panel to show more meaningful properties. 
-- See vllm docs and improve metrics shown. 
 - Add benchmark lifecycle to temporal chart and a dedicate tab where metrics are shown.

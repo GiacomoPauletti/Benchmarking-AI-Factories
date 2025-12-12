@@ -8,31 +8,18 @@
       "color": {
         "mode": "thresholds"
       },
-      "custom": {
-        "axisPlacement": "auto",
-        "fillOpacity": 70,
-        "hideFrom": {
-          "legend": false,
-          "tooltip": false,
-          "viz": false
-        },
-        "insertNulls": false,
-        "lineWidth": 0,
-        "spanNulls": 10000
-      },
-      "fieldMinMax": false,
       "mappings": [
         {
           "options": {
             "0": {
               "color": "super-light-blue",
               "index": 0,
-              "text": "Pending…"
+              "text": "Pending..."
             },
             "1": {
               "color": "blue",
               "index": 1,
-              "text": "Starting…"
+              "text": "Starting..."
             },
             "2": {
               "color": "green",
@@ -62,8 +49,8 @@
         "mode": "absolute",
         "steps": [
           {
-            "color": "dark-purple",
-            "value": 0
+            "color": "green",
+            "value": null
           }
         ]
       }
@@ -71,67 +58,42 @@
     "overrides": []
   },
   "gridPos": {
-    "h": 4,
-    "w": 9,
+    "h": 3,
+    "w": 24,
     "x": 0,
-    "y": 1
+    "y": 0
   },
   "id": 1,
   "options": {
-    "alignValue": "left",
-    "legend": {
-      "displayMode": "list",
-      "placement": "bottom",
-      "showLegend": true
+    "colorMode": "background",
+    "graphMode": "none",
+    "justifyMode": "auto",
+    "orientation": "auto",
+    "reduceOptions": {
+      "calcs": [
+        "lastNotNull"
+      ],
+      "fields": "",
+      "values": false
     },
-    "mergeValues": true,
-    "rowHeight": 0.9,
-    "showValue": "auto",
-    "tooltip": {
-      "hideZeros": false,
-      "mode": "single",
-      "sort": "none"
-    }
+    "text": {
+      "titleSize": 10,
+      "valueSize": 14
+    },
+    "textMode": "auto",
+    "wideLayout": true
   },
-  "pluginVersion": "12.3.0",
+  "pluginVersion": "10.0.0",
   "targets": [
     {
       "datasource": {
         "type": "prometheus",
         "uid": "prom"
       },
-      "editorMode": "builder",
       "expr": "service_status_info{service_id=\"$service\", instance=\"server:8001\"}",
-      "instant": false,
-      "legendFormat": "__auto",
-      "range": true,
       "refId": "A"
     }
   ],
   "title": "Status",
-  "transformations": [
-    {
-      "id": "labelsToFields",
-      "options": {
-        "mode": "columns",
-        "valueLabel": "status"
-      }
-    },
-    {
-      "id": "merge",
-      "options": {}
-    },
-    {
-      "id": "filterFieldsByName",
-      "options": {
-        "include": {
-          "names": [
-            "Time",
-            "Value"
-          ]
-        }
-      }
-    }
-  ],
-  "type": "state-timeline"
+  "type": "stat"
 }

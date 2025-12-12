@@ -4,11 +4,10 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 61
+    "y": 5
   },
-  "id": 17,
+  "id": 100,
   "panels": [],
-  "repeat": "replicas",
-  "title": "Logs - $replicas",
+  "title": "vLLM Metrics",
   "type": "row"
 }

@@ -1,0 +1,32 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "title": "Tokens Per Second (TPS)",
+  "type": "timeseries",
+  "id": 104,
+  "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 14
+  },
+  "targets": [
+    {
+      "expr": "rate(vllm:generation_tokens_total{service_id=\"$service\"}[$__interval])",
+      "legendFormat": "Generation TPS",
+      "refId": "A"
+    },
+    {
+      "expr": "rate(vllm:prompt_tokens_total{service_id=\"$service\"}[$__interval])",
+      "legendFormat": "Prompt TPS",
+      "refId": "B"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "tps"
+    }
+  }
+}
