@@ -1,0 +1,32 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "title": "E2E Latency Over Time",
+  "type": "timeseries",
+  "id": 101,
+  "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 6
+  },
+  "targets": [
+    {
+      "expr": "rate(vllm:e2e_request_latency_seconds_sum{service_id=\"$service\"}[$__interval]) / rate(vllm:e2e_request_latency_seconds_count{service_id=\"$service\"}[$__interval])",
+      "legendFormat": "Avg E2E Latency",
+      "refId": "A"
+    },
+    {
+      "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{service_id=\"$service\"}[$__interval])))",
+      "legendFormat": "P99 E2E Latency",
+      "refId": "B"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "s"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "title": "Time To First Token (TTFT)",
+  "type": "timeseries",
+  "id": 102,
+  "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 6
+  },
+  "targets": [
+    {
+      "expr": "rate(vllm:time_to_first_token_seconds_sum{service_id=\"$service\"}[$__interval]) / rate(vllm:time_to_first_token_seconds_count{service_id=\"$service\"}[$__interval])",
+      "legendFormat": "Avg TTFT",
+      "refId": "A"
+    },
+    {
+      "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:time_to_first_token_seconds_bucket{service_id=\"$service\"}[$__interval])))",
+      "legendFormat": "P99 TTFT",
+      "refId": "B"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "s"
+    }
+  }
+}

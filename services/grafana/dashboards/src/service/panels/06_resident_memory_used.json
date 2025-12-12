@@ -62,10 +62,10 @@
     "overrides": []
   },
   "gridPos": {
-    "h": 7,
-    "w": 12,
-    "x": 12,
-    "y": 29
+    "h": 6,
+    "w": 6,
+    "x": 6,
+    "y": 23
   },
   "id": 11,
   "options": {
@@ -85,8 +85,8 @@
   "targets": [
     {
       "editorMode": "builder",
-      "expr": "process_resident_memory_bytes{service_id=\"$service\", status=\"running\"}",
-      "legendFormat": "Virtual memory - {{replica_no}}",
+      "expr": "process_resident_memory_bytes{service_id=\"$service\"}",
+      "legendFormat": "Resident memory - {{replica_no}}",
       "range": true,
       "refId": "A"
     }
