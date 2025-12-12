@@ -414,95 +414,95 @@ class ServiceOrchestrator:
         from urllib.parse import urlparse
         from datetime import datetime
         
-        logger.info(f"Getting metrics for service: {service_id}")
-        
-        # Check if it's a service group
-        if self.service_manager.is_group(service_id):
-            return {
-                "success": False,
-                "error": "Metrics endpoint does not support service groups. Query individual services instead."
-            }
-        
-        # Get service info
-        service = self.service_manager.get_service(service_id)
-        if not service:
-            logger.error(f"Service {service_id} not found")
-            return {
-                "success": False,
-                "error": f"Service {service_id} not found"
-            }
-        
-        # Extract recipe name to determine service type and default port
-        recipe_name = service.get("recipe_name", "").lower()
-        
-        # Determine current status using centralized logic
-        status = self._determine_service_status(service_id, service)
-        
-        logger.info(f"get_service_metrics: service_id={service_id}, status={status}, recipe={recipe_name}")
-        
-        # Determine default port based on service type
-        if "vllm" in recipe_name:
-            default_port = 8001  # DEFAULT_VLLM_PORT
-        elif "qdrant" in recipe_name:
-            default_port = 6333  # DEFAULT_QDRANT_PORT
-        else:
-            logger.warning(f"Metrics not available for service type: {recipe_name}")
-            return {
-                "success": False,
-                "error": f"Metrics not available for service type: {recipe_name}",
-                "status": status
-            }
-        
-        # Check if service is ready
-        if status not in ["running", "RUNNING", "ready"]:
-            # Generate synthetic metrics for pending/starting services
-            if status.lower() in ["pending", "starting"]:
-                # Try to get creation time
-                created_at_str = service.get("created_at")
-                start_timestamp = time.time() # Default to now if not found
-                if created_at_str:
-                    try:
-                        # Parse "2025-12-11T10:00:00" format
-                        dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S")
-                        start_timestamp = dt.timestamp()
-                    except Exception:
-                        pass
-                
-                metric_name = "process_start_time_seconds"
-                metric_value = start_timestamp
-                
-                # Only service_id label now (status is in separate gauge)
-                labels = f'service_id="{service_id}"'
-                
-                # Add status gauge
-                status_gauge = self._generate_status_gauge(service_id, status)
-                
-                metrics = [
-                    status_gauge,
-                    '',
-                    f'# HELP {metric_name} Start time of the process since unix epoch in seconds.',
-                    f'# TYPE {metric_name} gauge',
-                    f'{metric_name}{{{labels}}} {metric_value}'
-                ]
-                
-                return {
-                    "success": True,
-                    "metrics": "\n".join(metrics),
-                    "service_id": service_id,
-                    "endpoint": "synthetic",
-                    "metrics_format": "prometheus_text_format"
-                }
-
-            return {
-                "success": False,
-                "error": f"Service is not ready yet (status: {status})",
-                "message": f"The service is still starting up (status: {status}). Please wait a moment and try again.",
-                "service_id": service_id,
-                "status": status,
-                "metrics": ""
-            }
-        
         try:
+            logger.info(f"Getting metrics for service: {service_id}")
+            
+            # Check if it's a service group
+            if self.service_manager.is_group(service_id):
+                return {
+                    "success": False,
+                    "error": "Metrics endpoint does not support service groups. Query individual services instead."
+                }
+            
+            # Get service info
+            service = self.service_manager.get_service(service_id)
+            if not service:
+                logger.error(f"Service {service_id} not found")
+                return {
+                    "success": False,
+                    "error": f"Service {service_id} not found"
+                }
+            
+            # Extract recipe name to determine service type and default port
+            recipe_name = service.get("recipe_name", "").lower()
+            
+            # Determine current status using centralized logic
+            status = self._determine_service_status(service_id, service)
+            
+            logger.info(f"get_service_metrics: service_id={service_id}, status={status}, recipe={recipe_name}")
+            
+            # Determine default port based on service type
+            if "vllm" in recipe_name:
+                default_port = 8001  # DEFAULT_VLLM_PORT
+            elif "qdrant" in recipe_name:
+                default_port = 6333  # DEFAULT_QDRANT_PORT
+            else:
+                logger.warning(f"Metrics not available for service type: {recipe_name}")
+                return {
+                    "success": False,
+                    "error": f"Metrics not available for service type: {recipe_name}",
+                    "status": status
+                }
+            
+            # Check if service is ready
+            if status not in ["running", "RUNNING", "ready"]:
+                # Generate synthetic metrics for pending/starting services
+                if status.lower() in ["pending", "starting"]:
+                    # Try to get creation time
+                    created_at_str = service.get("created_at")
+                    start_timestamp = time.time() # Default to now if not found
+                    if created_at_str:
+                        try:
+                            # Parse "2025-12-11T10:00:00" format
+                            dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S")
+                            start_timestamp = dt.timestamp()
+                        except Exception:
+                            pass
+                    
+                    metric_name = "process_start_time_seconds"
+                    metric_value = start_timestamp
+                    
+                    # Only service_id label now (status is in separate gauge)
+                    labels = f'service_id="{service_id}"'
+                    
+                    # Add status gauge
+                    status_gauge = self._generate_status_gauge(service_id, status)
+                    
+                    metrics = [
+                        status_gauge,
+                        '',
+                        f'# HELP {metric_name} Start time of the process since unix epoch in seconds.',
+                        f'# TYPE {metric_name} gauge',
+                        f'{metric_name}{{{labels}}} {metric_value}'
+                    ]
+                    
+                    return {
+                        "success": True,
+                        "metrics": "\n".join(metrics),
+                        "service_id": service_id,
+                        "endpoint": "synthetic",
+                        "metrics_format": "prometheus_text_format"
+                    }
+
+                return {
+                    "success": False,
+                    "error": f"Service is not ready yet (status: {status})",
+                    "message": f"The service is still starting up (status: {status}). Please wait a moment and try again.",
+                    "service_id": service_id,
+                    "status": status,
+                    "metrics": ""
+                }
+            
             # Resolve endpoint using endpoint_resolver
             endpoint = self.endpoint_resolver.resolve(service_id, default_port=default_port)
             if not endpoint:
@@ -570,11 +570,11 @@ class ServiceOrchestrator:
             }
             
         except Exception as e:
-            logger.error(f"Failed to get metrics for {service_id}: {e}")
+            logger.error(f"Unexpected error in get_service_metrics for {service_id}: {e}", exc_info=True)
             return {
                 "success": False,
-                "error": f"Error fetching metrics: {str(e)}",
-                "status": status,
+                "error": f"Internal error: {str(e)}",
+                "status": "unknown",
                 "metrics": ""
             }
     
@@ -587,7 +587,7 @@ class ServiceOrchestrator:
         Returns:
             str: Current status (pending, starting, running, completed, failed, cancelled)
         """
-        current_status = service_info.get("status", "unknown")
+        current_status = service_info.get("status") or "unknown"
         recipe_name = service_info.get("recipe_name", "")
         
         # Terminal statuses don't change
@@ -597,7 +597,7 @@ class ServiceOrchestrator:
         # Update from SLURM
         try:
             slurm_status = self.slurm_client.get_job_status(service_id)
-            if slurm_status != current_status:
+            if slurm_status and slurm_status != current_status:
                 self.service_manager.update_service_status(service_id, slurm_status)
                 current_status = slurm_status
         except Exception as e:
@@ -605,7 +605,7 @@ class ServiceOrchestrator:
             return current_status
         
         # If SLURM says running, refine with HTTP health check
-        if current_status.lower() == "running":
+        if current_status and current_status.lower() == "running":
             service_handler = self._get_service_handler(recipe_name)
             if service_handler:
                 try:
@@ -624,7 +624,7 @@ class ServiceOrchestrator:
                     # If health check fails, assume still starting
                     return "starting"
         
-        return current_status
+        return current_status or "unknown"
     
     def _generate_status_gauge(self, service_id: str, status: str) -> str:
         """Generate service_status_info gauge metric.
@@ -644,6 +644,9 @@ class ServiceOrchestrator:
             "cancelled": 5
         }
         
+        if not status:
+            status = "unknown"
+            
         status_value = status_map.get(status.lower(), 0)
         # Only service_id as label - status is VALUE only to prevent series churn
         labels = f'service_id="{service_id}"'
