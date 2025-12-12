@@ -40,7 +40,7 @@
     "elements": [
       {
         "allowCustomValue": false,
-        "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst statuses = fields?.find(f => f.name === \"status\")?.values;\nif (!ids || !statuses) return [];\nconst runningIds = ids.filter((id, i) => id && statuses[i] === \"running\");\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
+        "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst values = fields?.find(f => f.type === \"number\" && f.name !== \"Time\")?.values;\nif (!ids || !values) return [];\nconst runningIds = ids.filter((id, i) => id && values[i] === 2);\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
         "id": "service_id",
         "labelWidth": 15,
         "options": [],
@@ -192,8 +192,8 @@
         "type": "prometheus",
         "uid": "prom"
       },
-      "editorMode": "builder",
-      "expr": "process_start_time_seconds",
+      "editorMode": "code",
+      "expr": "service_status_info",
       "instant": true,
       "legendFormat": "__auto",
       "range": false,
@@ -206,21 +206,9 @@
       "id": "labelsToFields",
       "options": {
         "keepLabels": [
-          "service_id",
-          "status"
+          "service_id"
         ],
         "mode": "columns"
-      }
-    },
-    {
-      "id": "filterFieldsByName",
-      "options": {
-        "include": {
-          "names": [
-            "service_id",
-            "status"
-          ]
-        }
       }
     }
   ],
