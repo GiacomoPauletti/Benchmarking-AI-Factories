@@ -632,7 +632,8 @@ class ServiceOrchestrator:
         This metric uses numeric values for status to ensure series continuity:
         0 = pending, 1 = starting, 2 = running, 3 = completed, 4 = failed, 5 = cancelled
         
-        The status is kept as a label for filtering, but the VALUE changes, not the label.
+        IMPORTANT: Only service_id is a label. Status is the VALUE only.
+        This prevents series churn when status changes.
         """
         status_map = {
             "pending": 0,
@@ -644,7 +645,8 @@ class ServiceOrchestrator:
         }
         
         status_value = status_map.get(status.lower(), 0)
-        labels = f'service_id="{service_id}",status="{status}"'
+        # Only service_id as label - status is VALUE only to prevent series churn
+        labels = f'service_id="{service_id}"'
         
         return '\n'.join([
             '# HELP service_status_info Current status of the service (0=pending, 1=starting, 2=running, 3=completed, 4=failed, 5=cancelled)',

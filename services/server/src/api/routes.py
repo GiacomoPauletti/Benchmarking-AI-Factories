@@ -155,7 +155,6 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
                     "job": f"service-{service_id}",
                     "service_id": service_id,
                     "recipe_name": service["recipe_name"],
-                    "status": service["status"],
                 }
             })
         return targets

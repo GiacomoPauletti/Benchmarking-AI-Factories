@@ -326,7 +326,6 @@ class TestGatewayAPI:
         assert len(targets) == 1
         assert targets[0]["targets"] == ["mel2079:8001"]
         assert targets[0]["labels"]["service_id"] == "svc-1"
-        assert targets[0]["labels"]["status"] == "running"
         mock_proxy.list_services.assert_called_once()
         mock_proxy.get_service.assert_called_once_with("svc-1")
 
@@ -349,7 +348,6 @@ class TestGatewayAPI:
         assert len(targets) == 1
         assert targets[0]["targets"] == ["pending-svc-2"]
         assert targets[0]["labels"]["service_id"] == "svc-2"
-        assert targets[0]["labels"]["status"] == "starting"
 
 
     def test_get_service_group_status(self, mock_proxy, client):
