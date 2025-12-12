@@ -20,6 +20,74 @@
   "graphTooltip": 0,
   "id": 6,
   "links": [],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "localhost",
+          "value": "localhost"
+        },
+        "label": "Server url",
+        "name": "server",
+        "options": [
+          {
+            "selected": true,
+            "text": "localhost",
+            "value": "localhost"
+          }
+        ],
+        "query": "localhost",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "8001",
+          "value": "8001"
+        },
+        "label": "Server port number",
+        "name": "port",
+        "options": [
+          {
+            "selected": true,
+            "text": "8001",
+            "value": "8001"
+          }
+        ],
+        "query": "8001",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "8002",
+          "value": "8002"
+        },
+        "description": "",
+        "label": "Client port number",
+        "name": "client_port",
+        "options": [
+          {
+            "selected": true,
+            "text": "8002",
+            "value": "8002"
+          }
+        ],
+        "query": "8002",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Administration",
+  "uid": "adjv7d8",
+  "version": 1,
   "panels": [
     {
       "datasource": {
@@ -50,12 +118,7 @@
               "type": "fetch"
             }
           ],
-          "color": {
-            "fixedColor": "#7d7d7d",
-            "mode": "fixed"
-          },
           "custom": {
-            "axisPlacement": "auto",
             "fillOpacity": 70,
             "hideFrom": {
               "legend": false,
@@ -66,71 +129,50 @@
             "lineWidth": 0,
             "spanNulls": 60000
           },
-          "fieldMinMax": false,
           "links": [
             {
-              "oneClick": false,
               "targetBlank": true,
               "title": "Details",
-              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}﻿&var-port=﻿${port:queryparam}﻿&var-service=${__field.name}"
+              "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}&var-port=${port:queryparam}&var-service=${__series.name}"
             }
           ],
           "mappings": [
             {
               "options": {
-                "building": {
-                  "color": "blue",
-                  "index": 3,
-                  "text": "Building…"
-                },
-                "cancelled": {
-                  "color": "yellow",
-                  "index": 6,
-                  "text": "Cancelled"
-                },
-                "completed": {
-                  "color": "dark-green",
-                  "index": 5,
-                  "text": "Completed"
-                },
-                "failed": {
-                  "color": "dark-red",
-                  "index": 7,
-                  "text": "Failed !"
-                },
-                "pending": {
+                "0": {
                   "color": "dark-blue",
-                  "index": 1,
-                  "text": "Pending…"
+                  "index": 0,
+                  "text": "Pending\u2026"
                 },
-                "running": {
+                "1": {
+                  "color": "super-light-blue",
+                  "index": 1,
+                  "text": "Starting\u2026"
+                },
+                "2": {
                   "color": "green",
-                  "index": 4,
+                  "index": 2,
                   "text": "Running"
                 },
-                "starting": {
-                  "color": "super-light-blue",
-                  "index": 2,
-                  "text": "Starting…"
+                "3": {
+                  "color": "dark-green",
+                  "index": 3,
+                  "text": "Completed"
                 },
-                "unknown": {
-                  "color": "#808080",
-                  "index": 0,
-                  "text": "Unknown"
+                "4": {
+                  "color": "dark-red",
+                  "index": 4,
+                  "text": "Failed !"
+                },
+                "5": {
+                  "color": "yellow",
+                  "index": 5,
+                  "text": "Cancelled"
                 }
               },
               "type": "value"
             }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          }
+          ]
         },
         "overrides": []
       },
@@ -149,10 +191,9 @@
           "showLegend": true
         },
         "mergeValues": true,
-        "rowHeight": 0.95,
-        "showValue": "auto",
+        "rowHeight": 0.9,
+        "showValue": "always",
         "tooltip": {
-          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
@@ -164,53 +205,16 @@
             "type": "prometheus",
             "uid": "prom"
           },
-          "editorMode": "builder",
-          "expr": "process_start_time_seconds{instance=\"server:8001\"}",
+          "editorMode": "code",
+          "expr": "service_status_info{instance=\"server:8001\"}",
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "{{service_id}}",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Services (click on service to view or cancel it)",
-      "transformations": [
-        {
-          "id": "labelsToFields",
-          "options": {
-            "keepLabels": [
-              "status",
-              "service_id"
-            ],
-            "mode": "columns"
-          }
-        },
-        {
-          "id": "filterFieldsByName",
-          "options": {
-            "byVariable": false,
-            "include": {
-              "names": [
-                "service_id",
-                "status",
-                "Time"
-              ]
-            }
-          }
-        },
-        {
-          "id": "merge",
-          "options": {}
-        },
-        {
-          "id": "groupingToMatrix",
-          "options": {
-            "columnField": "service_id",
-            "emptyValue": "null",
-            "rowField": "Time",
-            "valueField": "status"
-          }
-        }
-      ],
+      "transformations": [],
       "type": "state-timeline"
     },
     {
@@ -672,7 +676,7 @@
         "elements": [
           {
             "allowCustomValue": false,
-            "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst statuses = fields?.find(f => f.name === \"status\")?.values;\nif (!ids || !statuses) return [];\nconst runningIds = ids.filter((id, i) => id && statuses[i] === \"running\");\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
+            "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst values = fields?.find(f => f.type === \"number\" && f.name !== \"Time\")?.values;\nif (!ids || !values) return [];\nconst runningIds = ids.filter((id, i) => id && values[i] === 2);\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
             "id": "service_id",
             "labelWidth": 15,
             "options": [],
@@ -824,8 +828,8 @@
             "type": "prometheus",
             "uid": "prom"
           },
-          "editorMode": "builder",
-          "expr": "process_start_time_seconds",
+          "editorMode": "code",
+          "expr": "service_status_info",
           "instant": true,
           "legendFormat": "__auto",
           "range": false,
@@ -838,93 +842,13 @@
           "id": "labelsToFields",
           "options": {
             "keepLabels": [
-              "service_id",
-              "status"
+              "service_id"
             ],
             "mode": "columns"
-          }
-        },
-        {
-          "id": "filterFieldsByName",
-          "options": {
-            "include": {
-              "names": [
-                "service_id",
-                "status"
-              ]
-            }
           }
         }
       ],
       "type": "volkovlabs-form-panel"
     }
-  ],
-  "preload": false,
-  "schemaVersion": 42,
-  "tags": [],
-  "templating": {
-    "list": [
-      {
-        "current": {
-          "text": "localhost",
-          "value": "localhost"
-        },
-        "label": "Server url",
-        "name": "server",
-        "options": [
-          {
-            "selected": true,
-            "text": "localhost",
-            "value": "localhost"
-          }
-        ],
-        "query": "localhost",
-        "type": "custom"
-      },
-      {
-        "current": {
-          "text": "8001",
-          "value": "8001"
-        },
-        "label": "Server port number",
-        "name": "port",
-        "options": [
-          {
-            "selected": true,
-            "text": "8001",
-            "value": "8001"
-          }
-        ],
-        "query": "8001",
-        "type": "custom"
-      },
-      {
-        "current": {
-          "text": "8002",
-          "value": "8002"
-        },
-        "description": "",
-        "label": "Client port number",
-        "name": "client_port",
-        "options": [
-          {
-            "selected": true,
-            "text": "8002",
-            "value": "8002"
-          }
-        ],
-        "query": "8002",
-        "type": "custom"
-      }
-    ]
-  },
-  "time": {
-    "from": "now-6h",
-    "to": "now"
-  },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Administration",
-  "uid": "adjv7d8",
-  "version": 1
+  ]
 }

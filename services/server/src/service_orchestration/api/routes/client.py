@@ -27,6 +27,6 @@ def create_router(orchestrator):
     @router.get("/health")
     async def health():
         """Health check endpoint"""
-        return {"status": "healthy", "services": len(orchestrator.endpoints)}
+        return {"status": "healthy", "services": len(orchestrator.registered_endpoints)}
     
     return router

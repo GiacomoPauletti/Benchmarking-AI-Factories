@@ -1,0 +1,47 @@
+{
+  "datasource": {
+    "type": "loki",
+    "uid": "P8E80F9AEF21F6940"
+  },
+  "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 12,
+    "w": 24,
+    "x": 0,
+    "y": 53
+  },
+  "id": 18,
+  "options": {
+    "dedupStrategy": "none",
+    "detailsMode": "inline",
+    "enableInfiniteScrolling": false,
+    "enableLogDetails": true,
+    "prettifyLogMessage": false,
+    "showCommonLabels": false,
+    "showControls": true,
+    "showLabels": false,
+    "showTime": false,
+    "sortOrder": "Ascending",
+    "syntaxHighlighting": true,
+    "wrapLogMessage": false
+  },
+  "pluginVersion": "12.3.0",
+  "targets": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "direction": "forward",
+      "editorMode": "code",
+      "expr": "{service_name=\"vllm-log\", filename=~\"/logs/vllm_${service}_replica_0\\\\.log\"} | logfmt | label_format level=detected_level",
+      "queryType": "range",
+      "refId": "A"
+    }
+  ],
+  "title": "Logs",
+  "type": "logs"
+}

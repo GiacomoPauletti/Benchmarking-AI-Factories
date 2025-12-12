@@ -1,0 +1,298 @@
+{
+  "datasource": {
+    "type": "yesoreyeram-infinity-datasource",
+    "uid": "af28rrswju6m8c"
+  },
+  "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 7
+  },
+  "id": 1,
+  "options": {
+    "buttonGroup": {
+      "orientation": "center",
+      "size": "lg"
+    },
+    "confirmModal": {
+      "body": "Please confirm to update changed values",
+      "cancel": "Cancel",
+      "columns": {
+        "include": [
+          "name",
+          "oldValue",
+          "newValue"
+        ],
+        "name": "Label",
+        "newValue": "New Value",
+        "oldValue": "Old Value"
+      },
+      "confirm": "Confirm",
+      "elementDisplayMode": "modified",
+      "title": "Confirm update request"
+    },
+    "elementValueChanged": "const selected = context.panel.elements.find(el => el.id == \"recipe_name\").value\nif (context.panel.data.prevSelected !== selected && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == selected)\n    const parameters = JSON.parse(data.find(s => s.name == \"resources\").values[idx])\n    context.panel.setFormValue({\n      \"recipe_name\": selected,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\")\n    })\n  }\n}\ncontext.panel.data.prevSelected = selected",
+    "elements": [
+      {
+        "allowCustomValue": false,
+        "background": "",
+        "disableIf": "",
+        "getOptions": "return (context.panel.data.initial || []).map(x => ({ label: x.name, value: x.path }));",
+        "id": "recipe_name",
+        "labelBackground": "#FFB357",
+        "labelColor": "",
+        "labelWidth": 15,
+        "options": [
+          {
+            "id": "3",
+            "label": "Bob",
+            "type": "number",
+            "value": 3
+          },
+          {
+            "id": "4",
+            "label": "Anne-Fred",
+            "type": "number",
+            "value": 4
+          }
+        ],
+        "optionsSource": "Query",
+        "queryOptions": {
+          "label": "name",
+          "source": "recipes",
+          "value": "name"
+        },
+        "section": "",
+        "title": "Recipe",
+        "tooltip": "The recipe for the benchmark",
+        "type": "select",
+        "uid": "da901c85-a879-47ab-81e8-1cc175b9a5c3",
+        "unit": "",
+        "value": ""
+      },
+      {
+        "id": "config.nodes",
+        "labelWidth": 15,
+        "max": 4,
+        "min": 1,
+        "section": "",
+        "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+        "step": 1,
+        "title": "# of nodes",
+        "tooltip": "",
+        "type": "slider",
+        "uid": "0ce34aee-a245-43c0-829c-5a3bc752df65",
+        "unit": "",
+        "value": 0
+      },
+      {
+        "id": "config.cpus",
+        "labelWidth": 15,
+        "max": 32,
+        "min": 1,
+        "section": "",
+        "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+        "step": 1,
+        "title": "# of CPUs",
+        "tooltip": "",
+        "type": "slider",
+        "uid": "9aa3ff40-e65e-4482-9001-0bbbf768dc2f",
+        "unit": "",
+        "value": 0
+      },
+      {
+        "id": "config.gpus",
+        "labelWidth": 15,
+        "max": 4,
+        "min": 0,
+        "section": "",
+        "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+        "step": 1,
+        "title": "# of GPUs",
+        "tooltip": "",
+        "type": "slider",
+        "uid": "265e565f-1b41-4926-901b-a247f549e629",
+        "unit": "",
+        "value": 0
+      },
+      {
+        "allowCustomValue": false,
+        "id": "config.memory",
+        "labelWidth": 15,
+        "options": [
+          {
+            "icon": "dashboard",
+            "id": "4G",
+            "label": "4 GB",
+            "type": "string",
+            "value": "4G"
+          },
+          {
+            "icon": "dashboard",
+            "id": "8G",
+            "label": "8 GB",
+            "type": "string",
+            "value": "8G"
+          },
+          {
+            "icon": "dashboard",
+            "id": "16G",
+            "label": "16 GB",
+            "type": "string",
+            "value": "16G"
+          },
+          {
+            "icon": "dashboard",
+            "id": "32G",
+            "label": "32 GB",
+            "type": "string",
+            "value": "32G"
+          },
+          {
+            "icon": "dashboard",
+            "id": "64G",
+            "label": "64 GB",
+            "type": "string",
+            "value": "64G"
+          },
+          {
+            "icon": "dashboard",
+            "id": "128G",
+            "label": "256 GB",
+            "type": "string",
+            "value": "128G"
+          },
+          {
+            "icon": "dashboard",
+            "id": "256G",
+            "label": "256 GB",
+            "type": "string",
+            "value": "256G"
+          },
+          {
+            "icon": "dashboard",
+            "id": "512G",
+            "label": "512 GB",
+            "type": "string",
+            "value": "512G"
+          }
+        ],
+        "optionsSource": "Custom",
+        "section": "",
+        "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\";",
+        "title": "Memory",
+        "tooltip": "",
+        "type": "select",
+        "uid": "59ef387c-be7e-4f4e-88b1-e28133db5aa0",
+        "unit": "",
+        "value": ""
+      }
+    ],
+    "initial": {
+      "code": "context.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n})\ncontext.panel.data.prevSelected = null",
+      "contentType": "application/json",
+      "getPayload": "return {}",
+      "highlight": false,
+      "highlightColor": "red",
+      "method": "query",
+      "payload": {},
+      "url": "http://${server}:${port}/api/v1/recipes"
+    },
+    "layout": {
+      "orientation": "horizontal",
+      "padding": 10,
+      "sectionVariant": "default",
+      "variant": "single"
+    },
+    "reset": {
+      "backgroundColor": "purple",
+      "foregroundColor": "yellow",
+      "icon": "process",
+      "text": "Reset",
+      "variant": "hidden"
+    },
+    "resetAction": {
+      "code": "if (context.panel.response) {\n  context.grafana.notifySuccess(['Update', 'Values updated successfully.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Update', 'An error occurred updating values.']);\n}",
+      "confirm": false,
+      "getPayload": "return {}",
+      "mode": "initial",
+      "payload": {}
+    },
+    "saveDefault": {
+      "icon": "save",
+      "text": "Save Default",
+      "variant": "hidden"
+    },
+    "submit": {
+      "backgroundColor": "purple",
+      "foregroundColor": "yellow",
+      "icon": "play",
+      "text": "Start service",
+      "variant": "primary"
+    },
+    "sync": true,
+    "update": {
+      "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Service started', 'Service has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start service', 'An error occurred starting the service.']);\n}",
+      "confirm": false,
+      "contentType": "application/json",
+      "getPayload": "const payload = { config: { resources: {} } };\ncontext.panel.elements.forEach((element) => {\n  if (element.value === undefined || element.value === null || element.value === '') return;\n  if (element.id === 'recipe_name') {\n    payload.recipe_name = element.value;\n  } else if (element.id === 'config.nodes') {\n    payload.config.nodes = parseInt(element.value) || 1;\n  } else if (element.id === 'config.cpus') {\n    payload.config.resources.cpu = parseInt(element.value) || 1;\n  } else if (element.id === 'config.gpus') {\n    payload.config.resources.gpu = parseInt(element.value) || 0;\n  } else if (element.id === 'config.memory') {\n    payload.config.resources.memory = element.value;\n  }\n});\nconsole.log('Sending payload:', JSON.stringify(payload));\nreturn payload;",
+      "method": "POST",
+      "payload": {},
+      "payloadMode": "custom",
+      "url": "http://${server}:${port}/api/v1/services"
+    },
+    "updateEnabled": "auto"
+  },
+  "pluginVersion": "6.3.1",
+  "targets": [
+    {
+      "columns": [],
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "filters": [],
+      "format": "table",
+      "global_query_id": "",
+      "parser": "jq-backend",
+      "refId": "recipes",
+      "root_selector": "",
+      "source": "url",
+      "summarizeExpression": "",
+      "type": "json",
+      "url": "/api/v1/recipes",
+      "url_options": {
+        "data": "",
+        "method": "GET"
+      }
+    }
+  ],
+  "title": "Start service",
+  "transformations": [
+    {
+      "id": "organize",
+      "options": {
+        "excludeByName": {
+          "base_port": true,
+          "container_def": true,
+          "deployment_config": true,
+          "environment": true,
+          "gpu_per_replica": true,
+          "health_check": true,
+          "image": true,
+          "path": true,
+          "ports": true
+        },
+        "includeByName": {},
+        "indexByName": {},
+        "renameByName": {}
+      }
+    }
+  ],
+  "type": "volkovlabs-form-panel"
+}

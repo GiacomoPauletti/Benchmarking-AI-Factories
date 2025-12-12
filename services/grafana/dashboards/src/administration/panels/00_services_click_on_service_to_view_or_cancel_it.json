@@ -1,0 +1,128 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "actions": [
+        {
+          "confirmation": "Are you sure you want to cancel the service",
+          "fetch": {
+            "body": "{ \"status\": \"cancelled\" }",
+            "headers": [
+              [
+                "Content-Type",
+                "application/json"
+              ]
+            ],
+            "method": "POST",
+            "queryParams": [],
+            "url": "http://${server}:${port}/api/v1/services/${__series.name}/status"
+          },
+          "style": {
+            "backgroundColor": "#F2495C"
+          },
+          "title": "Cancel service",
+          "type": "fetch"
+        }
+      ],
+      "custom": {
+        "fillOpacity": 70,
+        "hideFrom": {
+          "legend": false,
+          "tooltip": false,
+          "viz": false
+        },
+        "insertNulls": false,
+        "lineWidth": 0,
+        "spanNulls": 60000
+      },
+      "links": [
+        {
+          "targetBlank": true,
+          "title": "Details",
+          "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}&var-port=${port:queryparam}&var-service=${__series.name}"
+        }
+      ],
+      "mappings": [
+        {
+          "options": {
+            "0": {
+              "color": "dark-blue",
+              "index": 0,
+              "text": "Pending…"
+            },
+            "1": {
+              "color": "super-light-blue",
+              "index": 1,
+              "text": "Starting…"
+            },
+            "2": {
+              "color": "green",
+              "index": 2,
+              "text": "Running"
+            },
+            "3": {
+              "color": "dark-green",
+              "index": 3,
+              "text": "Completed"
+            },
+            "4": {
+              "color": "dark-red",
+              "index": 4,
+              "text": "Failed !"
+            },
+            "5": {
+              "color": "yellow",
+              "index": 5,
+              "text": "Cancelled"
+            }
+          },
+          "type": "value"
+        }
+      ]
+    },
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 7,
+    "w": 24,
+    "x": 0,
+    "y": 0
+  },
+  "id": 4,
+  "options": {
+    "alignValue": "left",
+    "legend": {
+      "displayMode": "list",
+      "placement": "bottom",
+      "showLegend": true
+    },
+    "mergeValues": true,
+    "rowHeight": 0.9,
+    "showValue": "always",
+    "tooltip": {
+      "mode": "single",
+      "sort": "none"
+    }
+  },
+  "pluginVersion": "12.3.0",
+  "targets": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "editorMode": "code",
+      "expr": "service_status_info{instance=\"server:8001\"}",
+      "instant": false,
+      "legendFormat": "{{service_id}}",
+      "range": true,
+      "refId": "A"
+    }
+  ],
+  "title": "Services (click on service to view or cancel it)",
+  "transformations": [],
+  "type": "state-timeline"
+}

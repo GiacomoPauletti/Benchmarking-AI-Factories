@@ -2,7 +2,6 @@ Server:
     MAIN:
 
     Optional:
-    - VLLMEndpoint, LoadBalancer, register/unregister, forward_completion, and health checking are vllm_service specific. Refactor?
     - Create fastembed functionality in qdrant. Use it for RAGs using HF datasets.
     - Create proper CI pipeline with actions: 
         - build: docker image with python code, etc.. is built. 
@@ -33,3 +32,12 @@ Client:
 
 
 Logs: 
+
+
+Grafana:
+- I would like that the "Start service" Add model choice possibility to vllm recipe service panel. And time limit
+- Make all replicas (from all nodes) selectable in the services tab. Make it clearer in general
+ in the dashboard start service that we are launching replicas.
+- Fix recipes panel to show more meaningful properties. 
+- See vllm docs and improve metrics shown. 
+- Add benchmark lifecycle to temporal chart and a dedicate tab where metrics are shown.

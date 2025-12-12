@@ -97,6 +97,16 @@ class ServiceOrchestrator:
             )
         return self._qdrant_service
     
+    def _get_service_handler(self, recipe_name: str):
+        """Get the appropriate service handler based on recipe name."""
+        recipe_lower = recipe_name.lower()
+        if "vllm" in recipe_lower:
+            return self.vllm_service
+        elif "qdrant" in recipe_lower:
+            return self.qdrant_service
+        # Add more handlers as needed
+        return None
+    
     async def start(self):
         """Start background tasks"""
         self._health_check_task = asyncio.create_task(self._health_check_loop())
@@ -289,13 +299,11 @@ class ServiceOrchestrator:
         # Get all services from ServiceManager
         services = self.service_manager.list_services()
         
-        # Update statuses from SLURM for non-terminal states
+        # Update statuses using centralized logic
         for service in services:
             if service["status"] not in ["completed", "failed", "cancelled"]:
-                current_status = self.slurm_client.get_job_status(service["id"])
-                if current_status != service["status"]:
-                    self.service_manager.update_service_status(service["id"], current_status)
-                    service["status"] = current_status
+                # Use centralized status determination
+                service["status"] = self._determine_service_status(service["id"], service)
         
         return {
             "services": services,
@@ -404,54 +412,97 @@ class ServiceOrchestrator:
         """Get Prometheus metrics for a service by auto-detecting service type"""
         import requests
         from urllib.parse import urlparse
-        
-        logger.info(f"Getting metrics for service: {service_id}")
-        
-        # Check if it's a service group
-        if self.service_manager.is_group(service_id):
-            return {
-                "success": False,
-                "error": "Metrics endpoint does not support service groups. Query individual services instead."
-            }
-        
-        # Get service info
-        service = self.service_manager.get_service(service_id)
-        if not service:
-            logger.error(f"Service {service_id} not found")
-            return {
-                "success": False,
-                "error": f"Service {service_id} not found"
-            }
-        
-        # Extract recipe name to determine service type and default port
-        recipe_name = service.get("recipe_name", "").lower()
-        status = service.get("status", "unknown")
-        
-        # Determine default port based on service type
-        if "vllm" in recipe_name:
-            default_port = 8001  # DEFAULT_VLLM_PORT
-        elif "qdrant" in recipe_name:
-            default_port = 6333  # DEFAULT_QDRANT_PORT
-        else:
-            logger.warning(f"Metrics not available for service type: {recipe_name}")
-            return {
-                "success": False,
-                "error": f"Metrics not available for service type: {recipe_name}",
-                "status": status
-            }
-        
-        # Check if service is ready
-        if status not in ["running", "RUNNING", "ready"]:
-            return {
-                "success": False,
-                "error": f"Service is not ready yet (status: {status})",
-                "message": f"The service is still starting up (status: {status}). Please wait a moment and try again.",
-                "service_id": service_id,
-                "status": status,
-                "metrics": ""
-            }
+        from datetime import datetime
         
         try:
+            logger.info(f"Getting metrics for service: {service_id}")
+            
+            # Check if it's a service group
+            if self.service_manager.is_group(service_id):
+                return {
+                    "success": False,
+                    "error": "Metrics endpoint does not support service groups. Query individual services instead."
+                }
+            
+            # Get service info
+            service = self.service_manager.get_service(service_id)
+            if not service:
+                logger.error(f"Service {service_id} not found")
+                return {
+                    "success": False,
+                    "error": f"Service {service_id} not found"
+                }
+            
+            # Extract recipe name to determine service type and default port
+            recipe_name = service.get("recipe_name", "").lower()
+            
+            # Determine current status using centralized logic
+            status = self._determine_service_status(service_id, service)
+            
+            logger.info(f"get_service_metrics: service_id={service_id}, status={status}, recipe={recipe_name}")
+            
+            # Determine default port based on service type
+            if "vllm" in recipe_name:
+                default_port = 8001  # DEFAULT_VLLM_PORT
+            elif "qdrant" in recipe_name:
+                default_port = 6333  # DEFAULT_QDRANT_PORT
+            else:
+                logger.warning(f"Metrics not available for service type: {recipe_name}")
+                return {
+                    "success": False,
+                    "error": f"Metrics not available for service type: {recipe_name}",
+                    "status": status
+                }
+            
+            # Check if service is ready
+            if status not in ["running", "RUNNING", "ready"]:
+                # Generate synthetic metrics for pending/starting services
+                if status.lower() in ["pending", "starting"]:
+                    # Try to get creation time
+                    created_at_str = service.get("created_at")
+                    start_timestamp = time.time() # Default to now if not found
+                    if created_at_str:
+                        try:
+                            # Parse "2025-12-11T10:00:00" format
+                            dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S")
+                            start_timestamp = dt.timestamp()
+                        except Exception:
+                            pass
+                    
+                    metric_name = "process_start_time_seconds"
+                    metric_value = start_timestamp
+                    
+                    # Only service_id label now (status is in separate gauge)
+                    labels = f'service_id="{service_id}"'
+                    
+                    # Add status gauge
+                    status_gauge = self._generate_status_gauge(service_id, status)
+                    
+                    metrics = [
+                        status_gauge,
+                        '',
+                        f'# HELP {metric_name} Start time of the process since unix epoch in seconds.',
+                        f'# TYPE {metric_name} gauge',
+                        f'{metric_name}{{{labels}}} {metric_value}'
+                    ]
+                    
+                    return {
+                        "success": True,
+                        "metrics": "\n".join(metrics),
+                        "service_id": service_id,
+                        "endpoint": "synthetic",
+                        "metrics_format": "prometheus_text_format"
+                    }
+
+                return {
+                    "success": False,
+                    "error": f"Service is not ready yet (status: {status})",
+                    "message": f"The service is still starting up (status: {status}). Please wait a moment and try again.",
+                    "service_id": service_id,
+                    "status": status,
+                    "metrics": ""
+                }
+            
             # Resolve endpoint using endpoint_resolver
             endpoint = self.endpoint_resolver.resolve(service_id, default_port=default_port)
             if not endpoint:
@@ -503,22 +554,154 @@ class ServiceOrchestrator:
             
             logger.debug(f"Metrics retrieved for {service_id} (size: {len(response.text)} bytes)")
             
+            # Inject service metadata labels into metrics
+            enriched_metrics = self._enrich_metrics_with_labels(
+                response.text,
+                service_id=service_id,
+                status=status
+            )
+            
             return {
                 "success": True,
-                "metrics": response.text,  # Return raw Prometheus text format
+                "metrics": enriched_metrics,  # Return labeled Prometheus text format
                 "service_id": service_id,
                 "endpoint": endpoint,
                 "metrics_format": "prometheus_text_format"
             }
             
         except Exception as e:
-            logger.error(f"Failed to get metrics for {service_id}: {e}")
+            logger.error(f"Unexpected error in get_service_metrics for {service_id}: {e}", exc_info=True)
             return {
                 "success": False,
-                "error": f"Error fetching metrics: {str(e)}",
-                "status": status,
+                "error": f"Internal error: {str(e)}",
+                "status": "unknown",
                 "metrics": ""
             }
+    
+    def _determine_service_status(self, service_id: str, service_info: Dict[str, Any]) -> str:
+        """Centralized method to determine current service status.
+        
+        Checks SLURM status and HTTP health to determine accurate service state.
+        This is the single source of truth for status determination.
+        
+        Returns:
+            str: Current status (pending, starting, running, completed, failed, cancelled)
+        """
+        current_status = service_info.get("status") or "unknown"
+        recipe_name = service_info.get("recipe_name", "")
+        
+        # Terminal statuses don't change
+        if current_status in ["completed", "failed", "cancelled"]:
+            return current_status
+        
+        # Update from SLURM
+        try:
+            slurm_status = self.slurm_client.get_job_status(service_id)
+            if slurm_status and slurm_status != current_status:
+                self.service_manager.update_service_status(service_id, slurm_status)
+                current_status = slurm_status
+        except Exception as e:
+            logger.warning(f"Failed to get SLURM status for {service_id}: {e}")
+            return current_status
+        
+        # If SLURM says running, refine with HTTP health check
+        if current_status and current_status.lower() == "running":
+            service_handler = self._get_service_handler(recipe_name)
+            if service_handler:
+                try:
+                    is_ready, refined_status, _ = service_handler._check_ready_and_discover_model(service_id, service_info)
+                    logger.debug(f"Health check for {service_id}: is_ready={is_ready}, status={refined_status}")
+                    
+                    # Update status based on health check
+                    if not is_ready and refined_status == "starting":
+                        self.service_manager.update_service_status(service_id, "starting")
+                        return "starting"
+                    elif is_ready and refined_status == "running":
+                        self.service_manager.update_service_status(service_id, "running")
+                        return "running"
+                except Exception as e:
+                    logger.warning(f"Health check exception for {service_id}: {e}")
+                    # If health check fails, assume still starting
+                    return "starting"
+        
+        return current_status or "unknown"
+    
+    def _generate_status_gauge(self, service_id: str, status: str) -> str:
+        """Generate service_status_info gauge metric.
+        
+        This metric uses numeric values for status to ensure series continuity:
+        0 = pending, 1 = starting, 2 = running, 3 = completed, 4 = failed, 5 = cancelled
+        
+        IMPORTANT: Only service_id is a label. Status is the VALUE only.
+        This prevents series churn when status changes.
+        """
+        status_map = {
+            "pending": 0,
+            "starting": 1,
+            "running": 2,
+            "completed": 3,
+            "failed": 4,
+            "cancelled": 5
+        }
+        
+        if not status:
+            status = "unknown"
+            
+        status_value = status_map.get(status.lower(), 0)
+        # Only service_id as label - status is VALUE only to prevent series churn
+        labels = f'service_id="{service_id}"'
+        
+        return '\n'.join([
+            '# HELP service_status_info Current status of the service (0=pending, 1=starting, 2=running, 3=completed, 4=failed, 5=cancelled)',
+            '# TYPE service_status_info gauge',
+            f'service_status_info{{{labels}}} {status_value}'
+        ])
+    
+    def _enrich_metrics_with_labels(self, metrics_text: str, service_id: str, status: str) -> str:
+        """Inject service_id label and prepend status gauge metric.
+        
+        Key change: Status is NO LONGER a label on all metrics (prevents series churn).
+        Instead, we:
+        1. Add service_status_info gauge with status as both label AND value
+        2. Add only service_id label to all other metrics for filtering
+        
+        This ensures Grafana can track status changes as VALUE changes, not series changes.
+        """
+        # Generate status gauge metric first
+        status_gauge = self._generate_status_gauge(service_id, status)
+        
+        enriched_lines = []
+        labels_str = f'service_id="{service_id}"'  # Only service_id, no status!
+        
+        for line in metrics_text.split('\n'):
+            # Skip empty lines and comments
+            if not line.strip() or line.startswith('#'):
+                enriched_lines.append(line)
+                continue
+            
+            # Parse metric line: metric_name{existing_labels} value timestamp
+            # We need to inject our labels
+            if '{' in line:
+                # Metric already has labels: metric{label1="val1"} value
+                # Insert our labels: metric{label1="val1",service_id="..."} value
+                metric_name, rest = line.split('{', 1)
+                existing_labels, value_part = rest.split('}', 1)
+                enriched_line = f'{metric_name}{{{existing_labels},{labels_str}}}{value_part}'
+            else:
+                # Metric has no labels: metric_name value timestamp
+                # Add our labels: metric_name{service_id="..."} value
+                parts = line.split(' ', 1)
+                if len(parts) == 2:
+                    metric_name, value_part = parts
+                    enriched_line = f'{metric_name}{{{labels_str}}} {value_part}'
+                else:
+                    # Malformed line, keep as-is
+                    enriched_line = line
+            
+            enriched_lines.append(enriched_line)
+        
+        # Prepend status gauge to all metrics
+        return status_gauge + '\n' + '\n'.join(enriched_lines)
     
     def list_recipes(self) -> List[Dict[str, Any]]:
         """List all available service recipes with simplified API format"""

@@ -96,6 +96,9 @@ services:
     environment:
       - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
       
+      # Server API URL for orchestrator endpoint discovery
+      - SERVER_URL=http://server:8001
+      
       # Application Configuration
       - PYTHONUNBUFFERED=1
     # Load additional service-specific variables

@@ -24,7 +24,7 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 # Configuration
-SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))
+SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "10"))
 REMOTE_BASE_PATH = os.getenv("REMOTE_BASE_PATH", "~/ai-factory-benchmarks")
 DATA_DIR = Path("/app/data")
 LOGS_DIR = DATA_DIR / "logs"

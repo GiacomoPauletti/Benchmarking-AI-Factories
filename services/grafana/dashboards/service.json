@@ -33,6 +33,78 @@
       "url": "/api/plugins/mahendrapaipuri-dashboardreporter-app/resources/report?dashUid=adr8rsf"
     }
   ],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": "vllm-3664613",
+          "value": "3664613"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "definition": "label_values(service_status_info, service_id)",
+        "label": "Service",
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(service_status_info, service_id)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 3,
+        "type": "query"
+      },
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": [
+            "8001",
+            "8002",
+            "8002",
+            "8004"
+          ],
+          "value": [
+            "8001",
+            "8002",
+            "8002",
+            "8004"
+          ]
+        },
+        "definition": "label_values({service_id=\"$service\"},replica_no)",
+        "description": "",
+        "label": "replicas",
+        "multi": true,
+        "name": "replicas",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values({service_id=\"$service\"},replica_no)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 3,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Service",
+  "uid": "adr8rsf",
+  "version": 1,
   "panels": [
     {
       "collapsed": false,
@@ -76,7 +148,7 @@
                 "building": {
                   "color": "light-blue",
                   "index": 1,
-                  "text": "Building…"
+                  "text": "Building\u2026"
                 },
                 "cancelled": {
                   "color": "red",
@@ -96,7 +168,7 @@
                 "pending": {
                   "color": "super-light-blue",
                   "index": 0,
-                  "text": "Pending…"
+                  "text": "Pending\u2026"
                 },
                 "running": {
                   "color": "green",
@@ -106,7 +178,7 @@
                 "starting": {
                   "color": "blue",
                   "index": 2,
-                  "text": "Starting…"
+                  "text": "Starting\u2026"
                 }
               },
               "type": "value"
@@ -208,7 +280,7 @@
                 "building": {
                   "color": "light-blue",
                   "index": 1,
-                  "text": "Building…"
+                  "text": "Building\u2026"
                 },
                 "cancelled": {
                   "color": "red",
@@ -228,7 +300,7 @@
                 "pending": {
                   "color": "super-light-blue",
                   "index": 0,
-                  "text": "Pending…"
+                  "text": "Pending\u2026"
                 },
                 "running": {
                   "color": "green",
@@ -238,7 +310,7 @@
                 "starting": {
                   "color": "blue",
                   "index": 2,
-                  "text": "Starting…"
+                  "text": "Starting\u2026"
                 }
               },
               "type": "value"
@@ -1397,7 +1469,7 @@
           "color": "rgba(255,0,255,0.7)"
         },
         "filterValues": {
-          "le": 1e-9
+          "le": 1e-09
         },
         "legend": {
           "show": true
@@ -1491,77 +1563,5 @@
       "title": "Logs",
       "type": "logs"
     }
-  ],
-  "preload": false,
-  "schemaVersion": 42,
-  "tags": [],
-  "templating": {
-    "list": [
-      {
-        "allowCustomValue": false,
-        "current": {
-          "text": "vllm-3664613",
-          "value": "3664613"
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prom"
-        },
-        "definition": "label_values(process_start_time_seconds{status=\"running\"},service_id)",
-        "label": "Service",
-        "name": "service",
-        "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(process_start_time_seconds{status=\"running\"},service_id)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
-        "refresh": 1,
-        "regex": "",
-        "sort": 3,
-        "type": "query"
-      },
-      {
-        "allowCustomValue": false,
-        "current": {
-          "text": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
-          ],
-          "value": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
-          ]
-        },
-        "definition": "label_values({service_id=\"$service\"},replica_no)",
-        "description": "",
-        "label": "replicas",
-        "multi": true,
-        "name": "replicas",
-        "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values({service_id=\"$service\"},replica_no)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
-        "refresh": 1,
-        "regex": "",
-        "sort": 3,
-        "type": "query"
-      }
-    ]
-  },
-  "time": {
-    "from": "now-3h",
-    "to": "now"
-  },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Service",
-  "uid": "adr8rsf",
-  "version": 1
+  ]
 }

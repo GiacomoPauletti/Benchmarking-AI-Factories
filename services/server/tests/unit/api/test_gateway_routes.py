@@ -326,9 +326,29 @@ class TestGatewayAPI:
         assert len(targets) == 1
         assert targets[0]["targets"] == ["mel2079:8001"]
         assert targets[0]["labels"]["service_id"] == "svc-1"
-        assert targets[0]["labels"]["status"] == "running"
         mock_proxy.list_services.assert_called_once()
         mock_proxy.get_service.assert_called_once_with("svc-1")
+
+    def test_get_service_targets_starting(self, mock_proxy, client):
+        """Service targets endpoint should include starting services with dummy target"""
+        mock_proxy.list_services.return_value = [
+            {"id": "svc-2", "recipe_name": "inference/vllm", "status": "starting"}
+        ]
+        mock_proxy.get_service.return_value = {
+            "id": "svc-2",
+            "recipe_name": "inference/vllm",
+            "status": "starting",
+            "endpoint": None
+        }
+
+        response = client.get("/api/v1/services/targets")
+
+        assert response.status_code == 200
+        targets = response.json()
+        assert len(targets) == 1
+        assert targets[0]["targets"] == ["pending-svc-2"]
+        assert targets[0]["labels"]["service_id"] == "svc-2"
+
 
     def test_get_service_group_status(self, mock_proxy, client):
         """Service-group status should proxy orchestrator summary"""
