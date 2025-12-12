@@ -48,13 +48,13 @@
           "type": "prometheus",
           "uid": "prom"
         },
-        "definition": "label_values(service_status_info{status=~\"running|starting\"},service_id)",
+        "definition": "label_values(service_status_info, service_id)",
         "label": "Service",
         "name": "service",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(service_status_info{status=~\"running|starting\"},service_id)",
+          "query": "label_values(service_status_info, service_id)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
@@ -145,35 +145,40 @@
           "mappings": [
             {
               "options": {
-                "0": {
+                "building": {
+                  "color": "light-blue",
+                  "index": 1,
+                  "text": "Building\u2026"
+                },
+                "cancelled": {
+                  "color": "red",
+                  "index": 6,
+                  "text": "Cancelled"
+                },
+                "completed": {
+                  "color": "dark-green",
+                  "index": 4,
+                  "text": "Completed"
+                },
+                "failed": {
+                  "color": "dark-red",
+                  "index": 5,
+                  "text": "Failed !"
+                },
+                "pending": {
                   "color": "super-light-blue",
                   "index": 0,
                   "text": "Pending\u2026"
                 },
-                "1": {
-                  "color": "blue",
-                  "index": 1,
-                  "text": "Starting\u2026"
-                },
-                "2": {
+                "running": {
                   "color": "green",
-                  "index": 2,
+                  "index": 3,
                   "text": "Running"
                 },
-                "3": {
-                  "color": "dark-green",
-                  "index": 3,
-                  "text": "Completed"
-                },
-                "4": {
-                  "color": "dark-red",
-                  "index": 4,
-                  "text": "Failed !"
-                },
-                "5": {
-                  "color": "red",
-                  "index": 5,
-                  "text": "Cancelled"
+                "starting": {
+                  "color": "blue",
+                  "index": 2,
+                  "text": "Starting\u2026"
                 }
               },
               "type": "value"
@@ -222,7 +227,7 @@
             "uid": "prom"
           },
           "editorMode": "builder",
-          "expr": "service_status_info{service_id=\"$service\", instance=\"server:8001\"}",
+          "expr": "process_start_time_seconds{service_id=\"$service\", instance=\"server:8001\"}",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
@@ -234,8 +239,10 @@
         {
           "id": "labelsToFields",
           "options": {
-            "mode": "columns",
-            "valueLabel": "status"
+            "keepLabels": [
+              "status"
+            ],
+            "mode": "columns"
           }
         },
         {
@@ -248,7 +255,7 @@
             "include": {
               "names": [
                 "Time",
-                "Value"
+                "status"
               ]
             }
           }
@@ -370,7 +377,7 @@
           },
           "editorMode": "builder",
           "exemplar": false,
-          "expr": "service_status_info{service_id=\"$service\"}",
+          "expr": "process_start_time_seconds{service_id=\"$service\"}",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
@@ -807,7 +814,7 @@
       "targets": [
         {
           "editorMode": "builder",
-          "expr": "irate(process_start_time_seconds{service_id=\"$service\"}[$__interval])",
+          "expr": "irate(process_start_time_seconds{service_id=\"$service\", status=\"running\"}[$__interval])",
           "legendFormat": "Run time",
           "range": true,
           "refId": "A"
@@ -818,7 +825,7 @@
             "uid": "prom"
           },
           "editorMode": "builder",
-          "expr": "irate(process_cpu_seconds_total{service_id=\"$service\"}[$__interval])",
+          "expr": "irate(process_cpu_seconds_total{service_id=\"$service\", status=\"running\"}[$__interval])",
           "hide": false,
           "legendFormat": "Total time",
           "range": true,
