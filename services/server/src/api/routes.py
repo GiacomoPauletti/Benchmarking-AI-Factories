@@ -560,6 +560,31 @@ async def list_available_vllm_models():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/vllm/model-options")
+async def get_vllm_model_options():
+    """Get vLLM model options formatted for Grafana dropdown.
+    
+    Returns an array of label/value pairs suitable for use in Grafana Form Panel dropdowns.
+    Each entry contains a human-readable label and the corresponding HuggingFace model ID.
+    
+    **Returns:**
+    ```json
+    [
+      {"label": "GPT-2 (small, for testing)", "value": "gpt2"},
+      {"label": "Llama 2 7B Chat", "value": "meta-llama/Llama-2-7b-chat-hf"},
+      ...
+    ]
+    ```
+    """
+    try:
+        info = get_architecture_info()
+        examples = info.get("examples", {})
+        # Convert examples dict to array of label/value objects
+        return [{"label": label, "value": value} for label, value in examples.items()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/vllm/search-models")
 async def search_vllm_models(
     query: Optional[str] = Query(None, description="Search query (e.g., 'llama', 'mistral', 'qwen')"),
