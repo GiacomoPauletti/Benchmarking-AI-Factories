@@ -56,6 +56,9 @@ class RecipeResponse(BaseModel):
     description: str
     version: str
     path: str
+    resources: Dict[str, Any]
+    parameters: Optional[Dict[str, Any]] = None
+    environment: Optional[Dict[str, str]] = None
 
 
 class HealthResponse(BaseModel):

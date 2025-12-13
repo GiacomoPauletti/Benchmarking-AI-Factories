@@ -255,7 +255,7 @@
           "elementDisplayMode": "modified",
           "title": "Confirm update request"
         },
-        "elementValueChanged": "const selected = context.panel.elements.find(el => el.id == \"recipe_name\").value\nif (context.panel.data.prevSelected !== selected && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == selected)\n    const parameters = JSON.parse(data.find(s => s.name == \"resources\").values[idx])\n    context.panel.setFormValue({\n      \"recipe_name\": selected,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\")\n    })\n  }\n}\ncontext.panel.data.prevSelected = selected",
+        "elementValueChanged": "const selected = context.panel.elements.find(el => el.id == \"recipe_name\").value\nif (context.panel.data.prevSelected !== selected && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == selected)\n    \n    // Safely parse resources\n    let parameters = {};\n    const resourceField = data.find(s => s.name == \"resources\");\n    if (resourceField) {\n      const rawVal = resourceField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          parameters = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse resources JSON\", e);\n        }\n      } else {\n        parameters = rawVal || {};\n      }\n    }\n\n    // Safely parse recipe parameters to find default model\n    let recipeParams = {};\n    const paramsField = data.find(s => s.name == \"parameters\");\n    if (paramsField) {\n      const rawVal = paramsField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          recipeParams = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse parameters JSON\", e);\n        }\n      } else {\n        recipeParams = rawVal || {};\n      }\n    }\n    \n    let defaultModel = \"\";\n    if (recipeParams && recipeParams[\"model\"]) {\n      defaultModel = recipeParams[\"model\"].default || \"\";\n    }\n\n    context.panel.setFormValue({\n      \"recipe_name\": selected,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\"),\n      \"config.time_limit\": parameters[\"time_limit\"] || 15,\n      \"config.model\": defaultModel\n    })\n  }\n}\ncontext.panel.data.prevSelected = selected",
         "elements": [
           {
             "allowCustomValue": false,
@@ -292,6 +292,23 @@
             "type": "select",
             "uid": "da901c85-a879-47ab-81e8-1cc175b9a5c3",
             "unit": "",
+            "value": ""
+          },
+          {
+            "allowCustomValue": true,
+            "id": "config.model",
+            "labelWidth": 15,
+            "optionsSource": "Query",
+            "queryOptions": {
+              "label": "label",
+              "source": "models",
+              "value": "value"
+            },
+            "section": "",
+            "showIf": "const elements = context.panel.elements;\nif (!elements) return false;\nconst recipe = elements.find(el => el.id === 'recipe_name');\nreturn recipe && (recipe.value || '').toLowerCase().includes('vllm');",
+            "title": "Model",
+            "tooltip": "HuggingFace model ID (type custom value if not in list)",
+            "type": "select",
             "value": ""
           },
           {
@@ -410,10 +427,23 @@
             "uid": "59ef387c-be7e-4f4e-88b1-e28133db5aa0",
             "unit": "",
             "value": ""
+          },
+          {
+            "id": "config.time_limit",
+            "labelWidth": 15,
+            "max": 120,
+            "min": 5,
+            "section": "",
+            "showIf": "return context.panel.elements.find(el => el.id == \"recipe_name\").value !== \"\"",
+            "step": 5,
+            "title": "Time limit",
+            "tooltip": "Job time limit in minutes",
+            "type": "slider",
+            "value": 15
           }
         ],
         "initial": {
-          "code": "context.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n})\ncontext.panel.data.prevSelected = null",
+          "code": "context.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n  \"config.time_limit\": 15,\n  \"config.model\": \"\",\n})\ncontext.panel.data.prevSelected = null",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,
@@ -459,7 +489,7 @@
           "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Service started', 'Service has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start service', 'An error occurred starting the service.']);\n}",
           "confirm": false,
           "contentType": "application/json",
-          "getPayload": "const payload = { config: { resources: {} } };\ncontext.panel.elements.forEach((element) => {\n  if (element.value === undefined || element.value === null || element.value === '') return;\n  if (element.id === 'recipe_name') {\n    payload.recipe_name = element.value;\n  } else if (element.id === 'config.nodes') {\n    payload.config.nodes = parseInt(element.value) || 1;\n  } else if (element.id === 'config.cpus') {\n    payload.config.resources.cpu = parseInt(element.value) || 1;\n  } else if (element.id === 'config.gpus') {\n    payload.config.resources.gpu = parseInt(element.value) || 0;\n  } else if (element.id === 'config.memory') {\n    payload.config.resources.memory = element.value;\n  }\n});\nconsole.log('Sending payload:', JSON.stringify(payload));\nreturn payload;",
+          "getPayload": "const payload = { config: { resources: {} } };\ncontext.panel.elements.forEach((element) => {\n  if (element.value === undefined || element.value === null || element.value === '') return;\n  if (element.id === 'recipe_name') {\n    payload.recipe_name = element.value;\n  } else if (element.id === 'config.nodes') {\n    payload.config.nodes = parseInt(element.value) || 1;\n  } else if (element.id === 'config.cpus') {\n    payload.config.resources.cpu = parseInt(element.value) || 1;\n  } else if (element.id === 'config.gpus') {\n    payload.config.resources.gpu = parseInt(element.value) || 0;\n  } else if (element.id === 'config.memory') {\n    payload.config.resources.memory = element.value;\n  } else if (element.id === 'config.model') {\n    payload.config.model = element.value;\n  } else if (element.id === 'config.time_limit') {\n    payload.config.resources.time_limit = parseInt(element.value) || 15;\n  }\n});\nconsole.log('Sending payload:', JSON.stringify(payload));\nreturn payload;",
           "method": "POST",
           "payload": {},
           "payloadMode": "custom",
@@ -485,6 +515,37 @@
           "summarizeExpression": "",
           "type": "json",
           "url": "/api/v1/recipes",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        },
+        {
+          "columns": [
+            {
+              "selector": "label",
+              "text": "label",
+              "type": "string"
+            },
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "string"
+            }
+          ],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "models",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/vllm/model-options",
           "url_options": {
             "data": "",
             "method": "GET"
