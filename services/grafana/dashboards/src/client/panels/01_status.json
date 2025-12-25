@@ -1,0 +1,85 @@
+{
+  "datasource": {
+    "type": "prometheus",
+    "uid": "prom"
+  },
+  "fieldConfig": {
+    "defaults": {
+      "mappings": [
+        {
+          "options": {
+            "0": {
+              "color": "dark-blue",
+              "index": 0,
+              "text": "Pending"
+            },
+            "1": {
+              "color": "super-light-blue",
+              "index": 1,
+              "text": "Starting"
+            },
+            "2": {
+              "color": "green",
+              "index": 2,
+              "text": "Running"
+            },
+            "3": {
+              "color": "dark-green",
+              "index": 3,
+              "text": "Completed"
+            },
+            "4": {
+              "color": "dark-red",
+              "index": 4,
+              "text": "Failed"
+            },
+            "5": {
+              "color": "yellow",
+              "index": 5,
+              "text": "Cancelled"
+            }
+          },
+          "type": "value"
+        }
+      ],
+      "max": 5,
+      "min": 0
+    },
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 4,
+    "w": 24,
+    "x": 0,
+    "y": 0
+  },
+  "id": 1,
+  "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "justifyMode": "auto",
+    "orientation": "auto",
+    "reduceOptions": {
+      "calcs": [
+        "lastNotNull"
+      ],
+      "fields": "",
+      "values": false
+    },
+    "textMode": "auto",
+    "wideLayout": true
+  },
+  "pluginVersion": "10.0.0",
+  "targets": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "expr": "client_group_status_info{group_id=\"$group_id\"}",
+      "refId": "A"
+    }
+  ],
+  "title": "Status",
+  "type": "stat"
+}

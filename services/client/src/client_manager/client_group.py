@@ -32,6 +32,7 @@ class ClientGroup:
         self._ssh_manager = SSHManager()
         self._status = ClientGroupStatus.PENDING
         self._job_id = None  # SLURM job ID
+        self._last_slurm_state = "PENDING"
         
         # Get signal file path for polling
         import os
@@ -53,6 +54,34 @@ class ClientGroup:
         except Exception as e:
             self._logger.error(f"Failed to dispatch SLURM job for client group {group_id}: {e}")
             raise
+
+    def get_status_code(self) -> int:
+        """
+        Return the status code compatible with service_status_info.
+        0: Pending
+        1: Starting (not used here yet)
+        2: Running
+        3: Completed
+        4: Failed
+        5: Cancelled
+        """
+        # Ensure status is up to date
+        self.get_status()
+        
+        state = self._last_slurm_state
+        if state in ['PENDING', 'CONFIGURING', 'RESIZING']:
+            return 0
+        elif state in ['RUNNING', 'COMPLETING']:
+            return 2
+        elif state == 'COMPLETED':
+            return 3
+        elif state in ['FAILED', 'NODE_FAIL', 'TIMEOUT', 'PREEMPTED', 'BOOT_FAIL', 'DEADLINE', 'OUT_OF_MEMORY']:
+            return 4
+        elif state in ['CANCELLED', 'REVOKED']:
+            return 5
+        else:
+            # Default to pending or unknown
+            return 0
 
     def get_dispatcher(self) -> SlurmClientDispatcher:
         """Get the SLURM dispatcher for this group"""
@@ -84,6 +113,7 @@ class ClientGroup:
                 
                 if success and stdout:
                     state = stdout.strip().upper()
+                    self._last_slurm_state = state
                     # SLURM states: PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, etc.
                     if state in ['RUNNING', 'COMPLETING']:
                         self._status = ClientGroupStatus.RUNNING

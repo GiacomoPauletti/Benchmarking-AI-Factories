@@ -14,6 +14,12 @@ scrape_configs:
     static_configs:
       - targets: ["loki:3100"]
 
+  # Scrape Client Service metrics
+  - job_name: "client_service"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["client:8002"]
+
   # Scrape application metrics
   #- job_name: "application"
   #  metrics_path: "/api/metrics"  # TODO: server metrics endpoint

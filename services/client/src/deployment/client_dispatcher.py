@@ -159,14 +159,14 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         # - qos, time_limit, account, environment, current_working_directory
         job_config = {
             'account': self._account,
-            'qos': 'short', 
+            'qos': 'default', 
             'time_limit': {
                 'number': time_limit,
                 'set': True
             },
             'name': f'ai-factory-loadgen-{group_id}',
             'partition': 'cpu',
-            'nodes': '1',
+            'nodes': 1,
             'tasks': 1,
             'cpus_per_task': 2,  # Async I/O workload only needs 2 CPUs regardless of client count
             'current_working_directory': self._remote_logs_dir,

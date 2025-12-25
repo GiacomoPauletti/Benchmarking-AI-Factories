@@ -168,6 +168,11 @@ class ClientManager:
                 return None
             return group.get_info()
 
+    def get_all_groups(self) -> List[ClientGroup]:
+        """Return a list of all client group objects."""
+        with self._lock:
+            return list(self._client_groups.values())
+
     def run_client_group(self, group_id: int, timeout: float = 5.0) -> List[Dict[str, Any]]:
         """
         Forward a POST /run request to the registered client process of the group.

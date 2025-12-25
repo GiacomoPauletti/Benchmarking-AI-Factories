@@ -211,9 +211,21 @@
           "legendFormat": "{{service_id}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "editorMode": "code",
+          "expr": "client_group_status_info",
+          "instant": false,
+          "legendFormat": "Benchmark {{group_id}}",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "Services (click on service to view or cancel it)",
+      "title": "Services & Benchmarks (click to view or cancel)",
       "transformations": [],
       "type": "state-timeline"
     },
