@@ -976,6 +976,7 @@ class ServiceOrchestrator:
         replica_id = replica["id"]
         job_id = replica["job_id"]
         port = replica["port"]
+        replica_node_index = replica.get("node_index")
         
         try:
             # First check if the SLURM job is running
@@ -991,7 +992,10 @@ class ServiceOrchestrator:
             
             nodes = job_details["nodes"]
             if isinstance(nodes, list) and nodes:
-                node = str(nodes[0]).strip()
+                if isinstance(replica_node_index, int) and 0 <= replica_node_index < len(nodes):
+                    node = str(nodes[replica_node_index]).strip()
+                else:
+                    node = str(nodes[0]).strip()
             else:
                 node = str(nodes).strip()
             
@@ -1015,7 +1019,7 @@ class ServiceOrchestrator:
                 self.service_manager.update_replica_status(replica_id, "ready")
                 
                 # Update node info in the group if not set
-                self.service_manager.update_node_info(group_id, job_id, node)
+                self.service_manager.update_node_info(group_id, job_id, node, node_index=replica_node_index)
                 
                 # Register replica as an endpoint so it can be used for data plane operations
                 group_info = self.service_manager.get_group_info(group_id)

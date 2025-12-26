@@ -80,6 +80,41 @@ class TestServiceManagerReplicaHandling:
         assert replicas[0]["id"] == "12345:8001"
         assert replicas[0]["port"] == 8001
 
+    def test_add_replica_separates_node_jobs_by_node_index(self, service_manager):
+        """Same job_id across nodes should still create separate node_jobs."""
+        group_id = service_manager.create_replica_group(
+            recipe_name="inference/vllm-multi-node",
+            num_nodes=2,
+            replicas_per_node=1,
+            total_replicas=2
+        )
+
+        service_manager.add_replica(
+            group_id=group_id,
+            job_id="12345",
+            node_index=0,
+            replica_index=0,
+            port=8001,
+            gpu_id=0
+        )
+        service_manager.add_replica(
+            group_id=group_id,
+            job_id="12345",
+            node_index=1,
+            replica_index=1,
+            port=8002,
+            gpu_id=0
+        )
+
+        group_info = service_manager.get_group_info(group_id)
+        assert group_info is not None
+        node_jobs = group_info.get("node_jobs", [])
+        assert len(node_jobs) == 2
+        assert {nj.get("node_index") for nj in node_jobs} == {0, 1}
+
+        replicas = service_manager.get_all_replicas_flat(group_id)
+        assert {r.get("node_index") for r in replicas} == {0, 1}
+
     def test_get_replica_info_returns_replica_with_recipe_name(self, service_manager):
         """Test that get_replica_info returns replica info with parent group's recipe_name."""
         group_id = service_manager.create_replica_group(
@@ -152,6 +187,41 @@ class TestServiceManagerReplicaHandling:
         replica_info = service_manager.get_replica_info("12345:8001")
         assert replica_info is not None
         assert replica_info["node"] == "compute-node-001"
+
+    def test_update_node_info_can_target_node_index(self, service_manager):
+        """update_node_info(node_index=...) should set per-node hostnames."""
+        group_id = service_manager.create_replica_group(
+            recipe_name="inference/vllm-multi-node",
+            num_nodes=2,
+            replicas_per_node=1,
+            total_replicas=2
+        )
+
+        service_manager.add_replica(
+            group_id=group_id,
+            job_id="12345",
+            node_index=0,
+            replica_index=0,
+            port=8001,
+            gpu_id=0
+        )
+        service_manager.add_replica(
+            group_id=group_id,
+            job_id="12345",
+            node_index=1,
+            replica_index=1,
+            port=8002,
+            gpu_id=0
+        )
+
+        service_manager.update_node_info(group_id, "12345", "compute-node-000", node_index=0)
+        service_manager.update_node_info(group_id, "12345", "compute-node-001", node_index=1)
+
+        r0 = service_manager.get_replica_info("12345:8001")
+        r1 = service_manager.get_replica_info("12345:8002")
+        assert r0 is not None and r1 is not None
+        assert r0.get("node") == "compute-node-000"
+        assert r1.get("node") == "compute-node-001"
 
     def test_get_group_for_replica(self, service_manager):
         """Test that get_group_for_replica correctly maps replica to group."""

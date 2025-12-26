@@ -224,8 +224,11 @@ class ServiceManager:
             if group.get("type") != "replica_group":
                 raise ValueError(f"Group {group_id} is not a replica group")
             
-            # Find or create node_job entry
-            node_job = next((nj for nj in group["node_jobs"] if nj["job_id"] == job_id), None)
+            # Find or create node_job entry (multi-node groups may share a single job_id)
+            node_job = next(
+                (nj for nj in group["node_jobs"] if nj.get("job_id") == job_id and nj.get("node_index") == node_index),
+                None,
+            )
             if not node_job:
                 node_job = {"job_id": job_id, "node_index": node_index, "node": None, "replicas": []}
                 group["node_jobs"].append(node_job)
@@ -234,6 +237,7 @@ class ServiceManager:
             replica_info = {
                 "id": replica_id,
                 "job_id": job_id,
+                "node_index": node_index,
                 "replica_index": replica_index,
                 "port": port,
                 "gpu_id": gpu_id,
@@ -291,6 +295,7 @@ class ServiceManager:
                             **replica,
                             "group_id": group_id,
                             "recipe_name": group.get("recipe_name", "unknown"),
+                            "node_index": node_job.get("node_index"),
                             "node": node_job.get("node")
                         }
             return None
@@ -319,7 +324,7 @@ class ServiceManager:
                         self._update_group_status(group_id)
                         return
     
-    def update_node_info(self, group_id: str, job_id: str, node: str) -> None:
+    def update_node_info(self, group_id: str, job_id: str, node: str, node_index: Optional[int] = None) -> None:
         """Update the node hostname for a job in a group."""
         with self._instance_lock:
             group = self._groups.get(group_id)
@@ -327,7 +332,13 @@ class ServiceManager:
                 return
             
             for node_job in group.get("node_jobs", []):
-                if node_job["job_id"] == job_id and not node_job.get("node"):
+                if node_job.get("job_id") != job_id:
+                    continue
+
+                if node_index is not None and node_job.get("node_index") != node_index:
+                    continue
+
+                if not node_job.get("node"):
                     node_job["node"] = node
                     self.logger.debug(f"Updated node info for job {job_id} in group {group_id}: {node}")
                     return

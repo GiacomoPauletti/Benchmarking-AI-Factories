@@ -12,6 +12,92 @@ from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
+
+def _split_top_level_csv(value: str) -> List[str]:
+    """Split a SLURM hostlist string on commas, ignoring commas inside brackets."""
+    parts: List[str] = []
+    buf: List[str] = []
+    depth = 0
+    for ch in value:
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth = max(0, depth - 1)
+        if ch == ',' and depth == 0:
+            part = ''.join(buf).strip()
+            if part:
+                parts.append(part)
+            buf = []
+            continue
+        buf.append(ch)
+    tail = ''.join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _expand_slurm_hostlist(value: str) -> List[str]:
+    """Expand SLURM hostlist syntax into a list of hostnames.
+
+    Examples:
+      - "mel2074" -> ["mel2074"]
+      - "mel2074,mel2075" -> ["mel2074", "mel2075"]
+      - "mel[2074-2075]" -> ["mel2074", "mel2075"]
+      - "mel[0001-0003]" -> ["mel0001", "mel0002", "mel0003"]
+      - "mel[2074-2075],mel2080" -> ["mel2074", "mel2075", "mel2080"]
+    """
+    value = (value or "").strip()
+    if not value:
+        return []
+
+    def expand_token(token: str) -> List[str]:
+        token = token.strip()
+        if not token:
+            return []
+
+        if '[' not in token:
+            return [token]
+
+        # Expand the first bracket expression, then recurse (supports multiple bracket groups).
+        start = token.find('[')
+        end = token.find(']', start + 1)
+        if end == -1:
+            return [token]  # malformed; return as-is
+
+        prefix = token[:start]
+        inside = token[start + 1:end]
+        suffix = token[end + 1:]
+
+        expanded: List[str] = []
+        for part in inside.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            if '-' in part:
+                a, b = part.split('-', 1)
+                a = a.strip()
+                b = b.strip()
+                if not a or not b:
+                    continue
+                width = max(len(a), len(b))
+                try:
+                    start_num = int(a)
+                    end_num = int(b)
+                except ValueError:
+                    continue
+                step = 1 if end_num >= start_num else -1
+                for n in range(start_num, end_num + step, step):
+                    expanded.extend(expand_token(f"{prefix}{n:0{width}d}{suffix}"))
+            else:
+                expanded.extend(expand_token(f"{prefix}{part}{suffix}"))
+
+        return expanded
+
+    results: List[str] = []
+    for tok in _split_top_level_csv(value):
+        results.extend(expand_token(tok))
+    return [r for r in results if r]
+
 class SlurmClient:
     """
     Client for interacting with SLURM REST API via SOCKS5 proxy.
@@ -146,19 +232,13 @@ class SlurmClient:
                         node_str = job['nodes']
                         # Could be a string like "mel2074" or "mel[2074-2076]"
                         if isinstance(node_str, str):
-                            # Simple case: single node or comma-separated
-                            if '[' not in node_str:
-                                nodes = [n.strip() for n in node_str.split(',')]
-                            else:
-                                # Range expansion would go here, for now just take first node
-                                # Format: "mel[2074-2076]" -> extract "mel2074"
-                                import re
-                                match = re.match(r'([a-zA-Z]+)\[(\d+)', node_str)
-                                if match:
-                                    prefix, first_num = match.groups()
-                                    nodes = [f"{prefix}{first_num}"]
+                            nodes = _expand_slurm_hostlist(node_str)
                         elif isinstance(node_str, list):
-                            nodes = node_str
+                            expanded_nodes: List[str] = []
+                            for item in node_str:
+                                if isinstance(item, str):
+                                    expanded_nodes.extend(_expand_slurm_hostlist(item))
+                            nodes = expanded_nodes
                     
                     # Fallback: try node_list field
                     if not nodes and 'node_list' in job:
