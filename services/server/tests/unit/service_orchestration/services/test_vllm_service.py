@@ -349,3 +349,33 @@ class TestVllmServiceUnit:
         assert "error" in result
         # The error message is standardized to "Connection failed" by _make_request
         assert "Connection" in result["error"]
+
+    @patch('service_orchestration.services.inference.vllm_service.requests.get')
+    def test_check_ready_replica_forces_http_check(self, mock_requests_get, vllm_service, mock_deployer):
+        service_id = "12345:8001"
+        vllm_service._resolve_endpoint_parts = Mock(return_value=("node01", 8001))
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": [{"id": "gpt2"}]}
+        mock_requests_get.return_value = mock_response
+
+        is_ready, status, model = vllm_service._check_ready_and_discover_model(service_id, {"status": "starting"})
+
+        assert is_ready is True
+        assert status == "running"
+        assert model == "gpt2"
+        mock_deployer.get_job_status.assert_not_called()
+        mock_requests_get.assert_called_once_with("http://node01:8001/v1/models", timeout=8)
+
+    @patch('service_orchestration.services.inference.vllm_service.requests.get')
+    def test_check_ready_pending_service_skips_http(self, mock_requests_get, vllm_service, mock_deployer):
+        mock_deployer.get_job_status.return_value = "pending"
+
+        is_ready, status, model = vllm_service._check_ready_and_discover_model("12345", {"status": "pending"})
+
+        assert is_ready is False
+        assert status == "pending"
+        assert model is None
+        mock_requests_get.assert_not_called()
+        mock_deployer.get_job_status.assert_called_once_with("12345")

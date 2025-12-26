@@ -124,16 +124,28 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
             services_list = services_response
         
         for service in services_list:
-            service_id = service["id"]
+            discovered_id = service["id"]
             
             # Get full service details to resolve endpoint
-            service_details = orchestrator.get_service(service_id)
+            service_details = orchestrator.get_service(discovered_id)
             if not service_details:
                 continue
             
-            # Only include running services with resolved endpoints
-            status = service_details.get("status", "").lower()
-            if status not in ["running", "RUNNING", "pending", "PENDING", "starting", "STARTING"]:
+            # Include services early so the dashboard shows them immediately.
+            # We keep terminal states too so they remain visible for a while.
+            status = (service_details.get("status") or "").lower()
+            allowed_statuses = {
+                "submitted",
+                "pending",
+                "building",
+                "starting",
+                "running",
+                "completed",
+                "failed",
+                "cancelled",
+                "unknown",
+            }
+            if status not in allowed_statuses:
                 continue
             
             # Extract endpoint - it's in format "http://host:port"
@@ -141,20 +153,36 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
             if not endpoint:
                 # If pending, we might not have an endpoint yet.
                 # Use a placeholder so Prometheus still discovers it.
-                if status in ["pending", "PENDING", "starting", "STARTING"]:
-                     target = f"pending-{service_id}"
+                if status in ["submitted", "pending", "building", "starting", "unknown"]:
+                    target = f"pending-{discovered_id}"
                 else:
-                     continue
+                    continue
             else:
                 # Strip protocol to get "host:port" format for Prometheus
                 target = endpoint.replace("http://", "").replace("https://", "")
+
+            # Replica/service-group labeling:
+            # - Prometheus needs the raw identifier for __metrics_path__ substitution.
+            # - Grafana needs stable grouping across all nodes of a replica group.
+            # We add:
+            #   group_id: replica group's id (or fallback to node job id for single services)
+            #   replica_id: the raw identifier used for scraping (e.g. "<job>:<port>"), unique across nodes
+            #   node_job_id: the SLURM job id portion (useful for legends)
+            replica_id = discovered_id
+            node_job_id = discovered_id.split(":", 1)[0] if ":" in discovered_id else discovered_id
+            group_id = service_details.get("group_id") or service_details.get("id")
+            if not group_id or not isinstance(group_id, str) or not group_id.strip():
+                group_id = node_job_id
             
             targets.append({
                 "targets": [target],
                 "labels": {
-                    "job": f"service-{service_id}",
-                    "service_id": service_id,
+                    "job": f"service-{discovered_id}",
+                    "service_id": discovered_id,
                     "recipe_name": service["recipe_name"],
+                    "group_id": group_id,
+                    "replica_id": replica_id,
+                    "node_job_id": node_job_id,
                 }
             })
         return targets
@@ -410,9 +438,31 @@ async def update_service_status(
     
     # Currently only support cancelling services
     if new_status == "cancelled":
+        # If the ID refers to a service group, cancel the whole group.
         try:
-            result = orchestrator.stop_service(service_id)
-            # The orchestrator handles status updates internally
+            group_info = orchestrator.get_service_group(service_id)
+        except Exception:
+            group_info = None
+
+        if group_info:
+            try:
+                result = orchestrator.update_service_group_status(service_id, new_status)
+                if not result or not result.get("success", True):
+                    # Some orchestrators return {success: false, error: ...}
+                    raise HTTPException(status_code=500, detail=result.get("error", "Failed to cancel service group"))
+                return {
+                    "message": f"Service group {service_id} status updated to {new_status}",
+                    "service_id": service_id,
+                    "status": new_status
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=404, detail=f"Service group not found or failed to cancel: {e}")
+
+        # Otherwise, cancel a single service.
+        try:
+            orchestrator.stop_service(service_id)
             return {
                 "message": f"Service {service_id} status updated to {new_status}",
                 "service_id": service_id,

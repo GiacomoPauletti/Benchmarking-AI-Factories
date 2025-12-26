@@ -52,8 +52,8 @@
   },
   "gridPos": {
     "h": 16,
-    "w": 16,
-    "x": 8,
+    "w": 14,
+    "x": 10,
     "y": 7
   },
   "id": 3,
@@ -94,16 +94,40 @@
   "title": "Recipes",
   "transformations": [
     {
+      "id": "filterByValue",
+      "options": {
+        "conditions": [
+          {
+            "fieldName": "path",
+            "operator": "!~",
+            "value": "(?i)(minio|postgres)"
+          },
+          {
+            "fieldName": "name",
+            "operator": "!~",
+            "value": "(?i)(minio|postgres)"
+          }
+        ],
+        "match": "all"
+      }
+    },
+    {
       "id": "organize",
       "options": {
         "excludeByName": {},
-        "includeByName": {},
+        "includeByName": {
+          "name": true,
+          "version": true,
+          "path": true,
+          "category": true,
+          "description": true
+        },
         "indexByName": {
-          "category": 3,
-          "description": 4,
           "name": 0,
+          "version": 1,
           "path": 2,
-          "version": 1
+          "category": 3,
+          "description": 4
         },
         "renameByName": {
           "category": "Category",

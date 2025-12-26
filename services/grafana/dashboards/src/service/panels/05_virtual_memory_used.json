@@ -86,7 +86,7 @@
     {
       "editorMode": "builder",
       "expr": "process_virtual_memory_bytes{service_id=\"$service\"}",
-      "legendFormat": "Virtual memory - {{replica_no}}",
+      "legendFormat": "Virtual memory - {{replica_id}}",
       "range": true,
       "refId": "A"
     }

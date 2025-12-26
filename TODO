@@ -39,5 +39,9 @@ Grafana:
 - Make all replicas (from all nodes) selectable in the services tab. Make it clearer in general
  in the dashboard start service that we are launching replicas. Maybe let the user just specify 
  the number of replicas and we map them to nodes automatically.
-- Fix recipes panel to show more meaningful properties. 
 - Add benchmark lifecycle to temporal chart and a dedicate tab where metrics are shown.
+- Make orchestrator launch/stop possible directly from grafana in a dedicated panel. Grey out buttons when orchestrator is down.
+- HFauth.
+
+Overall:
+- Make everything production-ready (release tag), update docs, host them on github (make it public). 

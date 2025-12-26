@@ -206,7 +206,7 @@
             "uid": "prom"
           },
           "editorMode": "code",
-          "expr": "service_status_info{instance=\"server:8001\"}",
+          "expr": "max by (service_id) (service_status_info{instance=\"server:8001\"} == 5) or max by (service_id) (service_status_info{instance=\"server:8001\"} == 4) or min by (service_id) (service_status_info{instance=\"server:8001\"})",
           "instant": false,
           "legendFormat": "{{service_id}}",
           "range": true,
@@ -240,7 +240,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 10,
         "x": 0,
         "y": 7
       },
@@ -642,8 +642,8 @@
       },
       "gridPos": {
         "h": 16,
-        "w": 16,
-        "x": 8,
+        "w": 14,
+        "x": 10,
         "y": 7
       },
       "id": 3,
@@ -684,16 +684,40 @@
       "title": "Recipes",
       "transformations": [
         {
+          "id": "filterByValue",
+          "options": {
+            "conditions": [
+              {
+                "fieldName": "path",
+                "operator": "!~",
+                "value": "(?i)(minio|postgres)"
+              },
+              {
+                "fieldName": "name",
+                "operator": "!~",
+                "value": "(?i)(minio|postgres)"
+              }
+            ],
+            "match": "all"
+          }
+        },
+        {
           "id": "organize",
           "options": {
             "excludeByName": {},
-            "includeByName": {},
+            "includeByName": {
+              "name": true,
+              "version": true,
+              "path": true,
+              "category": true,
+              "description": true
+            },
             "indexByName": {
-              "category": 3,
-              "description": 4,
               "name": 0,
+              "version": 1,
               "path": 2,
-              "version": 1
+              "category": 3,
+              "description": 4
             },
             "renameByName": {
               "category": "Category",
@@ -718,7 +742,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 10,
         "x": 0,
         "y": 15
       },

@@ -66,19 +66,17 @@
         "allowCustomValue": false,
         "current": {
           "text": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "3664613:8001",
+            "3664613:8002",
+            "3664613:8004"
           ],
           "value": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "3664613:8001",
+            "3664613:8002",
+            "3664613:8004"
           ]
         },
-        "definition": "label_values({service_id=\"$service\"},replica_no)",
+        "definition": "label_values({service_id=\"$service\"},replica_id)",
         "description": "",
         "label": "replicas",
         "multi": true,
@@ -86,7 +84,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values({service_id=\"$service\"},replica_no)",
+          "query": "label_values({service_id=\"$service\"},replica_id)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
@@ -126,8 +124,16 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": 60000
           },
           "mappings": [
             {
@@ -165,58 +171,49 @@
               },
               "type": "value"
             }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
+          ]
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 24,
         "x": 0,
         "y": 0
       },
       "id": 1,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "text": {
-          "titleSize": 10,
-          "valueSize": 14
-        },
-        "textMode": "auto",
-        "wideLayout": true
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "always",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "12.3.0",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prom"
           },
+          "editorMode": "code",
           "expr": "service_status_info{service_id=\"$service\", instance=\"server:8001\"}",
+          "instant": false,
+          "legendFormat": "{{replica_id}}",
+          "range": true,
           "refId": "A"
         }
       ],
       "title": "Status",
-      "type": "stat"
+      "type": "state-timeline"
     },
     {
       "datasource": {
@@ -400,7 +397,7 @@
         {
           "editorMode": "builder",
           "expr": "process_virtual_memory_bytes{service_id=\"$service\"}",
-          "legendFormat": "Virtual memory - {{replica_no}}",
+          "legendFormat": "Virtual memory - {{replica_id}}",
           "range": true,
           "refId": "A"
         }
@@ -496,7 +493,7 @@
         {
           "editorMode": "builder",
           "expr": "process_resident_memory_bytes{service_id=\"$service\"}",
-          "legendFormat": "Resident memory - {{replica_no}}",
+          "legendFormat": "Resident memory - {{replica_id}}",
           "range": true,
           "refId": "A"
         }

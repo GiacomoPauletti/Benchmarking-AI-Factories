@@ -37,7 +37,9 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
         
         # Read configuration - prefer config overrides, then recipe values
         model = config.get("model", recipe.environment.get("VLLM_MODEL", "Qwen/Qwen2.5-0.5B-Instruct"))
-        max_len = config.get("max_model_len", 4096)
+        # Only set max_model_len if explicitly provided; gpt2 and similar models derive smaller limits
+        max_len = config.get("max_model_len") or recipe.environment.get("VLLM_MAX_MODEL_LEN") or ""
+        max_len_flag = "--max-model-len $VLLM_MAX_MODEL_LEN \\\"" if max_len else ""
         gpu_mem = config.get("gpu_memory_utilization", 0.9)
         
         # Get replica group configuration from resources and recipe
@@ -57,7 +59,7 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
         script = f"""
 echo "=== Starting vLLM replica group ({total_replicas} total replicas, {replicas_per_node} per node across {num_nodes} nodes) ==="
 export VLLM_MODEL={model}
-export VLLM_MAX_MODEL_LEN={max_len}
+{f"export VLLM_MAX_MODEL_LEN={max_len}" if max_len else "# VLLM_MAX_MODEL_LEN not set (use model default)"}
 export VLLM_GPU_MEMORY_UTILIZATION={gpu_mem}
 
 # Setup HuggingFace cache on shared filesystem
@@ -113,7 +115,7 @@ srun --nodes=1 --ntasks=1 --relative={node_idx} --exact --gpus-per-task={gpu_per
             --host 0.0.0.0 \\
             --port {port} \\
             --tensor-parallel-size {tensor_parallel} \\
-            --max-model-len $VLLM_MAX_MODEL_LEN \\
+            {max_len_flag}
             --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
     " > {paths.log_dir}/vllm_${{SLURM_JOB_ID}}_replica_{replica_index}.log 2>&1 &
 

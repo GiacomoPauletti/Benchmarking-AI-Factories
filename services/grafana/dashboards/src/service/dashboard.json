@@ -66,19 +66,17 @@
         "allowCustomValue": false,
         "current": {
           "text": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "3664613:8001",
+            "3664613:8002",
+            "3664613:8004"
           ],
           "value": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "3664613:8001",
+            "3664613:8002",
+            "3664613:8004"
           ]
         },
-        "definition": "label_values({service_id=\"$service\"},replica_no)",
+        "definition": "label_values({service_id=\"$service\"},replica_id)",
         "description": "",
         "label": "replicas",
         "multi": true,
@@ -86,7 +84,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values({service_id=\"$service\"},replica_no)",
+          "query": "label_values({service_id=\"$service\"},replica_id)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,

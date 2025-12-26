@@ -132,6 +132,7 @@ class TestGatewayAPI:
         """Test cancelling a service via POST status update"""
         mock_proxy.stop_service.return_value = True
         mock_proxy.service_manager.update_service_status.return_value = True
+        mock_proxy.get_service_group.return_value = None
         
         response = client.post(
             "/api/v1/services/test-123/status",
@@ -142,6 +143,23 @@ class TestGatewayAPI:
         assert data["service_id"] == "test-123"
         assert data["status"] == "cancelled"
         mock_proxy.stop_service.assert_called_once_with("test-123")
+
+    def test_update_service_status_cancelled_group(self, mock_proxy, client):
+        """Cancelling a service group via POST /services/{id}/status should cancel the whole group."""
+        mock_proxy.get_service_group.return_value = {"id": "sg-1"}
+        mock_proxy.update_service_group_status.return_value = {"success": True}
+
+        response = client.post(
+            "/api/v1/services/sg-1/status",
+            json={"status": "cancelled"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["service_id"] == "sg-1"
+        assert data["status"] == "cancelled"
+        mock_proxy.update_service_group_status.assert_called_once_with("sg-1", "cancelled")
+        mock_proxy.stop_service.assert_not_called()
     
     def test_update_service_status_invalid(self, mock_proxy, client):
         """Test invalid status value returns 400"""
@@ -326,6 +344,9 @@ class TestGatewayAPI:
         assert len(targets) == 1
         assert targets[0]["targets"] == ["mel2079:8001"]
         assert targets[0]["labels"]["service_id"] == "svc-1"
+        assert targets[0]["labels"]["group_id"] == "svc-1"
+        assert targets[0]["labels"]["replica_id"] == "svc-1"
+        assert targets[0]["labels"]["node_job_id"] == "svc-1"
         mock_proxy.list_services.assert_called_once()
         mock_proxy.get_service.assert_called_once_with("svc-1")
 
@@ -348,6 +369,9 @@ class TestGatewayAPI:
         assert len(targets) == 1
         assert targets[0]["targets"] == ["pending-svc-2"]
         assert targets[0]["labels"]["service_id"] == "svc-2"
+        assert targets[0]["labels"]["group_id"] == "svc-2"
+        assert targets[0]["labels"]["replica_id"] == "svc-2"
+        assert targets[0]["labels"]["node_job_id"] == "svc-2"
 
 
     def test_get_service_group_status(self, mock_proxy, client):

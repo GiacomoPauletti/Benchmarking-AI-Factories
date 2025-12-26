@@ -115,7 +115,7 @@
         "uid": "prom"
       },
       "editorMode": "code",
-      "expr": "service_status_info{instance=\"server:8001\"}",
+      "expr": "max by (service_id) (service_status_info{instance=\"server:8001\"} == 5) or max by (service_id) (service_status_info{instance=\"server:8001\"} == 4) or min by (service_id) (service_status_info{instance=\"server:8001\"})",
       "instant": false,
       "legendFormat": "{{service_id}}",
       "range": true,

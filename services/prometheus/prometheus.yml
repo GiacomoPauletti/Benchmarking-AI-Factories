@@ -33,18 +33,42 @@ scrape_configs:
     scrape_interval: 5s
     # Transform the discovered targets from <service> to host:port and the corresponding URL
     relabel_configs:
+      # Preserve the discovered identifier (job or job:port) for uniqueness.
+      - source_labels: [service_id]
+        regex:  '(.*)'
+        replacement: '$1'
+        target_label: replica_id
+
       - source_labels: [service_id]
         regex:  '(.*)'
         replacement: '/api/v1/services/$1/metrics'
         target_label: __metrics_path__
-      - source_labels: [service_id]
-        regex:  '(.*):(.*)'
-        replacement: '$2'
-        target_label: replica_no
+
+      # Group services by replica group id when available (multi-node).
+      - source_labels: [group_id]
+        regex:  '(.+)'
+        replacement: '$1'
+        target_label: service_id
+
+      # Fallback: if service_id is still in the form "job_id:port", normalize to just job_id.
+      # This prevents the main dashboard from showing one bar per replica when group_id is absent.
       - source_labels: [service_id]
         regex:  '(.*):(.*)'
         replacement: '$1'
         target_label: service_id
+
+      # If replica_id is in the form "job_id:port", extract port as replica_no.
+      - source_labels: [replica_id]
+        regex:  '(.*):(.*)'
+        replacement: '$2'
+        target_label: replica_no
+
+      # If replica_id is in the form "job_id:port", extract job id for legends/debug.
+      - source_labels: [replica_id]
+        regex:  '(.*):(.*)'
+        replacement: '$1'
+        target_label: node_job_id
+
       - source_labels: [__address__]
         regex:  '.*'
         replacement: 'server:8001'

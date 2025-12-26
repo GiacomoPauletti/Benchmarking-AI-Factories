@@ -116,10 +116,12 @@ class VllmService(InferenceService):
         This optimized method combines readiness checking with model discovery
         to eliminate redundant HTTP requests, reducing latency by ~2 seconds.
         """
-        # For composite replica IDs, skip SLURM check
+        # For composite replica IDs (job_id:port), always force HTTP readiness check
+        force_http_check = False
         if ":" in service_id:
             self.logger.debug(f"Checking replica {service_id} via direct HTTP test")
-            basic_status = "running"
+            basic_status = "starting"
+            force_http_check = True
         else:
             try:
                 basic_status = self.deployer.get_job_status(service_id).lower()
@@ -127,7 +129,7 @@ class VllmService(InferenceService):
                 self.logger.warning(f"Failed to get status for service {service_id}: {e}")
                 basic_status = service_info.get("status", "unknown").lower()
         
-        if basic_status != "running":
+        if basic_status != "running" and not force_http_check:
             is_ready = basic_status not in ["pending", "building", "starting"]
             return is_ready, basic_status, None
         
