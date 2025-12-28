@@ -181,24 +181,27 @@ async def create_client_group(
     
     # Import ClientGroup to create it directly and get job ID
     from client_manager.client_group import ClientGroup
+
+    account = client_manager._account or os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776")
     
     try:
         # Create ClientGroup - it dispatches SLURM job and gets job_id
         client_group = ClientGroup(
             group_id=0,  # Temporary, will be replaced by job_id
             load_config=load_config,
-            account=client_manager._account,
+            account=account,
             use_container=client_manager._use_container
         )
         
         # Get the SLURM job ID and use it as the group_id
         job_id = client_group.get_job_id()
-        if job_id:
-            group_id = int(job_id)
-        else:
-            # Fallback to timestamp if no job ID (shouldn't happen)
-            group_id = int(time.time() * 1000) % 1000000
-            logger.warning(f"No SLURM job ID returned, using timestamp-based ID: {group_id}")
+        if not job_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="SLURM job submission failed (no job_id returned)"
+            )
+
+        group_id = int(job_id)
         
         # Update the group's internal ID to match
         client_group._group_id = group_id
@@ -220,6 +223,13 @@ async def create_client_group(
         
     except HTTPException:
         raise
+    except RuntimeError as e:
+        # Dispatch/submission failures should be treated as upstream dependency errors.
+        logger.error(f"Client group creation failed due to upstream runtime error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(e)
+        )
     except Exception as e:
         logger.error(f"Failed to create client group: {e}")
         raise HTTPException(

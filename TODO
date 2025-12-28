@@ -35,12 +35,12 @@ Logs:
 
 
 Grafana:
-- I would like that the "Start service" Add model choice possibility to vllm recipe service panel. And time limit
-- Make all replicas (from all nodes) selectable in the services tab. Make it clearer in general
- in the dashboard start service that we are launching replicas. Maybe let the user just specify 
- the number of replicas and we map them to nodes automatically.
-- Add benchmark lifecycle to temporal chart and a dedicate tab where metrics are shown.
+- "Service" should appear like "Benchmark" in the Service and Benchmark panel.
+- I don't want any status to appear after "running" in the Service and Benchmark panel. Not even bars.
 - Make orchestrator launch/stop possible directly from grafana in a dedicated panel. Grey out buttons when orchestrator is down.
+- Let the user just specify the number of replicas and we map them to nodes automatically.
+- Make controls stricter - single node vllm fixes nodes to 1, etc..
+- Add GPU metrics.
 - HFauth.
 
 Overall:

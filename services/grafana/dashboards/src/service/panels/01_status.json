@@ -47,7 +47,7 @@
             "5": {
               "color": "red",
               "index": 5,
-              "text": "Cancelled"
+              "text": ""
             }
           },
           "type": "value"
@@ -57,7 +57,7 @@
     "overrides": []
   },
   "gridPos": {
-    "h": 4,
+    "h": 6,
     "w": 24,
     "x": 0,
     "y": 0
@@ -71,7 +71,7 @@
       "showLegend": true
     },
     "mergeValues": true,
-    "rowHeight": 0.9,
+    "rowHeight": 1.2,
     "showValue": "always",
     "tooltip": {
       "mode": "single",
@@ -86,7 +86,7 @@
         "uid": "prom"
       },
       "editorMode": "code",
-      "expr": "service_status_info{service_id=\"$service\", instance=\"server:8001\"}",
+      "expr": "service_status_info{service_id=\"$service\"}",
       "instant": false,
       "legendFormat": "{{replica_id}}",
       "range": true,

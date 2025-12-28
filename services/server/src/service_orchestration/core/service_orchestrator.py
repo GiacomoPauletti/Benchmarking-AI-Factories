@@ -224,7 +224,7 @@ class ServiceOrchestrator:
                     replica_index=replica_idx,
                     port=port,
                     gpu_id=gpu_idx,
-                    status="starting"  # Will become "ready" when health check succeeds
+                    status="pending"  # Pending until SLURM job RUNNING, then starting, then ready
                 )
                 replica_idx += 1
         
@@ -417,11 +417,106 @@ class ServiceOrchestrator:
         try:
             logger.info(f"Getting metrics for service: {service_id}")
             
-            # Check if it's a service group
+            # Service group metrics: aggregate metrics from all replicas.
+            # Prometheus should scrape the group_id, and we return metrics for all replicas
+            # labeled with both service_id (the group) and replica_id.
             if self.service_manager.is_group(service_id):
+                group = self.service_manager.get_group_info(service_id)
+                if not group:
+                    return {"success": False, "error": f"Service group {service_id} not found"}
+
+                group_status = (group.get("status") or "unknown").lower()
+                replicas = self.service_manager.get_all_replicas_flat(service_id)
+                recipe_name = group.get("recipe_name", "").lower()
+                
+                all_metrics = []
+                
+                # 1. Add group-level synthetic metrics (no replica_id)
+                created_at_str = group.get("created_at")
+                start_timestamp = time.time()
+                if created_at_str:
+                    try:
+                        dt = datetime.fromisoformat(created_at_str)
+                        start_timestamp = dt.timestamp()
+                    except Exception:
+                        pass
+
+                all_metrics.append(self._generate_status_gauge(service_id, group_status, replica_id="aggregate"))
+                all_metrics.append(f'process_start_time_seconds{{service_id="{service_id}",replica_id="aggregate"}} {start_timestamp}')
+                all_metrics.append("")
+
+                # 2. Fetch and aggregate metrics from each replica
+                replica_timeout = max(1, timeout // len(replicas)) if replicas else timeout
+                
+                for replica in replicas:
+                    replica_id = replica["id"]
+                    
+                    # Ensure recipe_name is present for _determine_service_status
+                    if "recipe_name" not in replica:
+                        replica["recipe_name"] = recipe_name
+                        
+                    # Update status dynamically using the centralized logic
+                    replica_status = self._determine_service_status(replica_id, replica)
+                    
+                    # Explicitly update replica status in the manager
+                    self.service_manager.update_replica_status(replica_id, replica_status)
+                    
+                    # Determine default port based on service type
+                    if "vllm" in recipe_name:
+                        replica_port = 8001
+                    elif "qdrant" in recipe_name:
+                        replica_port = 6333
+                    else:
+                        replica_port = 8001
+                    
+                    # Resolve endpoint for this replica
+                    endpoint = self.endpoint_resolver.resolve(replica_id, default_port=replica_port)
+                    
+                    if not endpoint or replica_status.lower() in ["pending", "starting"]:
+                        # Generate synthetic metrics for pending/starting replicas
+                        replica_created_at = replica.get("created_at") or created_at_str
+                        replica_start_ts = start_timestamp
+                        if replica_created_at:
+                            try:
+                                replica_start_ts = datetime.fromisoformat(replica_created_at).timestamp()
+                            except Exception:
+                                pass
+                        
+                        all_metrics.append(f"# Synthetic metrics for replica {replica_id} (status: {replica_status})")
+                        all_metrics.append(self._generate_status_gauge(service_id, replica_status, replica_id=replica_id))
+                        all_metrics.append(f'process_start_time_seconds{{service_id="{service_id}",replica_id="{replica_id}"}} {replica_start_ts}')
+                        all_metrics.append("")
+                        continue
+
+                    try:
+                        parsed = urlparse(endpoint)
+                        response = requests.get(
+                            f"http://{parsed.hostname}:{parsed.port or replica_port}/metrics",
+                            timeout=replica_timeout
+                        )
+                        if response.status_code == 200:
+                            enriched = self._enrich_metrics_with_labels(
+                                response.text,
+                                service_id=service_id,
+                                status=replica_status,
+                                replica_id=replica_id
+                            )
+                            all_metrics.append(enriched)
+                        else:
+                            all_metrics.append(f"# Failed to fetch metrics for {replica_id}: HTTP {response.status_code}")
+                            # Fallback to synthetic status if fetch fails
+                            all_metrics.append(self._generate_status_gauge(service_id, replica_status, replica_id=replica_id))
+                    except Exception as e:
+                        all_metrics.append(f"# Error fetching metrics for {replica_id}: {e}")
+                        all_metrics.append(self._generate_status_gauge(service_id, replica_status, replica_id=replica_id))
+                    all_metrics.append("")
+                
                 return {
-                    "success": False,
-                    "error": "Metrics endpoint does not support service groups. Query individual services instead."
+                    "success": True,
+                    "metrics": "\n".join(all_metrics),
+                    "service_id": service_id,
+                    "endpoint": "aggregated",
+                    "metrics_format": "prometheus_text_format",
                 }
             
             # Get service info
@@ -619,6 +714,11 @@ class ServiceOrchestrator:
                     elif is_ready and refined_status == "running":
                         self.service_manager.update_service_status(service_id, "running")
                         return "running"
+                    # If health check fails but SLURM is running, it's starting
+                    elif not is_ready:
+                         self.service_manager.update_service_status(service_id, "starting")
+                         return "starting"
+
                 except Exception as e:
                     logger.warning(f"Health check exception for {service_id}: {e}")
                     # If health check fails, assume still starting
@@ -626,13 +726,13 @@ class ServiceOrchestrator:
         
         return current_status or "unknown"
     
-    def _generate_status_gauge(self, service_id: str, status: str) -> str:
+    def _generate_status_gauge(self, service_id: str, status: str, replica_id: Optional[str] = None) -> str:
         """Generate service_status_info gauge metric.
         
         This metric uses numeric values for status to ensure series continuity:
         0 = pending, 1 = starting, 2 = running, 3 = completed, 4 = failed, 5 = cancelled
         
-        IMPORTANT: Only service_id is a label. Status is the VALUE only.
+        IMPORTANT: Only service_id (and optionally replica_id) are labels. Status is the VALUE only.
         This prevents series churn when status changes.
         """
         status_map = {
@@ -650,14 +750,16 @@ class ServiceOrchestrator:
         status_value = status_map.get(status.lower(), 0)
         # Only service_id as label - status is VALUE only to prevent series churn
         labels = f'service_id="{service_id}"'
+        if replica_id:
+            labels += f',replica_id="{replica_id}"'
         
         return '\n'.join([
             '# HELP service_status_info Current status of the service (0=pending, 1=starting, 2=running, 3=completed, 4=failed, 5=cancelled)',
             '# TYPE service_status_info gauge',
             f'service_status_info{{{labels}}} {status_value}'
         ])
-    
-    def _enrich_metrics_with_labels(self, metrics_text: str, service_id: str, status: str) -> str:
+
+    def _enrich_metrics_with_labels(self, metrics_text: str, service_id: str, status: str, replica_id: Optional[str] = None) -> str:
         """Inject service_id label and prepend status gauge metric.
         
         Key change: Status is NO LONGER a label on all metrics (prevents series churn).
@@ -668,10 +770,12 @@ class ServiceOrchestrator:
         This ensures Grafana can track status changes as VALUE changes, not series changes.
         """
         # Generate status gauge metric first
-        status_gauge = self._generate_status_gauge(service_id, status)
+        status_gauge = self._generate_status_gauge(service_id, status, replica_id=replica_id)
         
         enriched_lines = []
         labels_str = f'service_id="{service_id}"'  # Only service_id, no status!
+        if replica_id:
+            labels_str += f',replica_id="{replica_id}"'
         
         for line in metrics_text.split('\n'):
             # Skip empty lines and comments
@@ -982,8 +1086,14 @@ class ServiceOrchestrator:
             # First check if the SLURM job is running
             job_status = self.slurm_client.get_job_status(job_id)
             if job_status not in ["running", "RUNNING"]:
-                # Job not running yet, keep status as "starting"
+                # SLURM has not allocated resources yet -> group should remain pending.
+                if replica.get("status") != "pending":
+                    self.service_manager.update_replica_status(replica_id, "pending")
                 return
+
+            # SLURM job is running; transition pending -> starting before HTTP health checks.
+            if replica.get("status") == "pending":
+                self.service_manager.update_replica_status(replica_id, "starting")
             
             # Get the node where the job is running
             job_details = self.slurm_client.get_job_details(job_id)

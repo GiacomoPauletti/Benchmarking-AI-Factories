@@ -206,6 +206,7 @@ class ServiceManager:
                 "node_jobs": [],
                 "config": config or {},
                 "created_at": datetime.now().isoformat(),
+                # Group starts as pending until the SLURM job is RUNNING.
                 "status": "pending"
             }
             
@@ -246,6 +247,9 @@ class ServiceManager:
             }
             node_job["replicas"].append(replica_info)
             self._replica_to_group[replica_id] = group_id
+
+            # Keep the group status in sync as replicas are added.
+            self._update_group_status(group_id)
             
             self.logger.debug(f"Added replica {replica_id} (GPU {gpu_id}, port {port}) to group {group_id}")
     
@@ -362,9 +366,11 @@ class ServiceManager:
         
         if completed == len(replica_statuses):
             group["status"] = "completed"
-        elif ready_or_running > 0:
+        # Only mark the group as fully running once ALL replicas are ready/running.
+        elif ready_or_running == len(replica_statuses):
             group["status"] = "running"
-        elif starting > 0:
+        # Otherwise, the group is still starting up (even if some replicas are ready).
+        elif starting > 0 or ready_or_running > 0:
             group["status"] = "starting"
         else:
             group["status"] = "pending"

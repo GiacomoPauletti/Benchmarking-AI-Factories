@@ -85,7 +85,7 @@
   "targets": [
     {
       "editorMode": "builder",
-      "expr": "process_resident_memory_bytes{service_id=\"$service\"}",
+      "expr": "process_resident_memory_bytes{service_id=\"$service\", replica_id=~\"$replicas\"}",
       "legendFormat": "Resident memory - {{replica_id}}",
       "range": true,
       "refId": "A"

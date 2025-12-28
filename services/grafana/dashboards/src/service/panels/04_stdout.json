@@ -37,7 +37,7 @@
       },
       "direction": "forward",
       "editorMode": "code",
-      "expr": "{service_name=\"slurm-stdout\", filename=~\"/logs/.*${service}.*\"}",
+      "expr": "{job=\"slurm-stdout\", filename=~\"/logs/.*${service}.*\"}",
       "queryType": "range",
       "refId": "A"
     }

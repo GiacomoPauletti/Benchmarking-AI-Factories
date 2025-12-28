@@ -327,6 +327,7 @@ class TestGatewayAPI:
     
     def test_get_service_targets(self, mock_proxy, client):
         """Service targets endpoint should emit Prometheus discovery format"""
+        mock_proxy.list_service_groups.return_value = []
         mock_proxy.list_services.return_value = [
             {"id": "svc-1", "recipe_name": "inference/vllm", "status": "running"}
         ]
@@ -347,11 +348,13 @@ class TestGatewayAPI:
         assert targets[0]["labels"]["group_id"] == "svc-1"
         assert targets[0]["labels"]["replica_id"] == "svc-1"
         assert targets[0]["labels"]["node_job_id"] == "svc-1"
+        mock_proxy.list_service_groups.assert_called_once()
         mock_proxy.list_services.assert_called_once()
         mock_proxy.get_service.assert_called_once_with("svc-1")
 
     def test_get_service_targets_starting(self, mock_proxy, client):
         """Service targets endpoint should include starting services with dummy target"""
+        mock_proxy.list_service_groups.return_value = []
         mock_proxy.list_services.return_value = [
             {"id": "svc-2", "recipe_name": "inference/vllm", "status": "starting"}
         ]
@@ -372,6 +375,36 @@ class TestGatewayAPI:
         assert targets[0]["labels"]["group_id"] == "svc-2"
         assert targets[0]["labels"]["replica_id"] == "svc-2"
         assert targets[0]["labels"]["node_job_id"] == "svc-2"
+
+    def test_get_service_targets_includes_groups_and_skips_replica_targets(self, mock_proxy, client):
+        """Replica deployments should be scraped via their group_id only, not per replica."""
+        mock_proxy.list_service_groups.return_value = [
+            {
+                "id": "sg-123",
+                "recipe_name": "inference/vllm-replicas",
+                "status": "starting",
+            }
+        ]
+        # A ready replica might be registered as an individual service; we must not emit it as a target.
+        mock_proxy.list_services.return_value = [
+            {"id": "123:8001", "recipe_name": "inference/vllm-replicas", "status": "running"},
+        ]
+        # get_service should never be called for the replica target because it is skipped.
+        mock_proxy.get_service.return_value = {
+            "id": "123:8001",
+            "recipe_name": "inference/vllm-replicas",
+            "status": "running",
+            "endpoint": "http://mel0001:8001",
+        }
+
+        response = client.get("/api/v1/services/targets")
+
+        assert response.status_code == 200
+        targets = response.json()
+        assert len(targets) == 1
+        assert targets[0]["labels"]["service_id"] == "sg-123"
+        assert targets[0]["labels"]["group_id"] == "sg-123"
+        assert targets[0]["targets"] == ["pending-sg-123"]
 
 
     def test_get_service_group_status(self, mock_proxy, client):
@@ -410,6 +443,31 @@ class TestGatewayAPI:
         assert "metric" in response.text
         assert response.headers["content-type"].startswith("text/plain")
         mock_proxy.get_service_metrics.assert_called_once_with("svc-1")
+
+    def test_get_service_metrics_uses_cache_on_failure(self, mock_proxy, client):
+        """Service metrics should fall back to cached metrics on transient failures."""
+        from api import routes as api_routes
+
+        api_routes._clear_service_metrics_cache()
+
+        mock_proxy.get_service_metrics.return_value = {
+            "success": True,
+            "metrics": "# HELP foo\nfoo 1\n",
+        }
+
+        first = client.get("/api/v1/services/svc-1/metrics")
+        assert first.status_code == 200
+        assert "foo 1" in first.text
+
+        mock_proxy.get_service_metrics.return_value = {
+            "success": False,
+            "error": "boom",
+        }
+
+        second = client.get("/api/v1/services/svc-1/metrics")
+        assert second.status_code == 200
+        assert "foo 1" in second.text
+        assert "service_metrics_proxy_stale" in second.text
 
     def test_get_service_metrics_qdrant(self, mock_proxy, client):
         """Service metrics route should handle vector DB recipes"""

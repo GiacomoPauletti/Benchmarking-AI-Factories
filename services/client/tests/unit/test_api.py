@@ -16,6 +16,7 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
+import requests
 
 import sys
 import os
@@ -59,7 +60,10 @@ class TestAPIEndpoints:
     
     def test_create_client_group(self, client, mock_ssh_manager):
         """Test creating a new client group via API."""
-        with patch('client_manager.client_group.ClientGroup'):
+        with patch('client_manager.client_group.ClientGroup') as mock_group_cls:
+            mock_group = MagicMock()
+            mock_group.get_job_id.return_value = "12345"
+            mock_group_cls.return_value = mock_group
             response = client.post(
                 "/api/v1/client-groups",
                 json={"service_id": "sg-test", "num_clients": 10, "time_limit": 30}
@@ -67,6 +71,32 @@ class TestAPIEndpoints:
             
             # Should return 201 CREATED or 200 OK depending on implementation
             assert response.status_code in [200, 201]
+
+    def test_create_client_group_fails_when_slurm_job_id_missing(self, client, mock_ssh_manager):
+        """SLURM submit failures must not create a zombie group stuck in pending."""
+        with patch('client_manager.client_group.ClientGroup') as mock_group_cls:
+            mock_group = MagicMock()
+            mock_group.get_job_id.return_value = None
+            mock_group_cls.return_value = mock_group
+
+            response = client.post(
+                "/api/v1/client-groups",
+                json={"service_id": "sg-test", "num_clients": 10, "time_limit": 30}
+            )
+
+            assert response.status_code == 502
+
+    def test_create_client_group_returns_502_on_dispatch_runtime_error(self, client, mock_ssh_manager):
+        """Runtime errors during dispatch should be treated as upstream (502) errors."""
+        with patch('client_manager.client_group.ClientGroup') as mock_group_cls:
+            mock_group_cls.side_effect = RuntimeError("SLURM REST tunnel unavailable (localhost:6821)")
+
+            response = client.post(
+                "/api/v1/client-groups",
+                json={"service_id": "sg-test", "num_clients": 10, "time_limit": 30}
+            )
+
+            assert response.status_code == 502
     
     def test_list_client_groups(self, client):
         """Test listing all client groups."""
@@ -86,7 +116,15 @@ class TestAPIEndpoints:
         """Test triggering a client group to run."""
         # Attempt to run a non-existent group
         # There is no direct run endpoint; ensure POST to create a group returns created
-        response = client.post("/api/v1/client-groups", json={"service_id": "sg-test", "num_clients": 1, "requests_per_second": 0.1, "duration_seconds": 1})
+        with patch('client_manager.client_group.ClientGroup') as mock_group_cls:
+            mock_group = MagicMock()
+            mock_group.get_job_id.return_value = "12346"
+            mock_group_cls.return_value = mock_group
+
+            response = client.post(
+                "/api/v1/client-groups",
+                json={"service_id": "sg-test", "num_clients": 1, "requests_per_second": 0.1, "duration_seconds": 1}
+            )
         # Should handle gracefully (404 or error response)
         assert response.status_code in [200, 201]
 
@@ -109,7 +147,7 @@ class TestClientManager:
     
     def test_add_client_group(self, mock_ssh_manager):
         """Test adding a client group."""
-        with patch('client_manager.client_group.ClientGroup'):
+        with patch('client_manager.client_manager.ClientGroup'):
             manager = ClientManager(server_addr="http://test:8001")
             # avoid network calls by stubbing the orchestrator url
             manager._orchestrator_url = "http://orch:9000"
@@ -129,7 +167,7 @@ class TestClientManager:
     
     def test_add_duplicate_client_group(self, mock_ssh_manager):
         """Test that adding duplicate client group returns error."""
-        with patch('client_manager.client_group.ClientGroup'):
+        with patch('client_manager.client_manager.ClientGroup'):
             manager = ClientManager(server_addr="http://test:8001")
             manager._orchestrator_url = "http://orch:9000"
 
@@ -146,7 +184,7 @@ class TestClientManager:
     
     def test_remove_client_group(self, mock_ssh_manager):
         """Test removing a client group."""
-        with patch('client_manager.client_group.ClientGroup'):
+        with patch('client_manager.client_manager.ClientGroup'):
             manager = ClientManager(server_addr="http://test:8001")
             manager._orchestrator_url = "http://orch:9000"
 
@@ -160,7 +198,7 @@ class TestClientManager:
     
     def test_list_groups(self, mock_ssh_manager):
         """Test listing client groups."""
-        with patch('client_manager.client_group.ClientGroup'):
+        with patch('client_manager.client_manager.ClientGroup'):
             manager = ClientManager(server_addr="http://test:8001")
             manager._orchestrator_url = "http://orch:9000"
 
@@ -338,6 +376,39 @@ class TestSlurmClientDispatcher:
             
             # Verify SSH submission was called
             assert mock_submit.called
+
+    def test_submit_slurm_job_recreates_tunnel_on_connection_error(self, mock_ssh_manager, monkeypatch):
+        """If the local SSH tunnel dies, submissions should recreate it and retry once."""
+        from deployment.client_dispatcher import SlurmClientDispatcher
+
+        dispatcher = SlurmClientDispatcher(load_config={"num_clients": 1}, account="p200981")
+
+        call_count = {"post": 0}
+
+        class FakeResponse:
+            ok = True
+
+            @staticmethod
+            def json():
+                return {"job_id": 12345}
+
+        def fake_post(url, headers, json, timeout):  # pylint: disable=unused-argument
+            call_count["post"] += 1
+            if call_count["post"] == 1:
+                raise requests.exceptions.ConnectionError("connection refused")
+            return FakeResponse()
+
+        monkeypatch.setattr('deployment.client_dispatcher.requests.post', fake_post)
+
+        success, response_data = dispatcher._submit_slurm_job_via_ssh(
+            script_content="echo hi",
+            job_config={"account": "p200981"},
+        )
+
+        assert success is True
+        assert response_data["job_id"] == 12345
+        # Once up-front, once after the connection error.
+        assert mock_ssh_manager.setup_slurm_rest_tunnel.call_count == 2
 
 
 class TestSSHManager:

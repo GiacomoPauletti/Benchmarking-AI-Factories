@@ -5,6 +5,7 @@ import logging
 import random
 from typing import Optional
 from enum import Enum
+import os
 
 class ClientGroupStatus(Enum):
     PENDING = 0
@@ -18,7 +19,7 @@ class ClientGroup:
         self, 
         group_id: int, 
         load_config: dict,
-        account: str = "p200981", 
+        account: str = os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776"),
         use_container: bool = False
     ):
         self._group_id = group_id
@@ -33,6 +34,9 @@ class ClientGroup:
         self._status = ClientGroupStatus.PENDING
         self._job_id = None  # SLURM job ID
         self._last_slurm_state = "PENDING"
+
+        if not account:
+            account = os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776")
         
         # Get signal file path for polling
         import os
@@ -50,7 +54,7 @@ class ClientGroup:
             if self._job_id:
                 self._logger.info(f"Dispatched SLURM job {self._job_id} for client group {group_id}")
             else:
-                self._logger.warning(f"Dispatched SLURM job for client group {group_id} but no job ID returned")
+                raise RuntimeError(f"SLURM job submission returned no job_id for client group {group_id}")
         except Exception as e:
             self._logger.error(f"Failed to dispatch SLURM job for client group {group_id}: {e}")
             raise

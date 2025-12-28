@@ -148,8 +148,11 @@ if __name__ == "__main__":
                        help="Port to bind to (default: 8002)")
     parser.add_argument("--container", action="store_true",
                        help="Enable container mode for client execution")
-    parser.add_argument("--account", default="p200981",
-                       help="SLURM account for job submission (default: p200981)")
+    parser.add_argument(
+        "--account",
+        default=os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776"),
+        help="SLURM account for job submission (default: $ORCHESTRATOR_ACCOUNT or p200776)"
+    )
     
     args = parser.parse_args()
     

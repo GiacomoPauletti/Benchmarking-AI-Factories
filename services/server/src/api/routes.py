@@ -3,8 +3,10 @@ API route definitions for SLURM-based service orchestration.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, Body, Depends, Query
-from typing import List, Dict, Any, Optional
+import os
+import time
+from fastapi import APIRouter, HTTPException, Body, Depends, Query, Request
+from typing import List, Dict, Any, Optional, Tuple
 
 from api.schemas import ServiceRequest, ServiceResponse, RecipeResponse
 from service_orchestration.services.inference.vllm_models_config import (
@@ -15,6 +17,33 @@ from service_orchestration.services.inference.vllm_models_config import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Keep recent service metrics around so a single slow scrape (common when vLLM is
+# saturated by a benchmark run) doesn't result in a visible gap in Grafana.
+#
+# Prometheus considers a target "down" if the scrape fails/timeout, which shows
+# as a discontinuity in Grafana panels. Returning the last-good metrics for a
+# short window avoids gaps while still allowing detection of prolonged issues.
+_SERVICE_METRICS_CACHE_TTL_SECONDS = float(
+    os.environ.get("SERVICE_METRICS_CACHE_TTL_SECONDS", "15")
+)
+_SERVICE_METRICS_CACHE: Dict[str, Tuple[float, str]] = {}
+
+
+def _clear_service_metrics_cache() -> None:
+    """Test helper to reset cached metrics between test cases."""
+    _SERVICE_METRICS_CACHE.clear()
+
+
+def _parse_prometheus_scrape_timeout_seconds(request: Request) -> Optional[float]:
+    """Extract Prometheus scrape timeout budget from request headers."""
+    header_value = request.headers.get("X-Prometheus-Scrape-Timeout-Seconds")
+    if not header_value:
+        return None
+    try:
+        return float(header_value)
+    except (TypeError, ValueError):
+        return None
 
 # Global orchestrator proxy instance (set by main.py at startup)
 _orchestrator_proxy_instance = None
@@ -114,6 +143,32 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
     """
     try:
         targets = []
+        # Add service groups first so they are discoverable immediately.
+        # Prometheus should scrape ONLY the group_id for replica deployments.
+        try:
+            groups = orchestrator.list_service_groups() or []
+        except Exception:
+            groups = []
+
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group_id = group.get("id")
+            if not group_id:
+                continue
+
+            # Use a placeholder target; Prometheus address is rewritten to server:8001.
+            targets.append({
+                "targets": [f"pending-{group_id}"],
+                "labels": {
+                    "job": f"service-{group_id}",
+                    "service_id": group_id,
+                    "recipe_name": group.get("recipe_name", "unknown"),
+                    "group_id": group_id,
+                    "node_job_id": group_id.split("-", 1)[1] if isinstance(group_id, str) and group_id.startswith("sg-") else group_id,
+                },
+            })
+
         services_response = orchestrator.list_services()
         logger.debug(f"list_services() returned: {type(services_response)} = {repr(services_response)}")
         
@@ -125,6 +180,11 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
         
         for service in services_list:
             discovered_id = service["id"]
+
+            # For replica-group deployments, do not expose individual replica targets.
+            # Replica IDs are composite "<job_id>:<port>".
+            if isinstance(discovered_id, str) and ":" in discovered_id:
+                continue
             
             # Get full service details to resolve endpoint
             service_details = orchestrator.get_service(discovered_id)
@@ -340,7 +400,11 @@ async def update_service_group_status(
 
 
 @router.get("/services/{service_id}/metrics")
-async def get_service_metrics(service_id: str, orchestrator = Depends(get_orchestrator_proxy)):
+async def get_service_metrics(
+    service_id: str,
+    request: Request,
+    orchestrator=Depends(get_orchestrator_proxy),
+):
     """**[Proxy]** Get Prometheus-compatible metrics from any service.
     
     This endpoint proxies to the orchestrator's unified metrics API.
@@ -349,26 +413,75 @@ async def get_service_metrics(service_id: str, orchestrator = Depends(get_orches
     **GET /api/services/{service_id}/metrics** on the orchestrator service.
     """
     from fastapi.responses import PlainTextResponse
-    
-    # Route to appropriate service-specific metrics endpoint
-    result = orchestrator.get_service_metrics(service_id)
-    
-    if isinstance(result, dict):
-        if result.get("success"):
-            return PlainTextResponse(
-                content=result.get("metrics", ""),
-                media_type="text/plain; version=0.0.4"
-            )
+
+    # Prefer using Prometheus' declared scrape timeout as our total budget.
+    # This prevents the proxy from blocking longer than Prometheus is willing
+    # to wait, which would otherwise create gaps in Grafana.
+    scrape_budget_seconds = _parse_prometheus_scrape_timeout_seconds(request)
+    proxy_timeout_seconds: Optional[int]
+    if scrape_budget_seconds is None:
+        proxy_timeout_seconds = None
+    else:
+        # Keep a small safety margin so we can still return a cached response.
+        # Round down to ensure we stay within the declared budget.
+        safe_budget = max(1.0, scrape_budget_seconds - 0.25)
+        proxy_timeout_seconds = max(1, int(safe_budget))
+
+    cached = _SERVICE_METRICS_CACHE.get(service_id)
+    now = time.monotonic()
+
+    try:
+        # Route to appropriate service-specific metrics endpoint
+        if proxy_timeout_seconds is None:
+            result = orchestrator.get_service_metrics(service_id)
         else:
-            # If metrics retrieval failed, return 500 so Prometheus marks target as down
-            error_msg = result.get("error", "Unknown error fetching metrics")
-            raise HTTPException(status_code=500, detail=error_msg)
-            
-    # Fallback for unexpected return types
-    return PlainTextResponse(
-        content=str(result),
-        media_type="text/plain; version=0.0.4"
-    )
+            result = orchestrator.get_service_metrics(service_id, timeout=proxy_timeout_seconds)
+
+        metrics_text: Optional[str] = None
+
+        if isinstance(result, dict):
+            if result.get("success"):
+                metrics_text = result.get("metrics", "")
+            else:
+                # Orchestrator returned a structured failure
+                error_msg = result.get("error", "Unknown error fetching metrics")
+                raise HTTPException(status_code=500, detail=error_msg)
+        elif isinstance(result, (str, bytes)):
+            metrics_text = result.decode("utf-8", errors="replace") if isinstance(result, bytes) else result
+        else:
+            metrics_text = str(result)
+
+        _SERVICE_METRICS_CACHE[service_id] = (now, metrics_text)
+        return PlainTextResponse(
+            content=metrics_text,
+            media_type="text/plain; version=0.0.4",
+        )
+
+    except HTTPException:
+        # Fall back to cached metrics for a short window, otherwise bubble up.
+        if cached and (now - cached[0]) <= _SERVICE_METRICS_CACHE_TTL_SECONDS:
+            cached_text = cached[1]
+            cached_text = (
+                cached_text
+                + f"\nservice_metrics_proxy_stale{{service_id=\"{service_id}\"}} 1\n"
+            )
+            return PlainTextResponse(
+                content=cached_text,
+                media_type="text/plain; version=0.0.4",
+            )
+        raise
+    except Exception as e:
+        if cached and (now - cached[0]) <= _SERVICE_METRICS_CACHE_TTL_SECONDS:
+            cached_text = cached[1]
+            cached_text = (
+                cached_text
+                + f"\nservice_metrics_proxy_stale{{service_id=\"{service_id}\"}} 1\n"
+            )
+            return PlainTextResponse(
+                content=cached_text,
+                media_type="text/plain; version=0.0.4",
+            )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/services/{service_id}")

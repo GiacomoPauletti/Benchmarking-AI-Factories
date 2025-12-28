@@ -14,13 +14,13 @@
   },
   "targets": [
     {
-      "expr": "rate(vllm:time_to_first_token_seconds_sum{service_id=\"$service\"}[$__interval]) / rate(vllm:time_to_first_token_seconds_count{service_id=\"$service\"}[$__interval])",
-      "legendFormat": "Avg TTFT",
+      "expr": "rate(vllm:time_to_first_token_seconds_sum{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval]) / rate(vllm:time_to_first_token_seconds_count{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+      "legendFormat": "Avg TTFT - {{replica_id}}",
       "refId": "A"
     },
     {
-      "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:time_to_first_token_seconds_bucket{service_id=\"$service\"}[$__interval])))",
-      "legendFormat": "P99 TTFT",
+      "expr": "histogram_quantile(0.99, sum by(le, replica_id) (rate(vllm:time_to_first_token_seconds_bucket{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])))",
+      "legendFormat": "P99 TTFT - {{replica_id}}",
       "refId": "B"
     }
   ],

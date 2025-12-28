@@ -76,7 +76,7 @@
             "5": {
               "color": "yellow",
               "index": 5,
-              "text": "Cancelled"
+              "text": ""
             }
           },
           "type": "value"
@@ -127,7 +127,7 @@
         "uid": "prom"
       },
       "editorMode": "code",
-      "expr": "client_group_status_info",
+      "expr": "(client_group_status_info unless (client_group_status_info == 3)) or (((client_group_status_info == 3) * 3) and on (group_id) (changes(client_group_status_info[15s]) > 0))",
       "instant": false,
       "legendFormat": "Benchmark {{group_id}}",
       "range": true,

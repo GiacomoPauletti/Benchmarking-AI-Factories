@@ -29,8 +29,7 @@
     "calculate": false,
     "calculation": {
       "xBuckets": {
-        "mode": "size",
-        "value": ""
+        "mode": "auto"
       },
       "yBuckets": {
         "scale": {
@@ -74,16 +73,15 @@
     },
     "yAxis": {
       "axisPlacement": "left",
-      "reverse": false,
-      "unit": "percent"
+      "reverse": false
     }
   },
   "pluginVersion": "12.3.0",
   "targets": [
     {
-      "editorMode": "builder",
-      "expr": "sum by(le) (rate(http_request_duration_highr_seconds_bucket[$__rate_interval]))",
-      "legendFormat": "__auto",
+      "editorMode": "code",
+      "expr": "sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{service_id=\"$service\"}[$__rate_interval]))",
+      "legendFormat": "{{le}}",
       "range": true,
       "refId": "A"
     }

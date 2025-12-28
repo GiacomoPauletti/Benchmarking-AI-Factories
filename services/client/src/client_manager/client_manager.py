@@ -56,6 +56,16 @@ class ClientManager:
         # mapping: group_id -> ClientGroup
         # Protect re-initialization in singleton pattern
         if hasattr(self, "_initialized") and self._initialized:
+            # Allow late configuration when the singleton was created from an import
+            # path with no explicit config.
+            if account and not getattr(self, "_account", None):
+                self._account = account
+            if use_container is not None and getattr(self, "_use_container", None) is None:
+                self._use_container = use_container
+            if server_addr and not getattr(self, "_server_addr", None):
+                self._server_addr = server_addr
+            if client_service_addr and not getattr(self, "_client_service_addr", None):
+                self._client_service_addr = client_service_addr
             return
 
         self._client_groups: Dict[int, ClientGroup] = {}
@@ -63,9 +73,12 @@ class ClientManager:
         self._logger = logging.getLogger("client_manager")
 
         self._server_addr = server_addr or os.environ.get("SERVER_URL", "http://server:8001")
-        self._client_service_addr = client_service_addr 
-        self._use_container = use_container 
-        self._account = account 
+        self._client_service_addr = client_service_addr
+        self._use_container = use_container
+
+        # Keep the SLURM account consistent with the orchestrator microservice.
+        # Precedence: explicit arg > ORCHESTRATOR_ACCOUNT env > hard default.
+        self._account = account or os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776")
 
         # The orchestrator URL must be obtained from the Server API at runtime.
         self._orchestrator_url = None

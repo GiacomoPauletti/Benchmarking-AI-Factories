@@ -42,6 +42,7 @@ class TestServiceManagerReplicaHandling:
         assert group_info["num_nodes"] == 2
         assert group_info["replicas_per_node"] == 4
         assert group_info["total_replicas"] == 8
+        assert group_info["status"] == "pending"
 
     def test_create_replica_group_with_job_id(self, service_manager):
         """Test that create_replica_group uses sg-{job_id} format when job_id provided."""

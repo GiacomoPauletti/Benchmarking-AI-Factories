@@ -167,7 +167,7 @@
                 "5": {
                   "color": "yellow",
                   "index": 5,
-                  "text": "Cancelled"
+                  "text": ""
                 }
               },
               "type": "value"
@@ -218,7 +218,7 @@
             "uid": "prom"
           },
           "editorMode": "code",
-          "expr": "client_group_status_info",
+          "expr": "(client_group_status_info unless (client_group_status_info == 3)) or (((client_group_status_info == 3) * 3) and on (group_id) (changes(client_group_status_info[15s]) > 0))",
           "instant": false,
           "legendFormat": "Benchmark {{group_id}}",
           "range": true,
@@ -808,7 +808,7 @@
             "type": "number",
             "uid": "8d5d6ae7-ff03-4792-a561-769bf7be5324",
             "unit": "",
-            "value": 0
+            "value": 1
           },
           {
             "id": "duration_seconds",
@@ -864,7 +864,7 @@
           }
         ],
         "initial": {
-          "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_second: 100,\n  duration_seconds: 60,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
+          "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_second: 1,\n  duration_seconds: 60,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,

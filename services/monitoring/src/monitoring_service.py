@@ -12,7 +12,6 @@ import logging
 
 from .core.state_store import StateStore
 from .core.settings import settings
-from .config.renderer import ConfigRenderer
 from .managers.prometheus_manager import PrometheusManager
 from .registry.registry import Registry
 from .metrics.collector_agg import CollectorAgg

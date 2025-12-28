@@ -42,7 +42,7 @@
         "allowCustomValue": false,
         "current": {
           "text": "vllm-3664613",
-          "value": "3664613"
+          "value": "vllm-3664613"
         },
         "datasource": {
           "type": "prometheus",

@@ -117,10 +117,10 @@ srun --nodes=1 --ntasks=1 --relative={node_idx} --exact --gpus-per-task={gpu_per
             --tensor-parallel-size {tensor_parallel} \\
             {max_len_flag}
             --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
-    " > {paths.log_dir}/vllm_${{SLURM_JOB_ID}}_replica_{replica_index}.log 2>&1 &
+    " > {paths.log_dir}/vllm_${{SLURM_JOB_ID}}:${port}.log 2>&1 &
 
 REPLICA_PIDS+=($!)
-echo "Replica {replica_index} started with PID ${{REPLICA_PIDS[-1]}} (output: vllm_${{SLURM_JOB_ID}}_replica_{replica_index}.log)"
+echo "Replica {replica_index} started with PID ${{REPLICA_PIDS[-1]}} (output: vllm_${{SLURM_JOB_ID}}:${port}.log)"
 sleep 2  # Brief delay between launches
 
 """
