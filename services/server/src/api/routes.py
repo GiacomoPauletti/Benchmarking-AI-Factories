@@ -82,7 +82,17 @@ async def create_service(
     try:
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"[DEBUG] create_service received: recipe_name={request.recipe_name}, config={request.config}")
+        
+        # Redact sensitive info from logs
+        log_config = (request.config or {}).copy()
+        if "environment" in log_config:
+            env = log_config["environment"].copy()
+            for key in ["HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN"]:
+                if key in env:
+                    env[key] = "[REDACTED]"
+            log_config["environment"] = env
+            
+        logger.info(f"[DEBUG] create_service received: recipe_name={request.recipe_name}, config={log_config}")
         response = orchestrator.start_service(
             recipe_name=request.recipe_name,
             config=request.config or {}

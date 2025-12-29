@@ -10,6 +10,7 @@ This module queries the HuggingFace API to find models that match vLLM's support
 
 from typing import List, Dict, Any, Optional
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,9 @@ except ImportError:
     HF_HUB_AVAILABLE = False
     logger.warning("huggingface_hub not installed. Model search functionality will be limited.")
 
+def _get_hf_token() -> Optional[str]:
+    """Get HuggingFace token from environment variables."""
+    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
 
 # vLLM supported model architectures (as of vLLM 0.6.x+)
 # Source: https://docs.vllm.ai/en/latest/models/supported_models.html
@@ -105,7 +109,8 @@ def search_hf_models(
         )
     
     try:
-        api = HfApi()
+        token = _get_hf_token()
+        api = HfApi(token=token)
         
         # Search models - use pipeline_tag for filtering by task type
         models = api.list_models(
@@ -126,7 +131,11 @@ def search_hf_models(
                 if hasattr(model_info, 'config') and model_info.config:
                     model_arch = model_info.config.get('architectures', [None])[0]
             except Exception as e:
-                logger.debug(f"Could not fetch architecture for {model.id}: {e}")
+                # Redact token from error message if present
+                error_msg = str(e)
+                if token and token in error_msg:
+                    error_msg = error_msg.replace(token, "[REDACTED]")
+                logger.debug(f"Could not fetch architecture for {model.id}: {error_msg}")
             
             # Filter by architecture if specified
             if architecture and model_arch != architecture:
@@ -176,7 +185,8 @@ def get_model_info(model_id: str) -> Dict[str, Any]:
         )
     
     try:
-        api = HfApi()
+        token = _get_hf_token()
+        api = HfApi(token=token)
         model_info = api.model_info(model_id, files_metadata=True)
         
         # Extract architecture
@@ -218,7 +228,11 @@ def get_model_info(model_id: str) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error fetching model info for {model_id}: {e}")
+        # Redact token from error message if present
+        error_msg = str(e)
+        if token and token in error_msg:
+            error_msg = error_msg.replace(token, "[REDACTED]")
+        logger.error(f"Error fetching model info for {model_id}: {error_msg}")
         raise
 
 
