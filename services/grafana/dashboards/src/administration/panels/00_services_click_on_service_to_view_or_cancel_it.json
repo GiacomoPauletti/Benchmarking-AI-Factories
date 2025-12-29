@@ -42,7 +42,7 @@
         {
           "targetBlank": true,
           "title": "Details",
-          "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}&var-port=${port:queryparam}&var-service=${__series.name}"
+          "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}&var-port=${port:queryparam}&var-service=${__field.labels.service_id}"
         }
       ],
       "mappings": [
