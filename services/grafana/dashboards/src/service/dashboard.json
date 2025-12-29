@@ -63,21 +63,33 @@
         "type": "query"
       },
       {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "definition": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "hide": 2,
+        "name": "job_id",
+        "query": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "regex": "/vllm-(.*)/",
+        "type": "query"
+      },
+      {
         "allowCustomValue": false,
         "current": {
+          "selected": true,
           "text": [
-            "3664613:8001",
-            "3664613:8002",
-            "3664613:8004"
+            "All"
           ],
           "value": [
-            "3664613:8001",
-            "3664613:8002",
-            "3664613:8004"
+            "$__all"
           ]
         },
         "definition": "label_values({service_id=\"$service\"},replica_id)",
         "description": "",
+        "includeAll": true,
+        "allValue": ".*",
         "label": "replicas",
         "multi": true,
         "name": "replicas",
@@ -88,7 +100,7 @@
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
-        "regex": "",
+        "regex": "/^(?!aggregate$).*/",
         "sort": 3,
         "type": "query"
       }

@@ -63,21 +63,33 @@
         "type": "query"
       },
       {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "definition": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "hide": 2,
+        "name": "job_id",
+        "query": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "regex": "/vllm-(.*)/",
+        "type": "query"
+      },
+      {
         "allowCustomValue": false,
         "current": {
+          "selected": true,
           "text": [
-            "3664613:8001",
-            "3664613:8002",
-            "3664613:8004"
+            "All"
           ],
           "value": [
-            "3664613:8001",
-            "3664613:8002",
-            "3664613:8004"
+            "$__all"
           ]
         },
         "definition": "label_values({service_id=\"$service\"},replica_id)",
         "description": "",
+        "includeAll": true,
+        "allValue": ".*",
         "label": "replicas",
         "multi": true,
         "name": "replicas",
@@ -88,7 +100,7 @@
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
-        "regex": "",
+        "regex": "/^(?!aggregate$).*/",
         "sort": 3,
         "type": "query"
       }
@@ -254,7 +266,7 @@
           },
           "direction": "forward",
           "editorMode": "code",
-          "expr": "{job=\"slurm-stderr\", filename=~\"/logs/.*${service}.*\"}",
+          "expr": "{job=\"slurm-stderr\", filename=~\"/logs/vllm-replicas_${job_id}.*\\\\.err\"}",
           "queryType": "range",
           "refId": "A"
         }
@@ -301,7 +313,7 @@
           },
           "direction": "forward",
           "editorMode": "code",
-          "expr": "{job=\"slurm-stdout\", filename=~\"/logs/.*${service}.*\"}",
+          "expr": "{job=\"slurm-stdout\", filename=~\"/logs/vllm-replicas_${job_id}.*\\\\.out\"}",
           "queryType": "range",
           "refId": "A"
         }
