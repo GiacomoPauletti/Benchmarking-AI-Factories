@@ -551,51 +551,43 @@ class ServiceOrchestrator:
             
             # Check if service is ready
             if status not in ["running", "RUNNING", "ready"]:
-                # Generate synthetic metrics for pending/starting services
-                if status.lower() in ["pending", "starting"]:
-                    # Try to get creation time
-                    created_at_str = service.get("created_at")
-                    start_timestamp = time.time() # Default to now if not found
-                    if created_at_str:
-                        try:
-                            # Parse "2025-12-11T10:00:00" format
-                            dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S")
-                            start_timestamp = dt.timestamp()
-                        except Exception:
-                            pass
-                    
-                    metric_name = "process_start_time_seconds"
-                    metric_value = start_timestamp
-                    
-                    # Only service_id label now (status is in separate gauge)
-                    labels = f'service_id="{service_id}"'
-                    
-                    # Add status gauge
-                    status_gauge = self._generate_status_gauge(service_id, status)
-                    
-                    metrics = [
-                        status_gauge,
-                        '',
-                        f'# HELP {metric_name} Start time of the process since unix epoch in seconds.',
-                        f'# TYPE {metric_name} gauge',
-                        f'{metric_name}{{{labels}}} {metric_value}'
-                    ]
-                    
-                    return {
-                        "success": True,
-                        "metrics": "\n".join(metrics),
-                        "service_id": service_id,
-                        "endpoint": "synthetic",
-                        "metrics_format": "prometheus_text_format"
-                    }
-
+                # Generate synthetic metrics for non-running services (pending, starting, completed, failed, cancelled)
+                # This ensures we always return a status metric, allowing Grafana to visualize the state
+                
+                # Try to get creation time
+                created_at_str = service.get("created_at")
+                start_timestamp = time.time() # Default to now if not found
+                if created_at_str:
+                    try:
+                        # Parse "2025-12-11T10:00:00" format
+                        dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S")
+                        start_timestamp = dt.timestamp()
+                    except Exception:
+                        pass
+                
+                metric_name = "process_start_time_seconds"
+                metric_value = start_timestamp
+                
+                # Only service_id label now (status is in separate gauge)
+                labels = f'service_id="{service_id}"'
+                
+                # Add status gauge
+                status_gauge = self._generate_status_gauge(service_id, status)
+                
+                metrics = [
+                    status_gauge,
+                    '',
+                    f'# HELP {metric_name} Start time of the process since unix epoch in seconds.',
+                    f'# TYPE {metric_name} gauge',
+                    f'{metric_name}{{{labels}}} {metric_value}'
+                ]
+                
                 return {
-                    "success": False,
-                    "error": f"Service is not ready yet (status: {status})",
-                    "message": f"The service is still starting up (status: {status}). Please wait a moment and try again.",
+                    "success": True,
+                    "metrics": "\n".join(metrics),
                     "service_id": service_id,
-                    "status": status,
-                    "metrics": ""
+                    "endpoint": "synthetic",
+                    "metrics_format": "prometheus_text_format"
                 }
             
             # Resolve endpoint using endpoint_resolver
@@ -692,6 +684,13 @@ class ServiceOrchestrator:
         # Update from SLURM
         try:
             slurm_status = self.slurm_client.get_job_status(service_id)
+            
+            # Handle case where job disappears from SLURM (likely completed)
+            # If it was previously running/starting and now unknown, it likely finished successfully.
+            if slurm_status == "unknown" and current_status.lower() in ["running", "starting"]:
+                 logger.info(f"Service {service_id} disappeared from SLURM (was {current_status}), marking as completed")
+                 slurm_status = "completed"
+            
             if slurm_status and slurm_status != current_status:
                 self.service_manager.update_service_status(service_id, slurm_status)
                 current_status = slurm_status
