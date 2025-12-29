@@ -99,6 +99,12 @@ fi
         hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
         nv_flag = "--nv" if resources.gpu else ""
         
+        # Determine ports
+        base_port = getattr(recipe, "base_port", 8000)
+        exporter_port = base_port + 10000
+        
+        exporter_script = f"{project_ws}/src/service_orchestration/exporters/gpu_exporter.py"
+        
         return f"""
 echo "Starting container..."
 echo "Running inference container (no network binding, unprivileged user)..."
@@ -119,8 +125,22 @@ echo "Apptainer flags: $APPTAINER_FLAGS"
 echo "Environment variables for container:"
 env | grep -E '^VLLM_|^HF_|^CUDA_' || echo "No VLLM/HF/CUDA vars found"
 
+# Start GPU Exporter on host
+if [ -f "{exporter_script}" ]; then
+    echo "Starting GPU exporter on port {exporter_port}..."
+    python3 {exporter_script} {exporter_port} > {paths.log_dir}/gpu_exporter_${{SLURM_JOB_ID}}:{exporter_port}.log 2>&1 &
+    EXPORTER_PID=$!
+else
+    echo "Warning: GPU exporter script not found at {exporter_script}"
+fi
+
 apptainer run $APPTAINER_FLAGS --bind {paths.log_dir}:/app/logs,{project_ws}:/workspace,{hf_cache}:/root/.cache/huggingface {paths.sif_path} 2>&1
 container_exit_code=$?
+
+# Kill exporter
+if [ -n "$EXPORTER_PID" ]; then
+    kill $EXPORTER_PID
+fi
 
 echo "Container exited with code: $container_exit_code"
 if [ $container_exit_code -ne 0 ]; then
