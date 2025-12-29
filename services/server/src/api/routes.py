@@ -734,7 +734,7 @@ async def list_available_vllm_models():
 
 
 @router.get("/vllm/model-options")
-async def get_vllm_model_options():
+def get_vllm_model_options():
     """Get vLLM model options formatted for Grafana dropdown.
     
     Returns an array of label/value pairs suitable for use in Grafana Form Panel dropdowns.
@@ -750,10 +750,29 @@ async def get_vllm_model_options():
     ```
     """
     try:
+        # Get hardcoded examples
         info = get_architecture_info()
         examples = info.get("examples", {})
-        # Convert examples dict to array of label/value objects
-        return [{"label": label, "value": value} for label, value in examples.items()]
+        options = [{"label": label, "value": value} for label, value in examples.items()]
+        
+        # Fetch popular models from HuggingFace
+        try:
+            # Use a reasonable limit to keep response size manageable but useful
+            hf_models = search_hf_models(limit=50, sort_by="downloads")
+            existing_values = {opt["value"] for opt in options}
+            
+            for model in hf_models:
+                if model["id"] not in existing_values:
+                    options.append({
+                        "label": f"{model['id']} ({model.get('downloads', 0)} downloads)",
+                        "value": model["id"]
+                    })
+        except Exception as e:
+            logger.warning(f"Failed to fetch dynamic models from HF: {e}")
+            # Continue with just examples if HF fetch fails
+            pass
+            
+        return options
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
