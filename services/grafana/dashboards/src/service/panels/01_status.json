@@ -86,13 +86,13 @@
         "uid": "prom"
       },
       "editorMode": "code",
-      "expr": "service_status_info{service_id=\"$service\"} <= 2",
+      "expr": "service_status_info{service_id=\"$service\"}",
       "instant": false,
-      "legendFormat": "Benchmark {{replica_id}}",
+      "legendFormat": "{{replica_id}}",
       "range": true,
       "refId": "A"
     }
   ],
-  "title": "Service and Benchmark",
+  "title": "Status",
   "type": "state-timeline"
 }
