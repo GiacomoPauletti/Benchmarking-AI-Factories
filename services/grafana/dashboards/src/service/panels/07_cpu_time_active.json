@@ -84,8 +84,8 @@
         "uid": "prom"
       },
       "editorMode": "builder",
-      "expr": "rate(process_cpu_seconds_total{service_id=\"$service\"}[$__interval])",
-      "legendFormat": "CPU Usage",
+      "expr": "rate(process_cpu_seconds_total{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+      "legendFormat": "CPU Usage - {{replica_id}}",
       "range": true,
       "refId": "A"
     }

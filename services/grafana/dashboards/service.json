@@ -42,7 +42,7 @@
         "allowCustomValue": false,
         "current": {
           "text": "vllm-3664613",
-          "value": "3664613"
+          "value": "vllm-3664613"
         },
         "datasource": {
           "type": "prometheus",
@@ -63,34 +63,44 @@
         "type": "query"
       },
       {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "definition": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "hide": 2,
+        "name": "job_id",
+        "query": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "regex": "/vllm-(.*)/",
+        "type": "query"
+      },
+      {
         "allowCustomValue": false,
         "current": {
+          "selected": true,
           "text": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "All"
           ],
           "value": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "$__all"
           ]
         },
-        "definition": "label_values({service_id=\"$service\"},replica_no)",
+        "definition": "label_values({service_id=\"$service\"},replica_id)",
         "description": "",
+        "includeAll": true,
+        "allValue": ".*",
         "label": "replicas",
         "multi": true,
         "name": "replicas",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values({service_id=\"$service\"},replica_no)",
+          "query": "label_values({service_id=\"$service\"},replica_id)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
-        "regex": "",
+        "regex": "/^(?!aggregate$).*/",
         "sort": 3,
         "type": "query"
       }
@@ -126,8 +136,16 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
+          "custom": {
+            "fillOpacity": 70,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": 60000
           },
           "mappings": [
             {
@@ -160,63 +178,54 @@
                 "5": {
                   "color": "red",
                   "index": 5,
-                  "text": "Cancelled"
+                  "text": ""
                 }
               },
               "type": "value"
             }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
+          ]
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
+        "h": 6,
         "w": 24,
         "x": 0,
         "y": 0
       },
       "id": 1,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "text": {
-          "titleSize": 10,
-          "valueSize": 14
-        },
-        "textMode": "auto",
-        "wideLayout": true
+        "mergeValues": true,
+        "rowHeight": 1.2,
+        "showValue": "always",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "12.3.0",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prom"
           },
-          "expr": "service_status_info{service_id=\"$service\", instance=\"server:8001\"}",
+          "editorMode": "code",
+          "expr": "service_status_info{service_id=\"$service\"}",
+          "instant": false,
+          "legendFormat": "{{replica_id}}",
+          "range": true,
           "refId": "A"
         }
       ],
       "title": "Status",
-      "type": "stat"
+      "type": "state-timeline"
     },
     {
       "datasource": {
@@ -257,7 +266,7 @@
           },
           "direction": "forward",
           "editorMode": "code",
-          "expr": "{service_name=\"slurm-stderr\", filename=~\"/logs/.*${service}.*\"}",
+          "expr": "{job=\"slurm-stderr\", filename=~\"/logs/vllm-replicas_${job_id}.*\\\\.err\"}",
           "queryType": "range",
           "refId": "A"
         }
@@ -304,7 +313,7 @@
           },
           "direction": "forward",
           "editorMode": "code",
-          "expr": "{service_name=\"slurm-stdout\", filename=~\"/logs/.*${service}.*\"}",
+          "expr": "{job=\"slurm-stdout\", filename=~\"/logs/vllm-replicas_${job_id}.*\\\\.out\"}",
           "queryType": "range",
           "refId": "A"
         }
@@ -399,8 +408,8 @@
       "targets": [
         {
           "editorMode": "builder",
-          "expr": "process_virtual_memory_bytes{service_id=\"$service\"}",
-          "legendFormat": "Virtual memory - {{replica_no}}",
+          "expr": "process_virtual_memory_bytes{service_id=\"$service\", replica_id=~\"$replicas\"}",
+          "legendFormat": "Virtual memory - {{replica_id}}",
           "range": true,
           "refId": "A"
         }
@@ -495,8 +504,8 @@
       "targets": [
         {
           "editorMode": "builder",
-          "expr": "process_resident_memory_bytes{service_id=\"$service\"}",
-          "legendFormat": "Resident memory - {{replica_no}}",
+          "expr": "process_resident_memory_bytes{service_id=\"$service\", replica_id=~\"$replicas\"}",
+          "legendFormat": "Resident memory - {{replica_id}}",
           "range": true,
           "refId": "A"
         }
@@ -590,8 +599,8 @@
             "uid": "prom"
           },
           "editorMode": "builder",
-          "expr": "rate(process_cpu_seconds_total{service_id=\"$service\"}[$__interval])",
-          "legendFormat": "CPU Usage",
+          "expr": "rate(process_cpu_seconds_total{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+          "legendFormat": "CPU Usage - {{replica_id}}",
           "range": true,
           "refId": "A"
         }
@@ -643,8 +652,7 @@
         "calculate": false,
         "calculation": {
           "xBuckets": {
-            "mode": "size",
-            "value": ""
+            "mode": "auto"
           },
           "yBuckets": {
             "scale": {
@@ -688,16 +696,15 @@
         },
         "yAxis": {
           "axisPlacement": "left",
-          "reverse": false,
-          "unit": "percent"
+          "reverse": false
         }
       },
       "pluginVersion": "12.3.0",
       "targets": [
         {
-          "editorMode": "builder",
-          "expr": "sum by(le) (rate(http_request_duration_highr_seconds_bucket[$__rate_interval]))",
-          "legendFormat": "__auto",
+          "editorMode": "code",
+          "expr": "sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{service_id=\"$service\"}[$__rate_interval]))",
+          "legendFormat": "{{le}}",
           "range": true,
           "refId": "A"
         }
@@ -758,7 +765,7 @@
           },
           "direction": "forward",
           "editorMode": "code",
-          "expr": "{service_name=\"vllm-log\", filename=~\"/logs/vllm_${service}_replica_0\\\\.log\"} | logfmt | label_format level=detected_level",
+          "expr": "{job=\"vllm-log\", filename=~\"/logs/vllm_${replicas}\\\\.log\"} | logfmt | label_format level=detected_level",
           "queryType": "range",
           "refId": "A"
         }
@@ -795,13 +802,13 @@
       },
       "targets": [
         {
-          "expr": "rate(vllm:e2e_request_latency_seconds_sum{service_id=\"$service\"}[$__interval]) / rate(vllm:e2e_request_latency_seconds_count{service_id=\"$service\"}[$__interval])",
-          "legendFormat": "Avg E2E Latency",
+          "expr": "rate(vllm:e2e_request_latency_seconds_sum{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval]) / rate(vllm:e2e_request_latency_seconds_count{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+          "legendFormat": "Avg E2E Latency - {{replica_id}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:e2e_request_latency_seconds_bucket{service_id=\"$service\"}[$__interval])))",
-          "legendFormat": "P99 E2E Latency",
+          "expr": "histogram_quantile(0.99, sum by(le, replica_id) (rate(vllm:e2e_request_latency_seconds_bucket{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])))",
+          "legendFormat": "P99 E2E Latency - {{replica_id}}",
           "refId": "B"
         }
       ],
@@ -827,13 +834,13 @@
       },
       "targets": [
         {
-          "expr": "rate(vllm:time_to_first_token_seconds_sum{service_id=\"$service\"}[$__interval]) / rate(vllm:time_to_first_token_seconds_count{service_id=\"$service\"}[$__interval])",
-          "legendFormat": "Avg TTFT",
+          "expr": "rate(vllm:time_to_first_token_seconds_sum{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval]) / rate(vllm:time_to_first_token_seconds_count{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+          "legendFormat": "Avg TTFT - {{replica_id}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:time_to_first_token_seconds_bucket{service_id=\"$service\"}[$__interval])))",
-          "legendFormat": "P99 TTFT",
+          "expr": "histogram_quantile(0.99, sum by(le, replica_id) (rate(vllm:time_to_first_token_seconds_bucket{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])))",
+          "legendFormat": "P99 TTFT - {{replica_id}}",
           "refId": "B"
         }
       ],
@@ -859,13 +866,13 @@
       },
       "targets": [
         {
-          "expr": "rate(vllm:time_per_output_token_seconds_sum{service_id=\"$service\"}[$__interval]) / rate(vllm:time_per_output_token_seconds_count{service_id=\"$service\"}[$__interval])",
-          "legendFormat": "Avg ITL",
+          "expr": "rate(vllm:time_per_output_token_seconds_sum{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval]) / rate(vllm:time_per_output_token_seconds_count{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+          "legendFormat": "Avg ITL - {{replica_id}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by(le) (rate(vllm:time_per_output_token_seconds_bucket{service_id=\"$service\"}[$__interval])))",
-          "legendFormat": "P99 ITL",
+          "expr": "histogram_quantile(0.99, sum by(le, replica_id) (rate(vllm:time_per_output_token_seconds_bucket{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])))",
+          "legendFormat": "P99 ITL - {{replica_id}}",
           "refId": "B"
         }
       ],
@@ -891,13 +898,13 @@
       },
       "targets": [
         {
-          "expr": "rate(vllm:generation_tokens_total{service_id=\"$service\"}[$__interval])",
-          "legendFormat": "Generation TPS",
+          "expr": "rate(vllm:generation_tokens_total{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+          "legendFormat": "Generation TPS - {{replica_id}}",
           "refId": "A"
         },
         {
-          "expr": "rate(vllm:prompt_tokens_total{service_id=\"$service\"}[$__interval])",
-          "legendFormat": "Prompt TPS",
+          "expr": "rate(vllm:prompt_tokens_total{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+          "legendFormat": "Prompt TPS - {{replica_id}}",
           "refId": "B"
         }
       ],

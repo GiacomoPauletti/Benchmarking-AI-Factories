@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "perplexity": {
+      "command": "npx",
+      "args": ["-y", "@perplexity-ai/mcp-server"],
+      "env": {
+        "PERPLEXITY_API_KEY": "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"
+      }
+    }
+  }
+}

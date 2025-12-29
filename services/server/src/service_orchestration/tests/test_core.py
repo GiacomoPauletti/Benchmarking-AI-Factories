@@ -176,6 +176,63 @@ class TestServiceOrchestratorCore:
             
             assert result["success"] is True
             assert result["metrics"] == "# HELP metrics"
+        
+        def test_get_service_metrics_service_group_synthetic_status(mock_orchestrator):
+            """Service groups should expose synthetic metrics with service_status_info."""
+            group_id = "sg-123"
+            mock_orchestrator.service_manager.create_replica_group(
+                recipe_name="inference/vllm-replicas",
+                num_nodes=1,
+                replicas_per_node=2,
+                total_replicas=2,
+                config={},
+                job_id="123",
+            )
+            # Group starts as starting and should be reflected in metrics as value 1.
+            result = mock_orchestrator.get_service_metrics(group_id)
+            assert result.get("success") is True
+            metrics = result.get("metrics", "")
+            assert "service_status_info" in metrics
+            assert f'service_status_info{{service_id="{group_id}"}} 1' in metrics
+
+        def test_service_group_status_running_only_when_all_replicas_ready(mock_orchestrator):
+            """Group should remain starting until all replicas are ready/running."""
+            group_id = mock_orchestrator.service_manager.create_replica_group(
+                recipe_name="inference/vllm-replicas",
+                num_nodes=1,
+                replicas_per_node=2,
+                total_replicas=2,
+                config={},
+                job_id="999",
+            )
+            # Add 2 replicas; group starts as starting.
+            mock_orchestrator.service_manager.add_replica(
+                group_id=group_id,
+                job_id="999",
+                node_index=0,
+                replica_index=0,
+                port=8001,
+                gpu_id=0,
+                status="starting",
+            )
+            mock_orchestrator.service_manager.add_replica(
+                group_id=group_id,
+                job_id="999",
+                node_index=0,
+                replica_index=1,
+                port=8002,
+                gpu_id=1,
+                status="starting",
+            )
+            assert mock_orchestrator.service_manager.get_group_info(group_id)["status"] == "starting"
+
+            # Mark one replica ready -> group should still be starting.
+            mock_orchestrator.service_manager.update_replica_status("999:8001", "ready")
+            assert mock_orchestrator.service_manager.get_group_info(group_id)["status"] == "starting"
+
+            # Mark second replica ready -> group becomes running.
+            mock_orchestrator.service_manager.update_replica_status("999:8002", "ready")
+            assert mock_orchestrator.service_manager.get_group_info(group_id)["status"] == "running"
             mock_get.assert_called_once()
 
     def test_get_service_metrics_not_ready(self, orchestrator, mock_service_manager):

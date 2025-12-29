@@ -206,6 +206,7 @@ class ServiceManager:
                 "node_jobs": [],
                 "config": config or {},
                 "created_at": datetime.now().isoformat(),
+                # Group starts as pending until the SLURM job is RUNNING.
                 "status": "pending"
             }
             
@@ -224,8 +225,11 @@ class ServiceManager:
             if group.get("type") != "replica_group":
                 raise ValueError(f"Group {group_id} is not a replica group")
             
-            # Find or create node_job entry
-            node_job = next((nj for nj in group["node_jobs"] if nj["job_id"] == job_id), None)
+            # Find or create node_job entry (multi-node groups may share a single job_id)
+            node_job = next(
+                (nj for nj in group["node_jobs"] if nj.get("job_id") == job_id and nj.get("node_index") == node_index),
+                None,
+            )
             if not node_job:
                 node_job = {"job_id": job_id, "node_index": node_index, "node": None, "replicas": []}
                 group["node_jobs"].append(node_job)
@@ -234,6 +238,7 @@ class ServiceManager:
             replica_info = {
                 "id": replica_id,
                 "job_id": job_id,
+                "node_index": node_index,
                 "replica_index": replica_index,
                 "port": port,
                 "gpu_id": gpu_id,
@@ -242,6 +247,9 @@ class ServiceManager:
             }
             node_job["replicas"].append(replica_info)
             self._replica_to_group[replica_id] = group_id
+
+            # Keep the group status in sync as replicas are added.
+            self._update_group_status(group_id)
             
             self.logger.debug(f"Added replica {replica_id} (GPU {gpu_id}, port {port}) to group {group_id}")
     
@@ -291,6 +299,7 @@ class ServiceManager:
                             **replica,
                             "group_id": group_id,
                             "recipe_name": group.get("recipe_name", "unknown"),
+                            "node_index": node_job.get("node_index"),
                             "node": node_job.get("node")
                         }
             return None
@@ -319,7 +328,7 @@ class ServiceManager:
                         self._update_group_status(group_id)
                         return
     
-    def update_node_info(self, group_id: str, job_id: str, node: str) -> None:
+    def update_node_info(self, group_id: str, job_id: str, node: str, node_index: Optional[int] = None) -> None:
         """Update the node hostname for a job in a group."""
         with self._instance_lock:
             group = self._groups.get(group_id)
@@ -327,7 +336,13 @@ class ServiceManager:
                 return
             
             for node_job in group.get("node_jobs", []):
-                if node_job["job_id"] == job_id and not node_job.get("node"):
+                if node_job.get("job_id") != job_id:
+                    continue
+
+                if node_index is not None and node_job.get("node_index") != node_index:
+                    continue
+
+                if not node_job.get("node"):
                     node_job["node"] = node
                     self.logger.debug(f"Updated node info for job {job_id} in group {group_id}: {node}")
                     return
@@ -351,9 +366,11 @@ class ServiceManager:
         
         if completed == len(replica_statuses):
             group["status"] = "completed"
-        elif ready_or_running > 0:
+        # Only mark the group as fully running once ALL replicas are ready/running.
+        elif ready_or_running == len(replica_statuses):
             group["status"] = "running"
-        elif starting > 0:
+        # Otherwise, the group is still starting up (even if some replicas are ready).
+        elif starting > 0 or ready_or_running > 0:
             group["status"] = "starting"
         else:
             group["status"] = "pending"

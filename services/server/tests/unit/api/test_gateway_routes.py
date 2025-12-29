@@ -132,6 +132,7 @@ class TestGatewayAPI:
         """Test cancelling a service via POST status update"""
         mock_proxy.stop_service.return_value = True
         mock_proxy.service_manager.update_service_status.return_value = True
+        mock_proxy.get_service_group.return_value = None
         
         response = client.post(
             "/api/v1/services/test-123/status",
@@ -142,6 +143,23 @@ class TestGatewayAPI:
         assert data["service_id"] == "test-123"
         assert data["status"] == "cancelled"
         mock_proxy.stop_service.assert_called_once_with("test-123")
+
+    def test_update_service_status_cancelled_group(self, mock_proxy, client):
+        """Cancelling a service group via POST /services/{id}/status should cancel the whole group."""
+        mock_proxy.get_service_group.return_value = {"id": "sg-1"}
+        mock_proxy.update_service_group_status.return_value = {"success": True}
+
+        response = client.post(
+            "/api/v1/services/sg-1/status",
+            json={"status": "cancelled"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["service_id"] == "sg-1"
+        assert data["status"] == "cancelled"
+        mock_proxy.update_service_group_status.assert_called_once_with("sg-1", "cancelled")
+        mock_proxy.stop_service.assert_not_called()
     
     def test_update_service_status_invalid(self, mock_proxy, client):
         """Test invalid status value returns 400"""
@@ -309,6 +327,7 @@ class TestGatewayAPI:
     
     def test_get_service_targets(self, mock_proxy, client):
         """Service targets endpoint should emit Prometheus discovery format"""
+        mock_proxy.list_service_groups.return_value = []
         mock_proxy.list_services.return_value = [
             {"id": "svc-1", "recipe_name": "inference/vllm", "status": "running"}
         ]
@@ -326,11 +345,16 @@ class TestGatewayAPI:
         assert len(targets) == 1
         assert targets[0]["targets"] == ["mel2079:8001"]
         assert targets[0]["labels"]["service_id"] == "svc-1"
+        assert targets[0]["labels"]["group_id"] == "svc-1"
+        assert targets[0]["labels"]["replica_id"] == "svc-1"
+        assert targets[0]["labels"]["node_job_id"] == "svc-1"
+        mock_proxy.list_service_groups.assert_called_once()
         mock_proxy.list_services.assert_called_once()
         mock_proxy.get_service.assert_called_once_with("svc-1")
 
     def test_get_service_targets_starting(self, mock_proxy, client):
         """Service targets endpoint should include starting services with dummy target"""
+        mock_proxy.list_service_groups.return_value = []
         mock_proxy.list_services.return_value = [
             {"id": "svc-2", "recipe_name": "inference/vllm", "status": "starting"}
         ]
@@ -348,6 +372,39 @@ class TestGatewayAPI:
         assert len(targets) == 1
         assert targets[0]["targets"] == ["pending-svc-2"]
         assert targets[0]["labels"]["service_id"] == "svc-2"
+        assert targets[0]["labels"]["group_id"] == "svc-2"
+        assert targets[0]["labels"]["replica_id"] == "svc-2"
+        assert targets[0]["labels"]["node_job_id"] == "svc-2"
+
+    def test_get_service_targets_includes_groups_and_skips_replica_targets(self, mock_proxy, client):
+        """Replica deployments should be scraped via their group_id only, not per replica."""
+        mock_proxy.list_service_groups.return_value = [
+            {
+                "id": "sg-123",
+                "recipe_name": "inference/vllm-replicas",
+                "status": "starting",
+            }
+        ]
+        # A ready replica might be registered as an individual service; we must not emit it as a target.
+        mock_proxy.list_services.return_value = [
+            {"id": "123:8001", "recipe_name": "inference/vllm-replicas", "status": "running"},
+        ]
+        # get_service should never be called for the replica target because it is skipped.
+        mock_proxy.get_service.return_value = {
+            "id": "123:8001",
+            "recipe_name": "inference/vllm-replicas",
+            "status": "running",
+            "endpoint": "http://mel0001:8001",
+        }
+
+        response = client.get("/api/v1/services/targets")
+
+        assert response.status_code == 200
+        targets = response.json()
+        assert len(targets) == 1
+        assert targets[0]["labels"]["service_id"] == "sg-123"
+        assert targets[0]["labels"]["group_id"] == "sg-123"
+        assert targets[0]["targets"] == ["pending-sg-123"]
 
 
     def test_get_service_group_status(self, mock_proxy, client):
@@ -386,6 +443,31 @@ class TestGatewayAPI:
         assert "metric" in response.text
         assert response.headers["content-type"].startswith("text/plain")
         mock_proxy.get_service_metrics.assert_called_once_with("svc-1")
+
+    def test_get_service_metrics_uses_cache_on_failure(self, mock_proxy, client):
+        """Service metrics should fall back to cached metrics on transient failures."""
+        from api import routes as api_routes
+
+        api_routes._clear_service_metrics_cache()
+
+        mock_proxy.get_service_metrics.return_value = {
+            "success": True,
+            "metrics": "# HELP foo\nfoo 1\n",
+        }
+
+        first = client.get("/api/v1/services/svc-1/metrics")
+        assert first.status_code == 200
+        assert "foo 1" in first.text
+
+        mock_proxy.get_service_metrics.return_value = {
+            "success": False,
+            "error": "boom",
+        }
+
+        second = client.get("/api/v1/services/svc-1/metrics")
+        assert second.status_code == 200
+        assert "foo 1" in second.text
+        assert "service_metrics_proxy_stale" in second.text
 
     def test_get_service_metrics_qdrant(self, mock_proxy, client):
         """Service metrics route should handle vector DB recipes"""

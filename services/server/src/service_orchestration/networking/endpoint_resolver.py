@@ -1,10 +1,9 @@
-"""
-Endpoint resolver utility for determining service endpoints.
+"""Endpoint resolver utility for determining service endpoints.
 
 Unifies the logic for resolving HTTP endpoints of services running on SLURM.
 """
 
-from typing import Optional
+from typing import Optional, Dict, Any
 import logging
 
 from service_orchestration.recipes import RecipeLoader
@@ -26,6 +25,21 @@ class EndpointResolver:
         self.service_manager = service_manager
         self.recipe_loader = recipe_loader
         self.logger = logging.getLogger(__name__)
+
+        # Cache of explicitly registered endpoints.
+        # Keyed by service_id/replica_id (including composite ids like "job:port").
+        self._registered_endpoints: Dict[str, Dict[str, Any]] = {}
+
+    def register(self, replica_id: str, host: str, port: int) -> None:
+        """Register an endpoint for a service/replica.
+
+        This allows bypassing SLURM lookups once a replica is known-ready.
+        """
+        self._registered_endpoints[replica_id] = {"host": host, "port": int(port)}
+
+    def unregister(self, replica_id: str) -> None:
+        """Remove an endpoint from the local cache."""
+        self._registered_endpoints.pop(replica_id, None)
     
     def resolve(self, replica_id: str, default_port: Optional[int] = None) -> Optional[str]:
         """
@@ -50,17 +64,27 @@ class EndpointResolver:
             HTTP endpoint string (e.g., "http://mel0343:8002"), or None if resolution fails
         """
         try:
+            # Prefer explicitly registered endpoints.
+            cached = self._registered_endpoints.get(replica_id)
+            if cached:
+                return f"http://{cached['host']}:{cached['port']}"
+
             # Parse replica_id to extract job_id and optional port
             if ":" in replica_id:
                 # Composite format: "job_id:port"
                 job_id, port_str = replica_id.split(":", 1)
                 specified_port = int(port_str)
                 self.logger.debug(f"Parsed composite replica_id {replica_id}: job={job_id}, port={specified_port}")
+
+                replica_info = self.service_manager.get_replica_info(replica_id)
+                node_index = replica_info.get("node_index") if isinstance(replica_info, dict) else None
             else:
                 # Simple format: just job_id
                 job_id = replica_id
                 specified_port = None
                 self.logger.debug(f"Simple job ID: {job_id}")
+
+                node_index = None
             
             # Get job details from SLURM
             job_details = self.deployer.get_job_details(job_id)
@@ -69,11 +93,14 @@ class EndpointResolver:
                 self.logger.debug("No node information for job %s", job_id)
                 return None
             
-            # Extract the first node (master node for distributed jobs)
-            # The nodes field should already be parsed as a list by slurm.py
+            # Select the appropriate node. For composite replica IDs we try to
+            # use the replica's node_index (multi-node allocations).
             nodes = job_details["nodes"]
             if isinstance(nodes, list) and nodes:
-                node = str(nodes[0]).strip()
+                if isinstance(node_index, int) and 0 <= node_index < len(nodes):
+                    node = str(nodes[node_index]).strip()
+                else:
+                    node = str(nodes[0]).strip()
             else:
                 # Fallback: treat as string
                 node = str(nodes).strip()

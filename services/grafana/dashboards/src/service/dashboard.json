@@ -42,7 +42,7 @@
         "allowCustomValue": false,
         "current": {
           "text": "vllm-3664613",
-          "value": "3664613"
+          "value": "vllm-3664613"
         },
         "datasource": {
           "type": "prometheus",
@@ -63,34 +63,44 @@
         "type": "query"
       },
       {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "definition": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "hide": 2,
+        "name": "job_id",
+        "query": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
+        "regex": "/vllm-(.*)/",
+        "type": "query"
+      },
+      {
         "allowCustomValue": false,
         "current": {
+          "selected": true,
           "text": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "All"
           ],
           "value": [
-            "8001",
-            "8002",
-            "8002",
-            "8004"
+            "$__all"
           ]
         },
-        "definition": "label_values({service_id=\"$service\"},replica_no)",
+        "definition": "label_values({service_id=\"$service\"},replica_id)",
         "description": "",
+        "includeAll": true,
+        "allValue": ".*",
         "label": "replicas",
         "multi": true,
         "name": "replicas",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values({service_id=\"$service\"},replica_no)",
+          "query": "label_values({service_id=\"$service\"},replica_id)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 1,
-        "regex": "",
+        "regex": "/^(?!aggregate$).*/",
         "sort": 3,
         "type": "query"
       }

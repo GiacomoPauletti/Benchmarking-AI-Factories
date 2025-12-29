@@ -37,7 +37,7 @@
       },
       "direction": "forward",
       "editorMode": "code",
-      "expr": "{service_name=\"vllm-log\", filename=~\"/logs/vllm_${service}_replica_0\\\\.log\"} | logfmt | label_format level=detected_level",
+      "expr": "{job=\"vllm-log\", filename=~\"/logs/vllm_${replicas}\\\\.log\"} | logfmt | label_format level=detected_level",
       "queryType": "range",
       "refId": "A"
     }

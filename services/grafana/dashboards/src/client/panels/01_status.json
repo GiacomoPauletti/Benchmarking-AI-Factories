@@ -5,29 +5,18 @@
   },
   "fieldConfig": {
     "defaults": {
-      "custom": {
-        "fillOpacity": 70,
-        "hideFrom": {
-          "legend": false,
-          "tooltip": false,
-          "viz": false
-        },
-        "insertNulls": false,
-        "lineWidth": 0,
-        "spanNulls": 60000
-      },
       "mappings": [
         {
           "options": {
             "0": {
-              "color": "super-light-blue",
+              "color": "dark-blue",
               "index": 0,
-              "text": "Pending..."
+              "text": "Pending"
             },
             "1": {
-              "color": "blue",
+              "color": "super-light-blue",
               "index": 1,
-              "text": "Starting..."
+              "text": "Starting"
             },
             "2": {
               "color": "green",
@@ -37,62 +26,60 @@
             "3": {
               "color": "dark-green",
               "index": 3,
-              "text": "Completed"
+              "text": "Stopped"
             },
             "4": {
               "color": "dark-red",
               "index": 4,
-              "text": "Failed !"
+              "text": "Failed"
             },
             "5": {
-              "color": "red",
+              "color": "yellow",
               "index": 5,
               "text": ""
             }
           },
           "type": "value"
         }
-      ]
+      ],
+      "max": 5,
+      "min": 0
     },
     "overrides": []
   },
   "gridPos": {
-    "h": 6,
+    "h": 4,
     "w": 24,
     "x": 0,
     "y": 0
   },
   "id": 1,
   "options": {
-    "alignValue": "left",
-    "legend": {
-      "displayMode": "list",
-      "placement": "bottom",
-      "showLegend": true
+    "colorMode": "background",
+    "graphMode": "none",
+    "justifyMode": "auto",
+    "orientation": "auto",
+    "reduceOptions": {
+      "calcs": [
+        "lastNotNull"
+      ],
+      "fields": "",
+      "values": false
     },
-    "mergeValues": true,
-    "rowHeight": 1.2,
-    "showValue": "always",
-    "tooltip": {
-      "mode": "single",
-      "sort": "none"
-    }
+    "textMode": "auto",
+    "wideLayout": true
   },
-  "pluginVersion": "12.3.0",
+  "pluginVersion": "10.0.0",
   "targets": [
     {
       "datasource": {
         "type": "prometheus",
         "uid": "prom"
       },
-      "editorMode": "code",
-      "expr": "service_status_info{service_id=\"$service\"}",
-      "instant": false,
-      "legendFormat": "{{replica_id}}",
-      "range": true,
+      "expr": "(client_group_status_info{group_id=\"$group_id\"} unless (client_group_status_info{group_id=\"$group_id\"} == 3)) or (((client_group_status_info{group_id=\"$group_id\"} == 3) * 3) and (changes(client_group_status_info{group_id=\"$group_id\"}[15s]) > 0))",
       "refId": "A"
     }
   ],
   "title": "Status",
-  "type": "state-timeline"
+  "type": "stat"
 }

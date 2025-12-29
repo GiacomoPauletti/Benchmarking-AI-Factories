@@ -1,0 +1,147 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": false,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prom"
+        },
+        "definition": "label_values(client_group_status_info, group_id)",
+        "label": "Client Group",
+        "name": "group_id",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(client_group_status_info, group_id)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 3,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Client Dashboard",
+  "uid": "client_dashboard",
+  "version": 1,
+  "weekStart": "",
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "dark-blue",
+                  "index": 0,
+                  "text": "Pending"
+                },
+                "1": {
+                  "color": "super-light-blue",
+                  "index": 1,
+                  "text": "Starting"
+                },
+                "2": {
+                  "color": "green",
+                  "index": 2,
+                  "text": "Running"
+                },
+                "3": {
+                  "color": "dark-green",
+                  "index": 3,
+                  "text": "Stopped"
+                },
+                "4": {
+                  "color": "dark-red",
+                  "index": 4,
+                  "text": "Failed"
+                },
+                "5": {
+                  "color": "yellow",
+                  "index": 5,
+                  "text": ""
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "max": 5,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "(client_group_status_info{group_id=\"$group_id\"} unless (client_group_status_info{group_id=\"$group_id\"} == 3)) or (((client_group_status_info{group_id=\"$group_id\"} == 3) * 3) and (changes(client_group_status_info{group_id=\"$group_id\"}[15s]) > 0))",
+          "refId": "A"
+        }
+      ],
+      "title": "Status",
+      "type": "stat"
+    }
+  ]
+}

@@ -11,8 +11,10 @@ import socket
 import os
 import atexit
 import glob
+from prometheus_client import make_asgi_app, REGISTRY
 
 from api.routes import router
+from monitoring import ClientGroupCollector
 from client_manager.client_manager import ClientManager
 from ssh_manager import SSHManager
 from fastapi.middleware.cors import CORSMiddleware
@@ -97,9 +99,24 @@ app = FastAPI(
         {"name": "Client Groups", "description": "Create and manage client groups"},
         {"name": "Execution", "description": "Trigger client group execution"},
         {"name": "Monitoring", "description": "Prometheus metrics and targets"},
-        {"name": "Logs", "description": "Sync and manage SLURM job logs"}
+                {"name": "Logs", "description": "Sync and manage SLURM job logs"}
     ]
 )
+
+# Initialize ClientManager and register collector
+# Note: We rely on env vars for configuration in this context
+cm = ClientManager()
+try:
+    REGISTRY.register(ClientGroupCollector(cm))
+except ValueError:
+    # Already registered (e.g. during reload)
+    pass
+
+# Add Prometheus metrics endpoint
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
+
+# =================================== CORS MIDDLEWARE ===================================
 
 # Add CORS middleware
 app.add_middleware(
@@ -131,8 +148,11 @@ if __name__ == "__main__":
                        help="Port to bind to (default: 8002)")
     parser.add_argument("--container", action="store_true",
                        help="Enable container mode for client execution")
-    parser.add_argument("--account", default="p200981",
-                       help="SLURM account for job submission (default: p200981)")
+    parser.add_argument(
+        "--account",
+        default=os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776"),
+        help="SLURM account for job submission (default: $ORCHESTRATOR_ACCOUNT or p200776)"
+    )
     
     args = parser.parse_args()
     

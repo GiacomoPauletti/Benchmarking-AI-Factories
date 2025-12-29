@@ -14,13 +14,13 @@
   },
   "targets": [
     {
-      "expr": "rate(vllm:generation_tokens_total{service_id=\"$service\"}[$__interval])",
-      "legendFormat": "Generation TPS",
+      "expr": "rate(vllm:generation_tokens_total{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+      "legendFormat": "Generation TPS - {{replica_id}}",
       "refId": "A"
     },
     {
-      "expr": "rate(vllm:prompt_tokens_total{service_id=\"$service\"}[$__interval])",
-      "legendFormat": "Prompt TPS",
+      "expr": "rate(vllm:prompt_tokens_total{service_id=\"$service\", replica_id=~\"$replicas\"}[$__interval])",
+      "legendFormat": "Prompt TPS - {{replica_id}}",
       "refId": "B"
     }
   ],

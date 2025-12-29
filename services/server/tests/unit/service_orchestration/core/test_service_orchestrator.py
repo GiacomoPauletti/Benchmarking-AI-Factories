@@ -376,6 +376,34 @@ class TestServiceOrchestratorCore:
         assert "process_start_time_seconds" in result["metrics"]
         assert result["endpoint"] == "synthetic"
 
+    def test_get_service_metrics_service_group_pending_and_starting(self, orchestrator, mock_service_manager):
+        """Service-group metrics should expose service_status_info with correct numeric value."""
+        group_id = "sg-123"
+
+        # Pending group -> value 0
+        mock_service_manager.is_group.return_value = True
+        mock_service_manager.get_group_info.return_value = {
+            "id": group_id,
+            "status": "pending",
+            "created_at": "2025-12-11T10:00:00",
+        }
+        mock_service_manager.get_all_replicas_flat.return_value = []
+        orchestrator.service_manager = mock_service_manager
+
+        result = orchestrator.get_service_metrics(group_id)
+        assert result["success"] is True
+        assert f'service_status_info{{service_id="{group_id}",replica_id="aggregate"}} 0' in result["metrics"]
+
+        # Starting group -> value 1
+        mock_service_manager.get_group_info.return_value = {
+            "id": group_id,
+            "status": "starting",
+            "created_at": "2025-12-11T10:00:00",
+        }
+        result = orchestrator.get_service_metrics(group_id)
+        assert result["success"] is True
+        assert f'service_status_info{{service_id="{group_id}",replica_id="aggregate"}} 1' in result["metrics"]
+
     def test_get_metrics(self, orchestrator):
         """Test getting aggregated metrics"""
         orchestrator.metrics["total_requests"] = 100

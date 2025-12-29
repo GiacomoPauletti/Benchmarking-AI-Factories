@@ -215,7 +215,13 @@ class OrchestratorProxy:
     def list_service_groups(self) -> List[Dict[str, Any]]:
         """List all service groups via orchestrator"""
         response = self._make_request("GET", "/api/service-groups")
-        return response.get("service_groups", [])
+        # The orchestrator route returns a bare JSON array.
+        if isinstance(response, list):
+            return response
+        # Backward-compat: some implementations may wrap the list.
+        if isinstance(response, dict):
+            return response.get("service_groups", [])
+        return []
     
     def get_service_group(self, group_id: str) -> Optional[Dict[str, Any]]:
         """Get service group details via orchestrator"""
@@ -300,7 +306,16 @@ class OrchestratorProxy:
         Returns:
             Dict with success status and metrics or error information
         """
-        return self._make_request("GET", f"/api/services/{service_id}/metrics", params={"timeout": timeout}, json_data=True)
+        # Ensure the SSH tunnel request honors the same timeout budget as the
+        # upstream caller (typically Prometheus scrape_timeout), so a slow/loaded
+        # service does not cause the proxy endpoint to hang past the scrape.
+        return self._make_request(
+            "GET",
+            f"/api/services/{service_id}/metrics",
+            params={"timeout": timeout},
+            timeout=timeout,
+            json_body=True,
+        )
 
     def stop_orchestrator(self) -> bool:
         """Stop the orchestrator job via SLURM."""

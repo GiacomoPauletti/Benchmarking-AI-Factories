@@ -4,6 +4,7 @@ import os
 import logging
 import subprocess
 from pathlib import Path
+from requests import exceptions as requests_exceptions
 
 from ssh_manager import SSHManager
 
@@ -20,7 +21,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
     Deploys load generator jobs to test vLLM services.
     """
 
-    def __init__(self, load_config: dict, account: str = "p200981", use_container: bool = False):
+    def __init__(self, load_config: dict, account: str = os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776"), use_container: bool = False):
         """Initialize SLURM client dispatcher.
         
         Args:
@@ -30,7 +31,7 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         """
         self._load_config = load_config
         self._use_container = use_container
-        self._account = account
+        self._account = account or os.environ.get("ORCHESTRATOR_ACCOUNT", "p200776")
         
         # Initialize SSH manager for all remote operations
         self._ssh_manager = SSHManager()
@@ -159,14 +160,14 @@ class SlurmClientDispatcher(AbstractClientDispatcher):
         # - qos, time_limit, account, environment, current_working_directory
         job_config = {
             'account': self._account,
-            'qos': 'short', 
+            'qos': 'default', 
             'time_limit': {
                 'number': time_limit,
                 'set': True
             },
             'name': f'ai-factory-loadgen-{group_id}',
             'partition': 'cpu',
-            'nodes': '1',
+            'nodes': 1,
             'tasks': 1,
             'cpus_per_task': 2,  # Async I/O workload only needs 2 CPUs regardless of client count
             'current_working_directory': self._remote_logs_dir,
@@ -367,6 +368,10 @@ exit $container_exit_code
             Tuple of (success: bool, response_data: dict)
         """
         try:
+            # Ensure SSH tunnel is listening on the expected port.
+            # The tunnel is created at service startup, but can die; this makes submission self-healing.
+            self._ssh_manager.setup_slurm_rest_tunnel(local_port=self._rest_api_port)
+
             # Get fresh SLURM token on each submission (tokens are cheap via SSH)
             logger.debug("Fetching fresh SLURM token...")
             token = self._ssh_manager.get_slurm_token()
@@ -388,12 +393,25 @@ exit $container_exit_code
             logger.info(f"Submitting job to {self._base_url}/job/submit")
             logger.info(f"Payload: {json.dumps(payload, indent=2)}")
             logger.info(f"Headers: X-SLURM-USER-NAME={headers['X-SLURM-USER-NAME']}, token length={len(headers['X-SLURM-USER-TOKEN'])}")
-            response = requests.post(
-                f"{self._base_url}/job/submit", 
-                headers=headers, 
-                json=payload,
-                timeout=30
-            )
+
+            def _post_submit():
+                return requests.post(
+                    f"{self._base_url}/job/submit",
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
+                )
+
+            try:
+                response = _post_submit()
+            except requests_exceptions.ConnectionError as e:
+                logger.warning(
+                    "Connection to SLURM REST tunnel failed; attempting to recreate tunnel and retry once. "
+                    f"error={e}"
+                )
+                # Best-effort: recreate the tunnel and retry once.
+                self._ssh_manager.setup_slurm_rest_tunnel(local_port=self._rest_api_port)
+                response = _post_submit()
 
             if not response.ok:
                 logger.error(f"Failed to submit SLURM job: HTTP {response.status_code}")
@@ -407,4 +425,9 @@ exit $container_exit_code
                 
         except Exception as e:
             logger.exception(f"Error submitting SLURM job via SSH tunnel: {e}")
-            return False, {"error": str(e)} 
+            return False, {
+                "error": (
+                    f"SLURM REST submission failed (tunnel localhost:{self._rest_api_port}). "
+                    f"{str(e)}"
+                )
+            }
