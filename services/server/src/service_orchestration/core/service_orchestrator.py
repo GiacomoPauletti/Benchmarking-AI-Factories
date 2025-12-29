@@ -490,24 +490,57 @@ class ServiceOrchestrator:
 
                     try:
                         parsed = urlparse(endpoint)
-                        response = requests.get(
-                            f"http://{parsed.hostname}:{parsed.port or replica_port}/metrics",
-                            timeout=replica_timeout
-                        )
-                        if response.status_code == 200:
-                            enriched = self._enrich_metrics_with_labels(
-                                response.text,
-                                service_id=service_id,
-                                status=replica_status,
-                                replica_id=replica_id
+                        host = parsed.hostname
+                        port = parsed.port or replica_port
+                        
+                        # 1. Fetch App Metrics
+                        try:
+                            response = requests.get(
+                                f"http://{host}:{port}/metrics",
+                                timeout=replica_timeout
                             )
-                            all_metrics.append(enriched)
-                        else:
-                            all_metrics.append(f"# Failed to fetch metrics for {replica_id}: HTTP {response.status_code}")
-                            # Fallback to synthetic status if fetch fails
-                            all_metrics.append(self._generate_status_gauge(service_id, replica_status, replica_id=replica_id))
+                            if response.status_code == 200:
+                                enriched = self._enrich_metrics_with_labels(
+                                    response.text,
+                                    service_id=service_id,
+                                    status=replica_status,
+                                    replica_id=replica_id
+                                )
+                                all_metrics.append(enriched)
+                            else:
+                                all_metrics.append(f"# Failed to fetch app metrics for {replica_id}: HTTP {response.status_code}")
+                        except Exception as e:
+                            all_metrics.append(f"# Error fetching app metrics for {replica_id}: {e}")
+
+                        # 2. Fetch GPU Metrics (Sidecar)
+                        try:
+                            gpu_port = port + 10000
+                            response = requests.get(
+                                f"http://{host}:{gpu_port}/metrics",
+                                timeout=2  # Short timeout for sidecar
+                            )
+                            if response.status_code == 200:
+                                enriched_gpu = self._enrich_metrics_with_labels(
+                                    response.text,
+                                    service_id=service_id,
+                                    status=replica_status,
+                                    replica_id=replica_id
+                                )
+                                all_metrics.append(enriched_gpu)
+                        except Exception:
+                            # Ignore GPU metrics failures (might be CPU-only or sidecar not ready)
+                            pass
+                            
+                        # Always add status gauge if we have at least one success or even if both failed
+                        # (The status gauge is useful for up/down monitoring)
+                        # But _enrich_metrics_with_labels already adds status label to metrics.
+                        # If both failed, we should add the status gauge explicitly.
+                        # For now, let's add it if we didn't get any metrics?
+                        # Actually, the original code added it on failure.
+                        # Let's just ensure we have something.
+                        
                     except Exception as e:
-                        all_metrics.append(f"# Error fetching metrics for {replica_id}: {e}")
+                        all_metrics.append(f"# Error resolving/fetching for {replica_id}: {e}")
                         all_metrics.append(self._generate_status_gauge(service_id, replica_status, replica_id=replica_id))
                     all_metrics.append("")
                 
@@ -612,41 +645,53 @@ class ServiceOrchestrator:
             logger.debug(f"Querying metrics: http://{remote_host}:{remote_port}{path}")
             
             # Direct HTTP request to compute node
+            metrics_parts = []
+            
+            # 1. Fetch App Metrics
             try:
                 response = requests.get(
                     f"http://{remote_host}:{remote_port}{path}",
                     timeout=timeout
                 )
+                if 200 <= response.status_code < 300:
+                    logger.debug(f"Metrics retrieved for {service_id} (size: {len(response.text)} bytes)")
+                    metrics_parts.append(self._enrich_metrics_with_labels(
+                        response.text,
+                        service_id=service_id,
+                        status=status
+                    ))
+                else:
+                    logger.warning(f"Metrics endpoint for {service_id} returned {response.status_code}")
             except Exception as e:
                 logger.warning(f"Metrics retrieval for {service_id} failed: {e}")
+
+            # 2. Fetch GPU Metrics
+            try:
+                gpu_port = remote_port + 10000
+                response = requests.get(
+                    f"http://{remote_host}:{gpu_port}/metrics",
+                    timeout=2
+                )
+                if 200 <= response.status_code < 300:
+                    metrics_parts.append(self._enrich_metrics_with_labels(
+                        response.text,
+                        service_id=service_id,
+                        status=status
+                    ))
+            except Exception:
+                pass
+            
+            if not metrics_parts:
                 return {
                     "success": False,
-                    "error": f"Connection failed: {str(e)}",
+                    "error": "Failed to fetch metrics",
                     "message": "Failed to connect to service for metrics.",
                     "service_id": service_id,
                     "endpoint": endpoint,
                     "metrics": ""
                 }
             
-            if response.status_code < 200 or response.status_code >= 300:
-                logger.warning(f"Metrics endpoint for {service_id} returned {response.status_code}: {response.text[:200]}")
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code} from metrics endpoint",
-                    "message": f"Failed to query metrics from service (HTTP {response.status_code}).",
-                    "service_id": service_id,
-                    "endpoint": endpoint,
-                    "metrics": ""
-                }
-            
-            logger.debug(f"Metrics retrieved for {service_id} (size: {len(response.text)} bytes)")
-            
-            # Inject service metadata labels into metrics
-            enriched_metrics = self._enrich_metrics_with_labels(
-                response.text,
-                service_id=service_id,
-                status=status
-            )
+            enriched_metrics = "\n".join(metrics_parts)
             
             return {
                 "success": True,

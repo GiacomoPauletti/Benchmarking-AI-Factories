@@ -91,6 +91,8 @@ declare -a REPLICA_PIDS=()
                 else:
                     tensor_parallel = gpu_per_replica
                 
+                exporter_port = port + 10000
+                
                 # Use srun --exact for proper resource isolation per replica
                 # --nodes=1 ensures each replica runs on exactly one node
                 # --relative=<node_idx> selects which node within the allocation
@@ -110,6 +112,11 @@ srun --nodes=1 --ntasks=1 --relative={node_idx} --exact --gpus-per-task={gpu_per
         export TRANSFORMERS_CACHE=/hf_cache
         export HF_DATASETS_CACHE=/hf_cache/datasets
         
+        # Start GPU Exporter
+        echo 'Starting GPU exporter on port {exporter_port}...'
+        python3 /workspace/src/service_orchestration/exporters/gpu_exporter.py {exporter_port} > {paths.log_dir}/gpu_exporter_${{SLURM_JOB_ID}}:{exporter_port}.log 2>&1 &
+        EXPORTER_PID=\$!
+        
         python3 -m vllm.entrypoints.openai.api_server \\
             --model $VLLM_MODEL \\
             --host 0.0.0.0 \\
@@ -117,6 +124,9 @@ srun --nodes=1 --ntasks=1 --relative={node_idx} --exact --gpus-per-task={gpu_per
             --tensor-parallel-size {tensor_parallel} \\
             {max_len_flag}
             --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
+            
+        # Kill exporter when vLLM exits
+        kill \$EXPORTER_PID
     " > {paths.log_dir}/vllm_${{SLURM_JOB_ID}}:{port}.log 2>&1 &
 
 REPLICA_PIDS+=($!)
