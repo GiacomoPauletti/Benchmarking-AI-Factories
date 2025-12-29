@@ -109,7 +109,7 @@
                 ],
                 "method": "POST",
                 "queryParams": [],
-                "url": "http://${server}:${port}/api/v1/services/${__series.name}/status"
+                "url": "http://${server}:${port}/api/v1/services/${__field.labels.service_id}/status"
               },
               "style": {
                 "backgroundColor": "#F2495C"
