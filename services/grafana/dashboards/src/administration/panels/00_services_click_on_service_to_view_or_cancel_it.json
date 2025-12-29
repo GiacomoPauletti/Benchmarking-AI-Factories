@@ -18,7 +18,7 @@
             ],
             "method": "POST",
             "queryParams": [],
-            "url": "http://${server}:${port}/api/v1/services/${__series.name}/status"
+            "url": "http://${server}:${port}/api/v1/services/${__field.labels.service_id}/status"
           },
           "style": {
             "backgroundColor": "#F2495C"
@@ -42,7 +42,7 @@
         {
           "targetBlank": true,
           "title": "Details",
-          "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}&var-port=${port:queryparam}&var-service=${__series.name}"
+          "url": "/d/adr8rsf/service?orgId=1&timezone=browser&var-server=${server:queryparam}&var-port=${port:queryparam}&var-service=${__field.labels.service_id}"
         }
       ],
       "mappings": [
@@ -115,9 +115,9 @@
         "uid": "prom"
       },
       "editorMode": "code",
-      "expr": "max by (service_id) (service_status_info{instance=\"server:8001\"} == 5) or max by (service_id) (service_status_info{instance=\"server:8001\"} == 4) or min by (service_id) (service_status_info{instance=\"server:8001\"})",
+      "expr": "max by (service_id) (service_status_info{instance=\"server:8001\"}) <= 2",
       "instant": false,
-      "legendFormat": "{{service_id}}",
+      "legendFormat": "Service {{service_id}}",
       "range": true,
       "refId": "A"
     },
@@ -127,7 +127,7 @@
         "uid": "prom"
       },
       "editorMode": "code",
-      "expr": "(client_group_status_info unless (client_group_status_info == 3)) or (((client_group_status_info == 3) * 3) and on (group_id) (changes(client_group_status_info[15s]) > 0))",
+      "expr": "client_group_status_info <= 2",
       "instant": false,
       "legendFormat": "Benchmark {{group_id}}",
       "range": true,
