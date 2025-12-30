@@ -750,27 +750,37 @@ def get_vllm_model_options():
     ```
     """
     try:
-        # Get hardcoded examples
-        info = get_architecture_info()
-        examples = info.get("examples", {})
-        options = [{"label": label, "value": value} for label, value in examples.items()]
+        options = []
+        
+        # Always include a small model for testing
+        options.append({
+            "label": "GPT-2 (Small, for testing)",
+            "value": "gpt2"
+        })
         
         # Fetch popular models from HuggingFace
         try:
             # Use a reasonable limit to keep response size manageable but useful
-            hf_models = search_hf_models(limit=50, sort_by="downloads")
-            existing_values = {opt["value"] for opt in options}
+            hf_models = search_hf_models(limit=100, sort_by="downloads")
             
             for model in hf_models:
-                if model["id"] not in existing_values:
-                    options.append({
-                        "label": f"{model['id']} ({model.get('downloads', 0)} downloads)",
-                        "value": model["id"]
-                    })
+                # Skip gpt2 if it comes back in search to avoid duplicate
+                if model["id"] == "gpt2":
+                    continue
+                    
+                options.append({
+                    "label": f"{model['id']} ({model.get('downloads', 0)} downloads)",
+                    "value": model["id"]
+                })
         except Exception as e:
             logger.warning(f"Failed to fetch dynamic models from HF: {e}")
-            # Continue with just examples if HF fetch fails
-            pass
+            # Fallback to static examples if HF fetch fails
+            info = get_architecture_info()
+            examples = info.get("examples", {})
+            # Filter out gpt2 since we added it manually
+            for label, value in examples.items():
+                if value != "gpt2":
+                    options.append({"label": label, "value": value})
             
         return options
     except Exception as e:
