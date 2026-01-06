@@ -30,6 +30,7 @@ class OrchestratorSettings:
     apptainer_tmpdir_base: str
     apptainer_cachedir_base: str
     fake_home_base: str
+    remote_sif_dir: Optional[str]
 
 
 def load_orchestrator_settings() -> OrchestratorSettings:
@@ -47,7 +48,8 @@ def load_orchestrator_settings() -> OrchestratorSettings:
         time_limit_minutes=int(os.getenv("ORCHESTRATOR_TIME_LIMIT_MINUTES", "30")),
         apptainer_tmpdir_base=os.getenv("APPTAINER_TMPDIR_BASE", "/tmp/apptainer").rstrip("/"),
         apptainer_cachedir_base=os.getenv("APPTAINER_CACHEDIR_BASE", "/tmp/apptainer-cache").rstrip("/"),
-        fake_home_base=os.getenv("REMOTE_FAKE_HOME_BASE", "/tmp/fake-home").rstrip("/")
+        fake_home_base=os.getenv("REMOTE_FAKE_HOME_BASE", "/tmp/fake-home").rstrip("/"),
+        remote_sif_dir=os.getenv("REMOTE_SIF_DIR")
     )
 
 
@@ -64,6 +66,10 @@ def get_orchestrator_script(remote_base_path: str, settings: OrchestratorSetting
     tmpdir = f"{settings.apptainer_tmpdir_base}-$USER-$$"
     cachedir = f"{settings.apptainer_cachedir_base}-$USER"
     fake_home = f"{settings.fake_home_base}-$USER"
+    
+    # Determine SIF directory - use remote_sif_dir if set (e.g. scratch), otherwise default to project dir
+    sif_dir_script = f'"{settings.remote_sif_dir}"' if settings.remote_sif_dir else '"${ORCH_DIR}"'
+
     return f"""#!/bin/bash
 # Load modules
 module load {settings.env_module}
@@ -97,7 +103,9 @@ echo "ORCHESTRATOR_URL=http://${{ORCHESTRATOR_HOST}}:${{ORCHESTRATOR_PORT}}" > "
 
 # Define paths
 ORCH_DIR="${{BENCHMARK_DIR}}/src/service_orchestration"
-SIF_PATH="${{ORCH_DIR}}/orchestrator.sif"
+SIF_DIR={sif_dir_script}
+mkdir -p "$SIF_DIR"
+SIF_PATH="${{SIF_DIR}}/orchestrator.sif"
 DEF_PATH="${{ORCH_DIR}}/orchestrator.def"
 
 # Function to validate if SIF is a valid Singularity/Apptainer image
