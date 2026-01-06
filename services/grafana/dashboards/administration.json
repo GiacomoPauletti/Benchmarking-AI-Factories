@@ -165,8 +165,13 @@
                   "text": "Failed !"
                 },
                 "5": {
-                  "color": "yellow",
+                  "color": "transparent",
                   "index": 5,
+                  "text": ""
+                },
+                "6": {
+                  "color": "transparent",
+                  "index": 6,
                   "text": ""
                 }
               },
@@ -206,7 +211,7 @@
             "uid": "prom"
           },
           "editorMode": "code",
-          "expr": "max by (service_id) (service_status_info{instance=\"server:8001\"}) <= 2",
+          "expr": "max by (service_id) (service_status_info{instance=\"server:8001\"}) and max by (service_id) (service_status_info{instance=\"server:8001\"}) <= 2",
           "instant": false,
           "legendFormat": "Service {{service_id}}",
           "range": true,
@@ -218,7 +223,7 @@
             "uid": "prom"
           },
           "editorMode": "code",
-          "expr": "client_group_status_info <= 2",
+          "expr": "client_group_status_info",
           "instant": false,
           "legendFormat": "Benchmark {{group_id}}",
           "range": true,

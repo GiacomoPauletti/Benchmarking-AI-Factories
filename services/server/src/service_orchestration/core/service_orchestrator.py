@@ -125,6 +125,8 @@ class ServiceOrchestrator:
         """Start a new service (job) or service group (replica group)"""
         try:
             config = config or {}
+            logger.info(f"Starting service '{recipe_name}' with config: {config}")
+            
             # Load validated recipe
             recipe = self.recipe_loader.load(recipe_name)
             if not recipe:
@@ -682,13 +684,15 @@ class ServiceOrchestrator:
                 pass
             
             if not metrics_parts:
+                # If we couldn't get ANY remote metrics, return just the status
+                # This ensures we still report status for cancelled/failed/completed services
+                status_metric = self._generate_status_gauge(service_id, status, replica_id="aggregate")
                 return {
-                    "success": False,
-                    "error": "Failed to fetch metrics",
-                    "message": "Failed to connect to service for metrics.",
+                    "success": True,
+                    "metrics": status_metric,
                     "service_id": service_id,
                     "endpoint": endpoint,
-                    "metrics": ""
+                    "metrics_format": "prometheus_text_format"
                 }
             
             enriched_metrics = "\n".join(metrics_parts)
@@ -785,20 +789,21 @@ class ServiceOrchestrator:
             "running": 2,
             "completed": 3,
             "failed": 4,
-            "cancelled": 5
+            "cancelled": 5,
+            "unknown": 6
         }
         
         if not status:
             status = "unknown"
             
-        status_value = status_map.get(status.lower(), 0)
+        status_value = status_map.get(status.lower(), 6)
         # Only service_id as label - status is VALUE only to prevent series churn
         labels = f'service_id="{service_id}"'
         if replica_id:
             labels += f',replica_id="{replica_id}"'
         
         return '\n'.join([
-            '# HELP service_status_info Current status of the service (0=pending, 1=starting, 2=running, 3=completed, 4=failed, 5=cancelled)',
+            '# HELP service_status_info Current status of the service (0=pending, 1=starting, 2=running, 3=completed, 4=failed, 5=cancelled, 6=unknown)',
             '# TYPE service_status_info gauge',
             f'service_status_info{{{labels}}} {status_value}'
         ])
@@ -946,6 +951,11 @@ class ServiceOrchestrator:
         
         # Update group status
         self.service_manager.update_group_status(group_id, "cancelled")
+        
+        # Also update all replicas to cancelled to ensure UI reflects this immediately
+        # and prevents race conditions with SLURM polling (which might report 'completed' if purged)
+        for replica_id in self.service_manager.get_all_replica_ids(group_id):
+            self.service_manager.update_replica_status(replica_id, "cancelled")
         
         if failed_jobs:
             return {

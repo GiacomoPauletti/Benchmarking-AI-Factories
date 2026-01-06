@@ -82,7 +82,17 @@ async def create_service(
     try:
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"[DEBUG] create_service received: recipe_name={request.recipe_name}, config={request.config}")
+        
+        # Redact sensitive info from logs
+        log_config = (request.config or {}).copy()
+        if "environment" in log_config:
+            env = log_config["environment"].copy()
+            for key in ["HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN"]:
+                if key in env:
+                    env[key] = "[REDACTED]"
+            log_config["environment"] = env
+            
+        logger.info(f"[DEBUG] create_service received: recipe_name={request.recipe_name}, config={log_config}")
         response = orchestrator.start_service(
             recipe_name=request.recipe_name,
             config=request.config or {}
@@ -724,7 +734,7 @@ async def list_available_vllm_models():
 
 
 @router.get("/vllm/model-options")
-async def get_vllm_model_options():
+def get_vllm_model_options():
     """Get vLLM model options formatted for Grafana dropdown.
     
     Returns an array of label/value pairs suitable for use in Grafana Form Panel dropdowns.
@@ -740,10 +750,39 @@ async def get_vllm_model_options():
     ```
     """
     try:
-        info = get_architecture_info()
-        examples = info.get("examples", {})
-        # Convert examples dict to array of label/value objects
-        return [{"label": label, "value": value} for label, value in examples.items()]
+        options = []
+        
+        # Always include a small model for testing
+        options.append({
+            "label": "GPT-2 (Small, for testing)",
+            "value": "gpt2"
+        })
+        
+        # Fetch popular models from HuggingFace
+        try:
+            # Use a reasonable limit to keep response size manageable but useful
+            hf_models = search_hf_models(limit=100, sort_by="downloads")
+            
+            for model in hf_models:
+                # Skip gpt2 if it comes back in search to avoid duplicate
+                if model["id"] == "gpt2":
+                    continue
+                    
+                options.append({
+                    "label": f"{model['id']} ({model.get('downloads', 0)} downloads)",
+                    "value": model["id"]
+                })
+        except Exception as e:
+            logger.warning(f"Failed to fetch dynamic models from HF: {e}")
+            # Fallback to static examples if HF fetch fails
+            info = get_architecture_info()
+            examples = info.get("examples", {})
+            # Filter out gpt2 since we added it manually
+            for label, value in examples.items():
+                if value != "gpt2":
+                    options.append({"label": label, "value": value})
+            
+        return options
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

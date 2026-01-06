@@ -230,6 +230,14 @@ class Recipe(BaseModel):
         # Handle replica port
         if "replica_port" in config:
             data["environment"]["VLLM_PORT"] = str(config["replica_port"])
+            
+        # Handle model override (update environment for single-node jobs)
+        if "model" in config:
+            data["environment"]["VLLM_MODEL"] = config["model"]
+            
+        # Handle max model len override
+        if "max_model_len" in config:
+            data["environment"]["VLLM_MAX_MODEL_LEN"] = str(config["max_model_len"])
         
         # Copy other config values to the recipe
         for key in ['gpu_per_replica', 'base_port', 'nproc_per_node', 'master_port',

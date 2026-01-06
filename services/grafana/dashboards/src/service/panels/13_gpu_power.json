@@ -83,7 +83,7 @@
       },
       "editorMode": "code",
       "expr": "aif_gpu_power_watts{service_id=\"$service\", replica_id=~\"$replicas\"}",
-      "legendFormat": "GPU Power - {{replica_id}}",
+      "legendFormat": "GPU Power - {{replica_id}} (GPU {{gpu_index}})",
       "range": true,
       "refId": "A"
     }

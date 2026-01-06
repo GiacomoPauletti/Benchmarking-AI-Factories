@@ -39,6 +39,13 @@ class JobBuilder:
         merged_recipe = recipe.merge_config(config)
         resources = merged_recipe.resources
         
+        # Inject HF_TOKEN from server environment if present
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
+        if hf_token:
+            merged_recipe.environment["HF_TOKEN"] = hf_token
+            # Also set legacy var for compatibility
+            merged_recipe.environment["HUGGINGFACEHUB_API_TOKEN"] = hf_token
+        
         # Calculate tasks/gpus for replica groups
         if isinstance(merged_recipe, InferenceRecipe) and merged_recipe.is_replica_group:
             ntasks = merged_recipe.replicas_per_node
@@ -115,6 +122,13 @@ class JobBuilder:
         """
         # Get container paths from recipe
         container_paths = recipe.get_container_paths(str(self.recipes_dir))
+        
+        # Check for REMOTE_SIF_DIR override
+        remote_sif_dir = os.getenv("REMOTE_SIF_DIR")
+        if remote_sif_dir:
+             # Use the filename from the original path
+             sif_filename = Path(container_paths["sif_path"]).name
+             container_paths["sif_path"] = str(Path(remote_sif_dir) / sif_filename)
         
         paths = ScriptPaths(
             def_path=container_paths["def_path"],
