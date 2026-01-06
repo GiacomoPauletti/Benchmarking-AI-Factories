@@ -18,7 +18,7 @@ local.file_match "local_files" {
 loki.source.file "log_scrape" {
     targets    = local.file_match.local_files.targets
     forward_to = [loki.write.local.receiver]
-    tail_from_end = true
+    tail_from_end = false
 }
 
 loki.write "local" {

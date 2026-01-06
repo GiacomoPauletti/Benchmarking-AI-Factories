@@ -72,7 +72,7 @@
         "hide": 2,
         "name": "job_id",
         "query": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
-        "regex": "/vllm-(.*)/",
+        "regex": "/.*-(\\d+)/",
         "type": "query"
       },
       {
