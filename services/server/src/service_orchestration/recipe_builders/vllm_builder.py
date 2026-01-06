@@ -32,11 +32,17 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
             config: User-provided config overrides
         """
         project_ws = paths.remote_base_path.rstrip("/")
-        hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
+        hf_cache = self.remote_hf_cache_path
         nv_flag = "--nv" if resources.gpu else ""
         
         # Read configuration - prefer config overrides, then recipe values
         model = config.get("model", recipe.environment.get("VLLM_MODEL", "Qwen/Qwen2.5-0.5B-Instruct"))
+        
+        # Log the selected model for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Building vLLM replica group with model: {model} (from config: {config.get('model')}, env: {recipe.environment.get('VLLM_MODEL')})")
+        
         # Only set max_model_len if explicitly provided; gpt2 and similar models derive smaller limits
         max_len = config.get("max_model_len") or recipe.environment.get("VLLM_MAX_MODEL_LEN") or ""
         max_len_flag = "--max-model-len $VLLM_MAX_MODEL_LEN \\\"" if max_len else ""

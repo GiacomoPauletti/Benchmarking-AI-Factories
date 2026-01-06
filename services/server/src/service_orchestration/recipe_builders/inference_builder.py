@@ -33,6 +33,15 @@ class InferenceRecipeBuilder(RecipeScriptBuilder):
         self.apptainer_cachedir_base = os.getenv("APPTAINER_CACHEDIR_BASE", "/tmp/apptainer-cache").rstrip("/")
         self.fake_home_base = os.getenv("REMOTE_FAKE_HOME_BASE", "/tmp/fake-home").rstrip("/")
         self.remote_hf_cache_dirname = os.getenv("REMOTE_HF_CACHE_DIRNAME", "huggingface_cache").strip("/")
+        
+        # Resolve full path to HF cache
+        # If REMOTE_HF_CACHE_PATH is set, use it directly
+        # Otherwise, construct it from base path and dirname
+        hf_cache_path_env = os.getenv("REMOTE_HF_CACHE_PATH")
+        if hf_cache_path_env:
+            self.remote_hf_cache_path = hf_cache_path_env.rstrip("/")
+        else:
+            self.remote_hf_cache_path = f"{self.remote_base_path.rstrip('/')}/{self.remote_hf_cache_dirname}"
     
     def build_environment_section(self, recipe_env: Dict[str, str]) -> str:
         """Build environment variable exports for inference containers."""
@@ -96,7 +105,7 @@ fi
                        recipe: "Recipe") -> str:
         """Build single-node container run block for inference."""
         project_ws = paths.remote_base_path.rstrip("/")
-        hf_cache = f"{project_ws}/{self.remote_hf_cache_dirname}"
+        hf_cache = self.remote_hf_cache_path
         nv_flag = "--nv" if resources.gpu else ""
         
         # Determine ports

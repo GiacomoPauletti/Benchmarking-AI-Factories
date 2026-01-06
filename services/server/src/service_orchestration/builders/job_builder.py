@@ -123,6 +123,13 @@ class JobBuilder:
         # Get container paths from recipe
         container_paths = recipe.get_container_paths(str(self.recipes_dir))
         
+        # Check for REMOTE_SIF_DIR override
+        remote_sif_dir = os.getenv("REMOTE_SIF_DIR")
+        if remote_sif_dir:
+             # Use the filename from the original path
+             sif_filename = Path(container_paths["sif_path"]).name
+             container_paths["sif_path"] = str(Path(remote_sif_dir) / sif_filename)
+        
         paths = ScriptPaths(
             def_path=container_paths["def_path"],
             sif_path=container_paths["sif_path"],
