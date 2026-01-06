@@ -9,8 +9,8 @@ import logging
 import signal
 import sys
 import json
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, Response
@@ -18,15 +18,40 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Clean package imports
 from api.routes import router, set_orchestrator_proxy
+from api.orchestrator_routes import router as orchestrator_router, set_orchestrator_control_functions
 from logging_setup import setup_logging
-from orchestrator_initializer import initialize_orchestrator_proxy
+from orchestrator_initializer import (
+    initialize_orchestrator_proxy,
+    load_orchestrator_settings,
+    submit_orchestrator_job,
+    wait_for_orchestrator_url,
+    wait_for_orchestrator_ready,
+)
 
 # Global logger and orchestrator proxy
 logger = None
 orchestrator_proxy = None
 orchestrator_monitor_task: Optional[asyncio.Task] = None
+ssh_manager_instance = None  # Keep SSH manager for on-demand orchestrator start
 
 
+@dataclass
+class OrchestratorSession:
+    """Extended state for orchestrator session tracking."""
+
+    alive: bool = False
+    last_check: Optional[str] = None
+    last_error: Optional[str] = "Orchestrator not started"
+    job_id: Optional[str] = None
+    started_at: Optional[datetime] = None
+    time_limit_minutes: Optional[int] = None
+    orchestrator_url: Optional[str] = None
+
+
+orchestrator_session = OrchestratorSession()
+
+
+# Legacy alias for backward compatibility
 @dataclass
 class OrchestratorHealthState:
     """Lightweight shared state for orchestrator availability."""
@@ -42,18 +67,169 @@ orchestrator_health = OrchestratorHealthState()
 def _set_orchestrator_health(alive: bool, error: Optional[str] = None) -> None:
     """Update orchestrator health state and log transitions."""
 
-    global orchestrator_health, logger
+    global orchestrator_health, orchestrator_session, logger
 
     previous = orchestrator_health.alive
     orchestrator_health.alive = alive
-    orchestrator_health.last_check = datetime.utcnow().isoformat() + "Z"
+    orchestrator_health.last_check = datetime.now(timezone.utc).isoformat()
     orchestrator_health.last_error = error
+
+    # Sync with session state
+    orchestrator_session.alive = alive
+    orchestrator_session.last_check = orchestrator_health.last_check
+    orchestrator_session.last_error = error
 
     if logger and previous != alive:
         if alive:
             logger.info("Orchestrator marked healthy")
         else:
             logger.warning("Orchestrator marked unhealthy: %s", error)
+
+
+def _get_orchestrator_session() -> OrchestratorSession:
+    """Get current orchestrator session state."""
+    return orchestrator_session
+
+
+async def _start_orchestrator_async(time_limit_minutes: int) -> dict:
+    """
+    Start the orchestrator on demand with a specified time limit.
+
+    Args:
+        time_limit_minutes: SLURM job time limit in minutes
+
+    Returns:
+        dict with 'success', 'job_id', and optionally 'error' keys
+    """
+    global orchestrator_proxy, orchestrator_session, orchestrator_monitor_task, ssh_manager_instance, logger
+
+    if ssh_manager_instance is None:
+        return {"success": False, "error": "SSH manager not initialized"}
+
+    try:
+        settings = load_orchestrator_settings()
+        # Override time limit with user-provided value
+        settings.time_limit_minutes = time_limit_minutes
+
+        remote_base_path = os.environ.get("REMOTE_BASE_PATH", "~/ai-factory-benchmarks")
+
+        # Resolve ~ if present
+        if remote_base_path.startswith("~"):
+            success, stdout, stderr = ssh_manager_instance.execute_remote_command("echo $HOME")
+            if success and stdout:
+                home_dir = stdout.strip()
+                remote_base_path = remote_base_path.replace("~", home_dir, 1)
+
+        if logger:
+            logger.info(f"Starting orchestrator with time_limit={time_limit_minutes} minutes")
+
+        # Submit SLURM job
+        success, message = submit_orchestrator_job(ssh_manager_instance, remote_base_path, settings)
+
+        if not success:
+            return {"success": False, "error": message}
+
+        # Extract job ID from message
+        job_id = None
+        if "Job submitted:" in message:
+            job_id = message.split("Job submitted:")[-1].strip()
+
+        # Update session state
+        orchestrator_session.job_id = job_id
+        orchestrator_session.started_at = datetime.now(timezone.utc)
+        orchestrator_session.time_limit_minutes = time_limit_minutes
+
+        # Wait for orchestrator URL
+        remote_env_file = f"{remote_base_path}/orchestrator.env"
+        orchestrator_url = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: wait_for_orchestrator_url(ssh_manager_instance, remote_env_file, timeout=120)
+        )
+
+        if not orchestrator_url:
+            orchestrator_session.last_error = "Timeout waiting for orchestrator URL"
+            return {"success": False, "job_id": job_id, "error": "Timeout waiting for orchestrator URL"}
+
+        orchestrator_session.orchestrator_url = orchestrator_url
+
+        # Wait for orchestrator to be ready
+        is_ready = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: wait_for_orchestrator_ready(ssh_manager_instance, orchestrator_url, timeout=180, default_port=settings.port)
+        )
+
+        if not is_ready:
+            orchestrator_session.last_error = "Orchestrator failed to become ready"
+            return {"success": False, "job_id": job_id, "error": "Orchestrator failed to become ready"}
+
+        # Create OrchestratorProxy
+        from orchestrator_proxy import OrchestratorProxy
+        orchestrator_proxy = OrchestratorProxy(
+            orchestrator_url=orchestrator_url,
+            ssh_manager=ssh_manager_instance,
+            job_id=job_id
+        )
+
+        # Inject into routes
+        set_orchestrator_proxy(orchestrator_proxy)
+        _set_orchestrator_health(True, None)
+
+        # Start health monitor if not running
+        if orchestrator_monitor_task is None or orchestrator_monitor_task.done():
+            orchestrator_monitor_task = asyncio.create_task(_orchestrator_monitor_loop())
+
+        if logger:
+            logger.info(f"✓ Orchestrator started successfully (job_id: {job_id})")
+
+        return {"success": True, "job_id": job_id}
+
+    except Exception as e:
+        error_msg = f"Failed to start orchestrator: {str(e)}"
+        if logger:
+            logger.exception(error_msg)
+        orchestrator_session.last_error = error_msg
+        return {"success": False, "error": error_msg}
+
+
+async def _stop_orchestrator_async() -> dict:
+    """
+    Stop the running orchestrator.
+
+    Returns:
+        dict with 'success' and optionally 'error' keys
+    """
+    global orchestrator_proxy, orchestrator_session, orchestrator_monitor_task, logger
+
+    try:
+        # Stop the orchestrator via proxy
+        if orchestrator_proxy:
+            try:
+                orchestrator_proxy.stop_orchestrator()
+            except Exception as e:
+                if logger:
+                    logger.warning(f"Error stopping orchestrator via proxy: {e}")
+
+        # Clear state
+        orchestrator_proxy = None
+        orchestrator_session.alive = False
+        orchestrator_session.job_id = None
+        orchestrator_session.started_at = None
+        orchestrator_session.time_limit_minutes = None
+        orchestrator_session.orchestrator_url = None
+        orchestrator_session.last_error = "Orchestrator stopped by user"
+
+        _set_orchestrator_health(False, "Orchestrator stopped by user")
+
+        if logger:
+            logger.info("Orchestrator stopped successfully")
+
+        return {"success": True}
+
+    except Exception as e:
+        error_msg = f"Failed to stop orchestrator: {str(e)}"
+        if logger:
+            logger.exception(error_msg)
+        return {"success": False, "error": error_msg}
 
 
 async def _orchestrator_monitor_loop(poll_interval: int = 10) -> None:
@@ -277,11 +453,12 @@ async def ready():
 
 # Include API routes
 app.include_router(router, prefix="/api/v1")
+app.include_router(orchestrator_router, prefix="/api/v1")
 
 @app.on_event("startup")
 async def on_startup():
-    """FastAPI startup event handler - set up SSH tunnel and wait for orchestrator."""
-    global logger, orchestrator_proxy, orchestrator_monitor_task
+    """FastAPI startup event handler - set up SSH manager for on-demand orchestrator control."""
+    global logger, ssh_manager_instance
     
     # SLURM REST API now uses the same SOCKS5 proxy as the orchestrator
     # No separate tunnel needed - SlurmClient will route through socks5h://localhost:1080
@@ -292,50 +469,30 @@ async def on_startup():
 
     try:
         from ssh_manager import SSHManager
-        ssh_manager = SSHManager()
-            
-        # Initialize OrchestratorProxy - this blocks until orchestrator is ready
-        if logger:
-            logger.info("Initializing orchestrator (may take up to 2 minutes)...")
-        else:
-            print("Initializing orchestrator (may take up to 2 minutes)...")
-            
-        orchestrator_proxy = initialize_orchestrator_proxy(ssh_manager)
+        ssh_manager_instance = SSHManager()
         
-        if orchestrator_proxy:
-            # Inject orchestrator proxy into routes module
-            set_orchestrator_proxy(orchestrator_proxy)
-            _set_orchestrator_health(True, None)
-
-            if logger:
-                logger.info("✓ Server is ready - orchestrator initialized successfully")
-            else:
-                print("✓ Server is ready - orchestrator initialized successfully")
-
-            orchestrator_monitor_task = asyncio.create_task(_orchestrator_monitor_loop())
+        # Register orchestrator control functions with the API router
+        set_orchestrator_control_functions(
+            get_session_fn=_get_orchestrator_session,
+            start_fn=_start_orchestrator_async,
+            stop_fn=_stop_orchestrator_async,
+        )
+        
+        if logger:
+            logger.info("✓ Server is ready - orchestrator control available via /api/v1/orchestrator/start")
+            logger.info("  Use POST /api/v1/orchestrator/start to launch the orchestrator on demand")
         else:
-            error_msg = (
-                "✗ CRITICAL: Orchestrator initialization FAILED - server is NOT ready!\n"
-                "The orchestrator container may be corrupted or failed to build.\n"
-                "Check logs.\n"
-                "The server will remain in unhealthy state until this is resolved."
-            )
-            if logger:
-                logger.error(error_msg)
-            else:
-                print(error_msg)
-            # Don't raise - let the server run but mark as not ready
-            # This allows health checks to show the issue
-            _set_orchestrator_health(False, "Failed to initialize orchestrator")
+            print("✓ Server is ready - orchestrator control available via /api/v1/orchestrator/start")
+            print("  Use POST /api/v1/orchestrator/start to launch the orchestrator on demand")
+        
+        # Mark as healthy but orchestrator not yet started
+        _set_orchestrator_health(False, "Orchestrator not started - use /api/v1/orchestrator/start")
                 
     except Exception as e:
         error_msg = (
             f"✗ CRITICAL: Server initialization FAILED: {e}\n"
-            "The orchestrator is required for the server to function.\n"
             "Possible causes:\n"
             "  - SSH connection to MeluXina failed\n"
-            "  - SLURM REST API tunnel failed\n"
-            "  - Orchestrator container build failed\n"
             "  - Network connectivity issues\n"
             "Check logs for more details."
         )
