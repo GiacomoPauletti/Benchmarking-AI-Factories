@@ -31,6 +31,11 @@ class VllmService(InferenceService):
         # Model name cache: {service_id: {"model": str, "endpoint": str, "timestamp": float}}
         self._model_cache: Dict[str, Dict[str, Any]] = {}
         self._model_cache_ttl = 3600  # Cache for 1 hour
+        
+        # Models list cache for get_models(): {service_id: {"response": dict, "timestamp": float}}
+        # Shorter TTL since this is for UI responsiveness - 2 minutes is enough
+        self._models_list_cache: Dict[str, Dict[str, Any]] = {}
+        self._models_list_cache_ttl = 120  # Cache for 2 minutes
 
     # ========== BaseService Abstract Properties ==========
     
@@ -64,6 +69,27 @@ class VllmService(InferenceService):
             "timestamp": time.time()
         }
         self.logger.debug(f"Model cached for {service_id}: {model}")
+
+    def _get_cached_models_list(self, service_id: str) -> Optional[Dict[str, Any]]:
+        """Get cached models list response if available and fresh."""
+        if service_id in self._models_list_cache:
+            cache_entry = self._models_list_cache[service_id]
+            age = time.time() - cache_entry["timestamp"]
+            if age < self._models_list_cache_ttl:
+                self.logger.debug(f"Models list cache HIT for {service_id} (age: {age:.1f}s)")
+                return cache_entry["response"]
+            else:
+                self.logger.debug(f"Models list cache STALE for {service_id} (age: {age:.1f}s)")
+                del self._models_list_cache[service_id]
+        return None
+    
+    def _cache_models_list(self, service_id: str, response: Dict[str, Any]):
+        """Cache the models list response for a service."""
+        self._models_list_cache[service_id] = {
+            "response": response,
+            "timestamp": time.time()
+        }
+        self.logger.debug(f"Models list cached for {service_id}: {response.get('models', [])}")
 
     # ========== Service Discovery ==========
 
@@ -176,7 +202,16 @@ class VllmService(InferenceService):
     # ========== InferenceService Abstract Methods ==========
 
     def get_models(self, service_id: str, timeout: int = 5) -> Dict[str, Any]:
-        """Query a running vLLM service for available models."""
+        """Query a running vLLM service for available models.
+        
+        Uses a TTL cache to avoid redundant network requests and improve UI responsiveness.
+        Cache entries are valid for 2 minutes.
+        """
+        # Check cache first for fast response
+        cached_response = self._get_cached_models_list(service_id)
+        if cached_response is not None:
+            return cached_response
+        
         exists, service_info, error = self._validate_service_exists(service_id)
         if not exists:
             error["models"] = []
@@ -208,11 +243,16 @@ class VllmService(InferenceService):
                 if model_id:
                     models.append(model_id)
         
-        return self._success_response(
+        response = self._success_response(
             models=models,
             service_id=service_id,
             endpoint=result.get("endpoint")
         )
+        
+        # Cache successful response for subsequent requests
+        self._cache_models_list(service_id, response)
+        
+        return response
 
     def prompt(self, service_id: str, prompt: str, **kwargs) -> Dict[str, Any]:
         """Send a prompt to a running vLLM service or service group.
