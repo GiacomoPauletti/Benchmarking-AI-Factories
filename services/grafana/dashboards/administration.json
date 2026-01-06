@@ -114,7 +114,11 @@
           "body": "Please confirm the action",
           "cancel": "Cancel",
           "columns": {
-            "include": ["name", "oldValue", "newValue"],
+            "include": [
+              "name",
+              "oldValue",
+              "newValue"
+            ],
             "name": "Label",
             "newValue": "New Value",
             "oldValue": "Old Value"
@@ -149,7 +153,7 @@
           }
         ],
         "initial": {
-          "code": "const status = context.panel.data.series && context.panel.data.series[0];\nif (status) {\n  const remainingField = status.fields.find(f => f.name === 'remaining_seconds');\n  const remaining = remainingField ? remainingField.values[0] : null;\n  if (remaining !== null && remaining !== undefined) {\n    const mins = Math.floor(remaining / 60);\n    const secs = remaining % 60;\n    context.panel.setFormValue({\n      'remaining_display': `${mins}m ${secs}s`\n    });\n  }\n}",
+          "code": "// Fetch orchestrator status and update display\nconst status = context.panel.data.series && context.panel.data.series[0];\nif (status) {\n  const remainingField = status.fields.find(f => f.name === 'remaining_seconds');\n  const remaining = remainingField ? remainingField.values[0] : null;\n  if (remaining !== null && remaining !== undefined) {\n    const mins = Math.floor(remaining / 60);\n    const secs = remaining % 60;\n    context.panel.setFormValue({\n      'remaining_display': `${mins}m ${secs}s`\n    });\n  }\n}",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,
@@ -262,7 +266,7 @@
           }
         }
       ],
-      "title": "🎛️ Orchestrator Control",
+      "title": "Orchestrator Control",
       "transformations": [],
       "type": "volkovlabs-form-panel"
     },
@@ -362,7 +366,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 0
       },
       "id": 4,
       "options": {
@@ -424,7 +428,7 @@
         "h": 8,
         "w": 10,
         "x": 0,
-        "y": 11
+        "y": 7
       },
       "id": 1,
       "options": {
@@ -850,7 +854,7 @@
         "h": 16,
         "w": 14,
         "x": 10,
-        "y": 11
+        "y": 7
       },
       "id": 3,
       "options": {
@@ -950,7 +954,7 @@
         "h": 8,
         "w": 10,
         "x": 0,
-        "y": 19
+        "y": 15
       },
       "id": 5,
       "options": {
