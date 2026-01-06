@@ -35,12 +35,12 @@ Logs:
 
 
 Grafana:
-- HFauth.
 - I would like to make the orchestrator launch/stop possible directly from grafana in a dedicated panel in the home dashboard, preferably on the top. I would like to visibly disable any other panels/controls while orchestrator is down.
     Launching the orchestrator should be done by specifying a time limit. The session should have a counter.
 
 Minor:
-- If I create 2 services, one does not appear in the benchmark dropdown.
+- Cache model query in start service, so that this panel doesn't take ages to load all the time.
+- Make time range default to last 30 minutes in all dashboards.
 
 Overall:
 - Make everything production-ready (release tag), update docs, host them on github (make it public). 
