@@ -379,3 +379,166 @@ class TestVllmServiceUnit:
         assert model is None
         mock_requests_get.assert_not_called()
         mock_deployer.get_job_status.assert_called_once_with("12345")
+
+
+class TestVllmServiceModelsListCache:
+    """Tests for the get_models() caching functionality.
+    
+    The models list cache improves UI responsiveness by avoiding redundant
+    network requests to the vLLM service when querying available models.
+    """
+
+    @pytest.fixture
+    def mock_deployer(self):
+        return Mock()
+
+    @pytest.fixture
+    def mock_service_manager(self):
+        return Mock()
+
+    @pytest.fixture
+    def mock_endpoint_resolver(self):
+        return Mock()
+
+    @pytest.fixture
+    def mock_logger(self):
+        return Mock()
+
+    @pytest.fixture
+    def vllm_service(self, mock_deployer, mock_service_manager, mock_endpoint_resolver, mock_logger):
+        return VllmService(
+            deployer=mock_deployer,
+            service_manager=mock_service_manager,
+            endpoint_resolver=mock_endpoint_resolver,
+            logger=mock_logger
+        )
+
+    def test_cache_initialization(self, vllm_service):
+        """Test that cache is properly initialized"""
+        assert hasattr(vllm_service, '_models_list_cache')
+        assert isinstance(vllm_service._models_list_cache, dict)
+        assert vllm_service._models_list_cache_ttl == 120  # 2 minutes
+
+    def test_cache_stores_and_retrieves_response(self, vllm_service):
+        """Test that caching stores and retrieves model list responses"""
+        service_id = "12345"
+        response = {
+            "success": True,
+            "models": ["model1", "model2"],
+            "service_id": service_id,
+            "endpoint": "http://node1:8000"
+        }
+        
+        # Cache should be empty initially
+        assert vllm_service._get_cached_models_list(service_id) is None
+        
+        # Store in cache
+        vllm_service._cache_models_list(service_id, response)
+        
+        # Should retrieve from cache
+        cached = vllm_service._get_cached_models_list(service_id)
+        assert cached is not None
+        assert cached["models"] == ["model1", "model2"]
+        assert cached["success"] is True
+
+    def test_cache_expires_after_ttl(self, vllm_service):
+        """Test that cache entries expire after TTL"""
+        import time
+        
+        service_id = "12345"
+        response = {"success": True, "models": ["model1"]}
+        
+        # Set a very short TTL for testing
+        vllm_service._models_list_cache_ttl = 0.1  # 100ms
+        
+        # Cache the response
+        vllm_service._cache_models_list(service_id, response)
+        
+        # Should be available immediately
+        assert vllm_service._get_cached_models_list(service_id) is not None
+        
+        # Wait for TTL to expire
+        time.sleep(0.15)
+        
+        # Should be expired now
+        assert vllm_service._get_cached_models_list(service_id) is None
+        
+        # Reset TTL
+        vllm_service._models_list_cache_ttl = 120
+
+    @patch('service_orchestration.services.base_service.requests')
+    def test_get_models_uses_cache(self, mock_requests, vllm_service, mock_service_manager, mock_endpoint_resolver):
+        """Test that get_models() uses cache and avoids redundant network requests"""
+        service_id = "12345"
+        
+        # Setup mocks for the first call
+        mock_service_manager.get_service.return_value = {
+            "id": service_id,
+            "name": "vllm-test",
+            "status": "running",
+            "recipe_name": "inference/vllm-single-node"
+        }
+        vllm_service._check_ready_and_discover_model = Mock(return_value=(True, "running", None))
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
+        
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = '{"data": [{"id": "model1"}]}'
+        mock_response.json.return_value = {"data": [{"id": "model1"}]}
+        mock_requests.request.return_value = mock_response
+        
+        # First call should hit the network
+        result1 = vllm_service.get_models(service_id)
+        assert result1["success"] is True
+        assert result1["models"] == ["model1"]
+        assert mock_requests.request.call_count == 1
+        
+        # Second call should use cache (no additional network calls)
+        result2 = vllm_service.get_models(service_id)
+        assert result2["success"] is True
+        assert result2["models"] == ["model1"]
+        assert mock_requests.request.call_count == 1  # Still 1, not 2
+
+    @patch('service_orchestration.services.base_service.requests')
+    def test_get_models_cache_is_per_service(self, mock_requests, vllm_service, mock_service_manager, mock_endpoint_resolver):
+        """Test that cache entries are per-service-id"""
+        # Setup mocks
+        mock_service_manager.get_service.side_effect = lambda sid: {
+            "id": sid,
+            "name": f"vllm-{sid}",
+            "status": "running",
+            "recipe_name": "inference/vllm-single-node"
+        }
+        vllm_service._check_ready_and_discover_model = Mock(return_value=(True, "running", None))
+        mock_endpoint_resolver.resolve.return_value = "http://node1:8000"
+        
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = '{"data": [{"id": "model1"}]}'
+        mock_response.json.return_value = {"data": [{"id": "model1"}]}
+        mock_requests.request.return_value = mock_response
+        
+        # Call for service 1
+        vllm_service.get_models("service1")
+        assert mock_requests.request.call_count == 1
+        
+        # Call for service 2 should also hit network (different cache key)
+        vllm_service.get_models("service2")
+        assert mock_requests.request.call_count == 2
+        
+        # Call for service 1 again should use cache
+        vllm_service.get_models("service1")
+        assert mock_requests.request.call_count == 2  # Still 2
+
+    def test_get_models_does_not_cache_errors(self, vllm_service, mock_service_manager):
+        """Test that error responses are not cached"""
+        service_id = "nonexistent"
+        
+        mock_service_manager.get_service.return_value = None
+        
+        # First call should return error
+        result1 = vllm_service.get_models(service_id)
+        assert result1["success"] is False
+        
+        # Cache should still be empty (errors not cached)
+        assert vllm_service._get_cached_models_list(service_id) is None
