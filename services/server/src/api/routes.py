@@ -56,7 +56,10 @@ def set_orchestrator_proxy(proxy):
 def get_orchestrator_proxy():
     """Dependency function to get the orchestrator proxy instance."""
     if _orchestrator_proxy_instance is None:
-        raise RuntimeError("Orchestrator proxy not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail="Orchestrator not running. Start it via POST /api/v1/orchestrator/start"
+        )
     return _orchestrator_proxy_instance
 
 
