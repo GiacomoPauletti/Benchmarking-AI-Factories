@@ -83,7 +83,7 @@
       },
       "editorMode": "code",
       "expr": "aif_gpu_memory_used_bytes{service_id=\"$service\", replica_id=~\"$replicas\"}",
-      "legendFormat": "GPU Mem Used - {{replica_id}}",
+      "legendFormat": "GPU Mem Used - {{replica_id}} (GPU {{gpu_index}})",
       "range": true,
       "refId": "A"
     }

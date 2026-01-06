@@ -72,7 +72,7 @@
         "hide": 2,
         "name": "job_id",
         "query": "label_values(service_status_info{service_id=\"$service\"}, service_id)",
-        "regex": "/vllm-(.*)/",
+        "regex": "/.*-(\\d+)/",
         "type": "query"
       },
       {
@@ -176,8 +176,13 @@
                   "text": "Failed !"
                 },
                 "5": {
-                  "color": "red",
+                  "color": "transparent",
                   "index": 5,
+                  "text": ""
+                },
+                "6": {
+                  "color": "transparent",
+                  "index": 6,
                   "text": ""
                 }
               },
@@ -217,7 +222,7 @@
             "uid": "prom"
           },
           "editorMode": "code",
-          "expr": "service_status_info{service_id=\"$service\"}",
+          "expr": "service_status_info{service_id=\"$service\", replica_id!=\"aggregate\"}",
           "instant": false,
           "legendFormat": "{{replica_id}}",
           "range": true,
@@ -266,7 +271,7 @@
           },
           "direction": "forward",
           "editorMode": "code",
-          "expr": "{job=\"slurm-stderr\", filename=~\"/logs/vllm-replicas_${job_id}.*\\\\.err\"}",
+          "expr": "{job=\"slurm-stderr\", filename=\"/logs/vllm-replicas_${job_id}.err\"}",
           "queryType": "range",
           "refId": "A"
         }
@@ -313,7 +318,7 @@
           },
           "direction": "forward",
           "editorMode": "code",
-          "expr": "{job=\"slurm-stdout\", filename=~\"/logs/vllm-replicas_${job_id}.*\\\\.out\"}",
+          "expr": "{job=\"slurm-stdout\", filename=\"/logs/vllm-replicas_${job_id}.out\"}",
           "queryType": "range",
           "refId": "A"
         }
@@ -816,7 +821,7 @@
           },
           "editorMode": "code",
           "expr": "aif_gpu_memory_used_bytes{service_id=\"$service\", replica_id=~\"$replicas\"}",
-          "legendFormat": "GPU Mem Used - {{replica_id}}",
+          "legendFormat": "GPU Mem Used - {{replica_id}} (GPU {{gpu_index}})",
           "range": true,
           "refId": "A"
         }
@@ -909,7 +914,7 @@
           },
           "editorMode": "code",
           "expr": "aif_gpu_power_watts{service_id=\"$service\", replica_id=~\"$replicas\"}",
-          "legendFormat": "GPU Power - {{replica_id}}",
+          "legendFormat": "GPU Power - {{replica_id}} (GPU {{gpu_index}})",
           "range": true,
           "refId": "A"
         }
