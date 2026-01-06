@@ -410,46 +410,35 @@ async def health():
 
 @app.get("/ready")
 async def ready():
-    """Readiness check endpoint - server is ready to accept requests."""
-    global orchestrator_proxy
+    """Readiness check endpoint - server is ready to accept requests.
+    
+    With on-demand orchestrator, the server is ready once SSH manager is initialized.
+    The orchestrator can be started on-demand via /api/v1/orchestrator/start.
+    """
+    global ssh_manager_instance, orchestrator_proxy
 
-    remote_base = os.getenv("REMOTE_BASE_PATH", "~/ai-factory-benchmarks")
-    orchestrator_ready = orchestrator_proxy is not None and orchestrator_health.alive
-
-    if not orchestrator_ready:
-        reason = "orchestrator not initialized" if orchestrator_proxy is None else "orchestrator heartbeat failed"
-        error_detail = {
-            "status": "not ready",
-            "reason": reason,
-            "details": (
-                "The orchestrator is currently unavailable. The server cannot accept new "
-                "service requests until the orchestrator job is running again."
-            ),
-            "orchestrator_alive": orchestrator_health.alive,
-            "last_orchestrator_error": orchestrator_health.last_error,
-            "troubleshooting": {
-                "check_logs": f"{remote_base}/logs/orchestrator_job-*.err",
-                "common_issues": [
-                    "Orchestrator container (.sif) is corrupted - it will be rebuilt on next attempt",
-                    "SLURM job failed to start - check SLURM queue with 'squeue'",
-                    "Network connectivity issues between server and MeluXina",
-                    "SSH authentication failure"
-                ],
-                "next_steps": [
-                    "Check the orchestrator job logs on MeluXina",
-                    "Restart the server service to trigger a rebuild",
-                    "Verify SSH connectivity to MeluXina"
-                ]
-            }
-        }
-
+    # Server is ready if SSH manager is initialized (can accept orchestrator start requests)
+    ssh_ready = ssh_manager_instance is not None
+    
+    if not ssh_ready:
         return Response(
-            content=json.dumps(error_detail),
+            content=json.dumps({
+                "status": "not ready",
+                "reason": "SSH manager not initialized",
+                "details": "Server is still initializing SSH connection to HPC cluster."
+            }),
             status_code=503,
             media_type="application/json"
         )
 
-    return {"status": "ready", "orchestrator": "available"}
+    # Include orchestrator status in response for informational purposes
+    orchestrator_running = orchestrator_proxy is not None and orchestrator_health.alive
+    
+    return {
+        "status": "ready",
+        "orchestrator": "running" if orchestrator_running else "not started",
+        "message": "Use POST /api/v1/orchestrator/start to launch the orchestrator" if not orchestrator_running else None
+    }
 
 # Include API routes
 app.include_router(router, prefix="/api/v1")
