@@ -299,6 +299,10 @@ class OrchestratorProxy:
         This is a generic metrics endpoint that delegates to the orchestrator
         to determine the service type and fetch appropriate metrics.
         
+        Uses increased retry count (3 retries = 4 total attempts) because
+        metrics scrapes are more likely to fail during high load when vLLM
+        is busy processing inference requests.
+        
         Args:
             service_id: Service or service group ID
             timeout: Request timeout in seconds
@@ -309,12 +313,15 @@ class OrchestratorProxy:
         # Ensure the SSH tunnel request honors the same timeout budget as the
         # upstream caller (typically Prometheus scrape_timeout), so a slow/loaded
         # service does not cause the proxy endpoint to hang past the scrape.
+        # Use 3 retries (4 total attempts) for metrics to handle transient failures
+        # during high load.
         return self._make_request(
             "GET",
             f"/api/services/{service_id}/metrics",
             params={"timeout": timeout},
             timeout=timeout,
             json_body=True,
+            _retries=3,
         )
 
     def stop_orchestrator(self) -> bool:

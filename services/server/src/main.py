@@ -472,6 +472,21 @@ async def on_startup():
         from ssh_manager import SSHManager
         ssh_manager_instance = SSHManager()
         
+        # Establish reverse SSH tunnel for Pushgateway
+        # This allows processes on MeluXina to push metrics to the local Pushgateway
+        pushgateway_host = os.environ.get("PUSHGATEWAY_HOST", "pushgateway")
+        pushgateway_port = int(os.environ.get("PUSHGATEWAY_PORT", "9091"))
+        if ssh_manager_instance.establish_reverse_tunnel(
+            local_host=pushgateway_host,
+            local_port=pushgateway_port,
+            remote_port=pushgateway_port
+        ):
+            if logger:
+                logger.info(f"✓ Reverse tunnel established for Pushgateway (MeluXina:{pushgateway_port} -> {pushgateway_host}:{pushgateway_port})")
+        else:
+            if logger:
+                logger.warning(f"✗ Failed to establish reverse tunnel for Pushgateway - metrics push from HPC will not work")
+        
         # Register orchestrator control functions with the API router
         set_orchestrator_control_functions(
             get_session_fn=_get_orchestrator_session,
