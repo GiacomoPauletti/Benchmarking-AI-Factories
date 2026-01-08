@@ -68,6 +68,7 @@ class SSHManager:
         self._control_check_interval = 30  # Check every 30s
 
         self._local_socks_port = local_socks_port
+        self._reverse_tunnels: Dict[int, subprocess.Popen] = {}  # remote_port -> process
         self._establish_socks_proxy(local_port=local_socks_port)
         self._establish_session(local_socks_port=local_socks_port)
         
@@ -108,6 +109,74 @@ class SSHManager:
         except Exception as e:
             self.logger.error(f"Failed to establish SOCKS5 proxy: {e}")
             return False
+    
+    def establish_reverse_tunnel(self, local_host: str, local_port: int, remote_port: int) -> bool:
+        """Establish a reverse SSH tunnel from MeluXina to a local service.
+        
+        This allows processes on MeluXina compute nodes to connect to services
+        running on the Docker host (e.g., Pushgateway for metrics push).
+        
+        Args:
+            local_host: Local hostname/IP to forward to (e.g., 'pushgateway' for Docker)
+            local_port: Local port to forward to (e.g., 9091)
+            remote_port: Port to bind on MeluXina (e.g., 9091)
+            
+        Returns:
+            True if tunnel established successfully, False otherwise
+        """
+        if remote_port in self._reverse_tunnels:
+            proc = self._reverse_tunnels[remote_port]
+            if proc.poll() is None:
+                self.logger.debug(f"Reverse tunnel to remote port {remote_port} already active")
+                return True
+            else:
+                self.logger.info(f"Reverse tunnel to remote port {remote_port} died, restarting...")
+                del self._reverse_tunnels[remote_port]
+        
+        try:
+            # Build SSH command for reverse tunnel
+            # -R binds remote_port on MeluXina login node to local_host:local_port
+            ssh_command = self._ssh_base_cmd + [
+                "-R", f"{remote_port}:{local_host}:{local_port}",
+                "-N",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=60",
+                self.ssh_target
+            ]
+            
+            self.logger.info(f"Establishing reverse tunnel: MeluXina:{remote_port} -> {local_host}:{local_port}")
+            self.logger.debug(f"Command: {' '.join(ssh_command)}")
+            
+            proc = subprocess.Popen(ssh_command, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            
+            # Wait briefly for tunnel to establish
+            time.sleep(2)
+            
+            # Verify the tunnel is running
+            if proc.poll() is not None:
+                stderr = proc.stderr.read().decode() if proc.stderr else ""
+                self.logger.error(f"Reverse tunnel failed to start: {stderr}")
+                return False
+            
+            self._reverse_tunnels[remote_port] = proc
+            self.logger.info(f"Reverse tunnel established: MeluXina:{remote_port} -> {local_host}:{local_port}, PID: {proc.pid}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to establish reverse tunnel: {e}")
+            return False
+    
+    def close_reverse_tunnels(self):
+        """Close all reverse SSH tunnels."""
+        for remote_port, proc in list(self._reverse_tunnels.items()):
+            try:
+                if proc.poll() is None:
+                    self.logger.info(f"Closing reverse tunnel on remote port {remote_port}...")
+                    proc.terminate()
+                    proc.wait(timeout=5)
+            except Exception as e:
+                self.logger.warning(f"Error closing reverse tunnel on port {remote_port}: {e}")
+        self._reverse_tunnels.clear()
         
     def _establish_session(self, local_socks_port: int = 1080) -> bool:
         """Establish a requests session that uses the SOCKS5 proxy."""

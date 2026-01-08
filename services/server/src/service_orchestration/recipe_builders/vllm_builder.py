@@ -99,6 +99,11 @@ declare -a REPLICA_PIDS=()
                 
                 exporter_port = port + 10000
                 
+                # GPU exporter environment variables for metrics push
+                # The reverse SSH tunnel binds on login node, accessible from compute nodes
+                pushgateway_url = "http://login.lxp.lu:9091"
+                replica_id_str = f"{port}"  # Use port as replica identifier
+                
                 # Use srun --exact for proper resource isolation per replica
                 # --nodes=1 ensures each replica runs on exactly one node
                 # --relative=<node_idx> selects which node within the allocation
@@ -113,13 +118,21 @@ srun --nodes=1 --ntasks=1 --relative={node_idx} --exact --gpus-per-task={gpu_per
     --env HF_HOME=/hf_cache \\
     --env TRANSFORMERS_CACHE=/hf_cache \\
     --env HF_DATASETS_CACHE=/hf_cache/datasets \\
+    --env PUSHGATEWAY_URL={pushgateway_url} \\
+    --env SERVICE_ID=${{SLURM_JOB_ID}} \\
+    --env REPLICA_ID={replica_id_str} \\
+    --env GPU_METRICS_PUSH_INTERVAL=5 \\
     {paths.sif_path} bash -lc "
         export HF_HOME=/hf_cache
         export TRANSFORMERS_CACHE=/hf_cache
         export HF_DATASETS_CACHE=/hf_cache/datasets
+        export PUSHGATEWAY_URL={pushgateway_url}
+        export SERVICE_ID=\$SLURM_JOB_ID
+        export REPLICA_ID={replica_id_str}
+        export GPU_METRICS_PUSH_INTERVAL=5
         
-        # Start GPU Exporter
-        echo 'Starting GPU exporter on port {exporter_port}...'
+        # Start GPU Exporter (with metrics push to Pushgateway)
+        echo 'Starting GPU exporter on port {exporter_port} (push to {pushgateway_url})...'
         python3 /workspace/src/service_orchestration/exporters/gpu_exporter.py {exporter_port} > {paths.log_dir}/gpu_exporter_${{SLURM_JOB_ID}}:{exporter_port}.log 2>&1 &
         EXPORTER_PID=\$!
         

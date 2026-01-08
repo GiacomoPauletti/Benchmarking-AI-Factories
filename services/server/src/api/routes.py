@@ -24,8 +24,11 @@ router = APIRouter()
 # Prometheus considers a target "down" if the scrape fails/timeout, which shows
 # as a discontinuity in Grafana panels. Returning the last-good metrics for a
 # short window avoids gaps while still allowing detection of prolonged issues.
+#
+# Increased to 60s to better handle high-load scenarios where vLLM HTTP server
+# is blocked during inference and cannot respond to metrics scrapes.
 _SERVICE_METRICS_CACHE_TTL_SECONDS = float(
-    os.environ.get("SERVICE_METRICS_CACHE_TTL_SECONDS", "15")
+    os.environ.get("SERVICE_METRICS_CACHE_TTL_SECONDS", "60")
 )
 _SERVICE_METRICS_CACHE: Dict[str, Tuple[float, str]] = {}
 

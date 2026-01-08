@@ -41,6 +41,21 @@ services:
       retries: 30
       start_period: 120s
 
+  # Pushgateway - Buffer for push-based metrics from HPC nodes
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    container_name: benchmarking-ai-pushgateway
+    ports:
+      - "9091:9091"
+    command:
+      - '--persistence.file=/pushgateway/metrics'
+      - '--persistence.interval=5m'
+    volumes:
+      - pushgateway-storage:/pushgateway
+    networks:
+      - ai-factory
+    restart: unless-stopped
+
   # Prometheus - Metrics storage and scraping
   prometheus:
     build:
@@ -256,3 +271,6 @@ volumes:
   loki-storage:
     driver: local
     name: loki-storage
+  pushgateway-storage:
+    driver: local
+    name: pushgateway-storage
