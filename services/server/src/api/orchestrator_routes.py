@@ -37,6 +37,7 @@ class OrchestratorStatusResponse(BaseModel):
 
     running: bool = Field(description="Whether the orchestrator is currently running")
     job_id: Optional[str] = Field(default=None, description="SLURM job ID if running")
+    job_state: Optional[str] = Field(default=None, description="SLURM job state (PENDING, RUNNING, etc.)")
     started_at: Optional[str] = Field(
         default=None, description="ISO timestamp when the orchestrator was started"
     )
@@ -136,6 +137,7 @@ async def get_orchestrator_status():
     return OrchestratorStatusResponse(
         running=session.alive,
         job_id=session.job_id,
+        job_state=session.job_state,
         started_at=session.started_at.isoformat() if session.started_at else None,
         time_limit_minutes=session.time_limit_minutes,
         remaining_seconds=remaining_seconds,

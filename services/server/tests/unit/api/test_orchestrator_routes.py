@@ -27,6 +27,7 @@ def mock_session():
             self.last_check = None
             self.last_error = "Orchestrator not started"
             self.job_id = None
+            self.job_state = None
             self.started_at = None
             self.time_limit_minutes = None
             self.orchestrator_url = None

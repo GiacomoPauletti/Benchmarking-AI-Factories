@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from fastapi import status, HTTPException
 
 from main import app
-from api.routes import get_orchestrator_proxy
+from api.routes import get_orchestrator_proxy, get_orchestrator_proxy_optional
 
 
 class TestGatewayAPI:
@@ -36,6 +36,7 @@ class TestGatewayAPI:
     def client(self, mock_proxy):
         """Create a test client for the FastAPI app with mocked proxy."""
         app.dependency_overrides[get_orchestrator_proxy] = lambda: mock_proxy
+        app.dependency_overrides[get_orchestrator_proxy_optional] = lambda: mock_proxy
         
         # Mock orchestrator health state for health endpoint tests
         with patch('main.orchestrator_proxy', mock_proxy), \

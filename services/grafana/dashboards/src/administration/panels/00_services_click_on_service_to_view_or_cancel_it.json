@@ -18,7 +18,7 @@
             ],
             "method": "POST",
             "queryParams": [],
-            "url": "http://${server}:${port}/api/v1/services/${__field.labels.service_id}/status"
+            "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/services/${__field.labels.service_id}/status"
           },
           "style": {
             "backgroundColor": "#F2495C"
@@ -132,7 +132,7 @@
         "uid": "prom"
       },
       "editorMode": "code",
-      "expr": "client_group_status_info",
+      "expr": "client_group_status_info and client_group_status_info <= 2",
       "instant": false,
       "legendFormat": "Benchmark {{group_id}}",
       "range": true,

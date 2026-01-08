@@ -29,6 +29,13 @@ _SERVICE_METRICS_CACHE_TTL_SECONDS = float(
 )
 _SERVICE_METRICS_CACHE: Dict[str, Tuple[float, str]] = {}
 
+# HuggingFace model options cache - avoid hitting HF API rate limits
+# Cache for 1 hour (3600 seconds) by default
+_HF_MODELS_CACHE_TTL_SECONDS = float(
+    os.environ.get("HF_MODELS_CACHE_TTL_SECONDS", "3600")
+)
+_HF_MODELS_CACHE: Optional[Tuple[float, List[Dict[str, str]]]] = None
+
 
 def _clear_service_metrics_cache() -> None:
     """Test helper to reset cached metrics between test cases."""
@@ -603,19 +610,30 @@ async def update_service_status(
         )
 
 
+def get_orchestrator_proxy_optional():
+    """Dependency function that returns the orchestrator proxy or None."""
+    return _orchestrator_proxy_instance
+
+
 @router.get("/recipes")
 async def list_or_get_recipe(
     path: Optional[str] = None,
     name: Optional[str] = None,
-    orchestrator = Depends(get_orchestrator_proxy)
+    orchestrator = Depends(get_orchestrator_proxy_optional)
 ):
     """**[Proxy]** List all available recipes OR get a specific recipe.
     
     This endpoint proxies to the orchestrator's recipe management API.
+    Returns empty list if orchestrator is not running.
     
     For detailed documentation, query parameters, recipe structure, and examples, see the orchestrator API documentation at:
     **GET /api/recipes** on the orchestrator service.
     """
+    if orchestrator is None:
+        # Return empty list when orchestrator is not running
+        # This allows Grafana panels to show "No data" instead of error
+        return []
+    
     recipes = orchestrator.list_available_recipes()
     
     # If no search criteria provided, return all recipes
@@ -743,6 +761,9 @@ def get_vllm_model_options():
     Returns an array of label/value pairs suitable for use in Grafana Form Panel dropdowns.
     Each entry contains a human-readable label and the corresponding HuggingFace model ID.
     
+    Results are cached for 1 hour (configurable via HF_MODELS_CACHE_TTL_SECONDS env var)
+    to avoid hitting HuggingFace API rate limits.
+    
     **Returns:**
     ```json
     [
@@ -752,7 +773,17 @@ def get_vllm_model_options():
     ]
     ```
     """
+    global _HF_MODELS_CACHE
+    
     try:
+        # Check if we have a valid cached response
+        now = time.time()
+        if _HF_MODELS_CACHE is not None:
+            cache_time, cached_options = _HF_MODELS_CACHE
+            if now - cache_time < _HF_MODELS_CACHE_TTL_SECONDS:
+                logger.debug(f"Returning cached HF models (age: {now - cache_time:.0f}s)")
+                return cached_options
+        
         options = []
         
         # Always include a small model for testing
@@ -775,6 +806,8 @@ def get_vllm_model_options():
                     "label": f"{model['id']} ({model.get('downloads', 0)} downloads)",
                     "value": model["id"]
                 })
+            
+            logger.info(f"Fetched {len(options)} models from HuggingFace, caching for {_HF_MODELS_CACHE_TTL_SECONDS}s")
         except Exception as e:
             logger.warning(f"Failed to fetch dynamic models from HF: {e}")
             # Fallback to static examples if HF fetch fails
@@ -784,7 +817,9 @@ def get_vllm_model_options():
             for label, value in examples.items():
                 if value != "gpt2":
                     options.append({"label": label, "value": value})
-            
+        
+        # Cache the result
+        _HF_MODELS_CACHE = (now, options)
         return options
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

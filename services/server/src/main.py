@@ -43,6 +43,7 @@ class OrchestratorSession:
     last_check: Optional[str] = None
     last_error: Optional[str] = "Orchestrator not started"
     job_id: Optional[str] = None
+    job_state: Optional[str] = None
     started_at: Optional[datetime] = None
     time_limit_minutes: Optional[int] = None
     orchestrator_url: Optional[str] = None
@@ -123,6 +124,12 @@ async def _start_orchestrator_async(time_limit_minutes: int) -> dict:
         if logger:
             logger.info(f"Starting orchestrator with time_limit={time_limit_minutes} minutes")
 
+        # Clear old orchestrator.env file to avoid reading stale URLs
+        remote_env_file = f"{remote_base_path}/orchestrator.env"
+        ssh_manager_instance.execute_remote_command(f"rm -f {remote_env_file}")
+        if logger:
+            logger.info(f"Cleared old orchestrator.env file: {remote_env_file}")
+
         # Submit SLURM job
         success, message = submit_orchestrator_job(ssh_manager_instance, remote_base_path, settings)
 
@@ -136,6 +143,7 @@ async def _start_orchestrator_async(time_limit_minutes: int) -> dict:
 
         # Update session state
         orchestrator_session.job_id = job_id
+        orchestrator_session.job_state = "PENDING"
         orchestrator_session.started_at = datetime.now(timezone.utc)
         orchestrator_session.time_limit_minutes = time_limit_minutes
 
@@ -151,6 +159,7 @@ async def _start_orchestrator_async(time_limit_minutes: int) -> dict:
             return {"success": False, "job_id": job_id, "error": "Timeout waiting for orchestrator URL"}
 
         orchestrator_session.orchestrator_url = orchestrator_url
+        orchestrator_session.job_state = "STARTING"
 
         # Wait for orchestrator to be ready
         is_ready = await asyncio.get_event_loop().run_in_executor(
@@ -160,6 +169,7 @@ async def _start_orchestrator_async(time_limit_minutes: int) -> dict:
 
         if not is_ready:
             orchestrator_session.last_error = "Orchestrator failed to become ready"
+            orchestrator_session.job_state = "FAILED"
             return {"success": False, "job_id": job_id, "error": "Orchestrator failed to become ready"}
 
         # Create OrchestratorProxy
@@ -167,12 +177,13 @@ async def _start_orchestrator_async(time_limit_minutes: int) -> dict:
         orchestrator_proxy = OrchestratorProxy(
             orchestrator_url=orchestrator_url,
             ssh_manager=ssh_manager_instance,
-            job_id=job_id
+            orchestrator_job_id=job_id
         )
 
         # Inject into routes
         set_orchestrator_proxy(orchestrator_proxy)
         _set_orchestrator_health(True, None)
+        orchestrator_session.job_state = "RUNNING"
 
         # Start health monitor if not running
         if orchestrator_monitor_task is None or orchestrator_monitor_task.done():
@@ -213,6 +224,7 @@ async def _stop_orchestrator_async() -> dict:
         orchestrator_proxy = None
         orchestrator_session.alive = False
         orchestrator_session.job_id = None
+        orchestrator_session.job_state = None
         orchestrator_session.started_at = None
         orchestrator_session.time_limit_minutes = None
         orchestrator_session.orchestrator_url = None
