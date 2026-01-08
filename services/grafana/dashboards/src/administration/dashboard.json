@@ -23,67 +23,31 @@
   "preload": false,
   "schemaVersion": 42,
   "tags": [],
-  "templating": {
-    "list": [
-      {
-        "current": {
-          "text": "localhost",
-          "value": "localhost"
-        },
-        "label": "Server url",
-        "name": "server",
-        "options": [
-          {
-            "selected": true,
-            "text": "localhost",
-            "value": "localhost"
-          }
-        ],
-        "query": "localhost",
-        "type": "custom"
+  "panels": [
+    {
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 0
       },
-      {
-        "current": {
-          "text": "8001",
-          "value": "8001"
-        },
-        "label": "Server port number",
-        "name": "port",
-        "options": [
-          {
-            "selected": true,
-            "text": "8001",
-            "value": "8001"
-          }
-        ],
-        "query": "8001",
-        "type": "custom"
+      "id": 1,
+      "options": {
+        "content": "<div style=\"text-align:center; border-bottom: 2px solid blue; padding-bottom: 5px;\"><h1 style=\"color: blue; font-weight: 300; margin: 0;\">Benchmarking AI Factories Dashboard</h1></div>",
+        "mode": "html"
       },
-      {
-        "current": {
-          "text": "8002",
-          "value": "8002"
-        },
-        "description": "",
-        "label": "Client port number",
-        "name": "client_port",
-        "options": [
-          {
-            "selected": true,
-            "text": "8002",
-            "value": "8002"
-          }
-        ],
-        "query": "8002",
-        "type": "custom"
-      }
-    ]
-  },
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    }
+  ],
   "time": {
     "from": "now-30m",
     "to": "now"
   },
-  "timepicker": {},
+  "timepicker": {
+    "refresh_intervals": ["1s", "5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+  },
   "timezone": "browser",
   "title": "Administration",
   "uid": "adjv7d8",

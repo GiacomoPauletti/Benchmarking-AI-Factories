@@ -1,0 +1,188 @@
+{
+  "datasource": {
+    "type": "yesoreyeram-infinity-datasource",
+    "uid": "af28rrswju6m8c"
+  },
+  "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+  },
+  "gridPos": {
+    "h": 6,
+    "w": 24,
+    "x": 0,
+    "y": 0
+  },
+  "id": 100,
+  "options": {
+    "buttonGroup": {
+      "orientation": "center",
+      "size": "lg"
+    },
+    "confirmModal": {
+      "body": "Please confirm the action",
+      "cancel": "Cancel",
+      "columns": {
+        "include": ["name", "oldValue", "newValue"],
+        "name": "Label",
+        "newValue": "New Value",
+        "oldValue": "Old Value"
+      },
+      "confirm": "Confirm",
+      "elementDisplayMode": "modified",
+      "title": "Confirm action"
+    },
+    "elementValueChanged": "",
+    "elements": [
+      {
+        "id": "time_limit_minutes",
+        "labelWidth": 18,
+        "max": 240,
+        "min": 5,
+        "section": "",
+        "showIf": "const status = context.panel.data && context.panel.data.series && context.panel.data.series[0];\nif (!status) return true;\nconst running = status.fields.find(f => f.name === 'running');\nif (!running) return true;\nreturn !running.values[0];",
+        "step": 5,
+        "title": "Session Duration",
+        "tooltip": "SLURM job time limit in minutes (5-240)",
+        "type": "slider",
+        "value": 60
+      },
+      {
+        "id": "status_display",
+        "labelWidth": 18,
+        "section": "",
+        "showIf": "return true;",
+        "title": "Session Status",
+        "type": "disabled",
+        "value": "Idle"
+      },
+      {
+        "id": "remaining_display",
+        "labelWidth": 18,
+        "section": "",
+        "showIf": "return true;",
+        "title": "Time Remaining",
+        "type": "disabled",
+        "value": "N/A"
+      }
+    ],
+    "initial": {
+      "code": "// Fetch orchestrator status and update display\nconst status = context.panel.data && context.panel.data.series && context.panel.data.series[0];\nlet isRunning = false;\nlet formValues = {};\n\nif (status) {\n  const runningField = status.fields.find(f => f.name === 'running');\n  isRunning = runningField && runningField.values[0];\n  \n  // Control submit button based on running state\n  if (isRunning) {\n    context.panel.disableSubmit();\n  } else {\n    context.panel.enableSubmit();\n  }\n  \n  // Time remaining\n  const remainingField = status.fields.find(f => f.name === 'remaining_seconds');\n  const remaining = remainingField ? remainingField.values[0] : null;\n  if (remaining !== null && remaining !== undefined && remaining > 0) {\n    const mins = Math.floor(remaining / 60);\n    const secs = remaining % 60;\n    formValues.remaining_display = `${mins}m ${secs}s`;\n  } else if (isRunning) {\n    formValues.remaining_display = 'Expired';\n  } else {\n    formValues.remaining_display = 'N/A';\n  }\n  \n  // Job status\n  const jobStateField = status.fields.find(f => f.name === 'job_state');\n  const jobState = jobStateField ? jobStateField.values[0] : null;\n  const jobIdField = status.fields.find(f => f.name === 'job_id');\n  const jobId = jobIdField ? jobIdField.values[0] : null;\n  if (jobId) {\n    formValues.status_display = `${jobState || 'PENDING'} (Job: ${jobId})`;\n  } else {\n    formValues.status_display = 'Idle';\n  }\n} else {\n  context.panel.enableSubmit();\n  formValues.status_display = 'Idle';\n  formValues.remaining_display = 'N/A';\n}\n\ncontext.panel.setFormValue(formValues);",
+      "contentType": "application/json",
+      "getPayload": "return {}",
+      "highlight": false,
+      "highlightColor": "red",
+      "method": "query",
+      "payload": {},
+      "url": ""
+    },
+    "layout": {
+      "orientation": "horizontal",
+      "padding": 10,
+      "sectionVariant": "default",
+      "variant": "single"
+    },
+    "reset": {
+      "backgroundColor": "red",
+      "foregroundColor": "white",
+      "icon": "times",
+      "showIf": "const status = context.panel.data && context.panel.data.series && context.panel.data.series[0];\nif (!status) return false;\nconst running = status.fields.find(f => f.name === 'running');\nreturn running && running.values[0];",
+      "text": "End Session",
+      "variant": "destructive"
+    },
+    "resetAction": {
+      "code": "// Make direct HTTP request to stop orchestrator\nfetch('/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/orchestrator/stop', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: '{}'\n}).then(response => {\n  if (response.ok) {\n    context.grafana.notifySuccess(['Session', 'Session ended successfully!']);\n    context.grafana.refresh();\n  } else {\n    context.grafana.notifyError(['Session', 'Failed to end session']);\n  }\n}).catch(err => {\n  context.grafana.notifyError(['Session', 'Error: ' + err.message]);\n});",
+      "confirm": true,
+      "contentType": "application/json",
+      "getPayload": "return {}",
+      "mode": "custom",
+      "payload": {}
+    },
+    "saveDefault": {
+      "icon": "save",
+      "text": "Save Default",
+      "variant": "hidden"
+    },
+    "submit": {
+      "backgroundColor": "green",
+      "foregroundColor": "white",
+      "icon": "play",
+      "text": "Start Session",
+      "variant": "primary"
+    },
+    "sync": true,
+    "update": {
+      "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Session', 'Session started successfully!']);\n  context.grafana.refresh();\n} else {\n  const errMsg = context.panel.response ? 'Failed to start session' : 'No response from server';\n  context.grafana.notifyError(['Session', errMsg]);\n}",
+      "confirm": false,
+      "contentType": "application/json",
+      "getPayload": "const timeLimitEl = context.panel.elements.find(el => el.id === 'time_limit_minutes');\nconst timeLimit = timeLimitEl ? parseInt(timeLimitEl.value) : 30;\nreturn { time_limit_minutes: timeLimit };",
+      "method": "POST",
+      "payload": {},
+      "payloadMode": "custom",
+      "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/orchestrator/start"
+    },
+    "updateEnabled": "manual"
+  },
+  "pluginVersion": "6.3.1",
+  "targets": [
+    {
+      "columns": [
+        {
+          "selector": "running",
+          "text": "running",
+          "type": "boolean"
+        },
+        {
+          "selector": "job_id",
+          "text": "job_id",
+          "type": "string"
+        },
+        {
+          "selector": "remaining_seconds",
+          "text": "remaining_seconds",
+          "type": "number"
+        },
+        {
+          "selector": "job_state",
+          "text": "job_state",
+          "type": "string"
+        },
+        {
+          "selector": "time_limit_minutes",
+          "text": "time_limit_minutes",
+          "type": "number"
+        },
+        {
+          "selector": "orchestrator_url",
+          "text": "orchestrator_url",
+          "type": "string"
+        },
+        {
+          "selector": "last_error",
+          "text": "last_error",
+          "type": "string"
+        }
+      ],
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "filters": [],
+      "format": "table",
+      "global_query_id": "",
+      "parser": "backend",
+      "refId": "status",
+      "root_selector": "",
+      "source": "url",
+      "type": "json",
+      "url": "/api/v1/orchestrator/status",
+      "url_options": {
+        "data": "",
+        "method": "GET"
+      }
+    }
+  ],
+  "title": "Session Control",
+  "transformations": [],
+  "type": "volkovlabs-form-panel"
+}

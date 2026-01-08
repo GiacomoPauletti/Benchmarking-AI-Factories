@@ -8,7 +8,7 @@
     "overrides": []
   },
   "gridPos": {
-    "h": 8,
+    "h": 10,
     "w": 10,
     "x": 0,
     "y": 7
@@ -36,8 +36,26 @@
       "elementDisplayMode": "modified",
       "title": "Confirm update request"
     },
-    "elementValueChanged": "const recipeEl = context.panel.elements.find(el => el.id == \"recipe_name\");\nconst recipe = recipeEl ? recipeEl.value : \"\";\n\n// 1. Handle Recipe Change (Load Defaults)\nif (context.panel.data.prevSelected !== recipe && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == recipe)\n    \n    // Safely parse resources\n    let parameters = {};\n    const resourceField = data.find(s => s.name == \"resources\");\n    if (resourceField) {\n      const rawVal = resourceField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          parameters = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse resources JSON\", e);\n        }\n      } else {\n        parameters = rawVal || {};\n      }\n    }\n\n    // Safely parse recipe parameters\n    let recipeParams = {};\n    const paramsField = data.find(s => s.name == \"parameters\");\n    if (paramsField) {\n      const rawVal = paramsField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          recipeParams = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse parameters JSON\", e);\n        }\n      } else {\n        recipeParams = rawVal || {};\n      }\n    }\n    \n    let defaultModel = \"\";\n    if (recipeParams && recipeParams[\"model\"]) {\n      defaultModel = recipeParams[\"model\"].default || \"\";\n    }\n\n    context.panel.setFormValue({\n      \"recipe_name\": recipe,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\"),\n      \"config.time_limit\": parameters[\"time_limit\"] || 15,\n      \"config.model\": defaultModel,\n      \"config.replicas\": 1,\n      \"show_advanced\": false\n    })\n  }\n}\ncontext.panel.data.prevSelected = recipe;\n\n// 2. Handle Replicas Logic\nif (recipe.includes(\"replicas\")) {\n    const replicasEl = context.panel.elements.find(el => el.id == \"config.replicas\");\n    const replicas = replicasEl ? replicasEl.value : 1;\n    \n    // Only update if replicas changed\n    if (context.panel.data.prevReplicas !== replicas) {\n        const gpusPerNode = 4;\n        let nodes = Math.ceil(replicas / gpusPerNode);\n        let gpus = 4;\n        \n        if (nodes === 1) {\n            gpus = replicas;\n        }\n        \n        context.panel.setFormValue({\n            \"recipe_name\": recipe,\n            \"config.nodes\": nodes,\n            \"config.gpus\": gpus\n        });\n    }\n    context.panel.data.prevReplicas = replicas;\n}\n\n// 3. Handle Single Node Logic\nif (recipe.includes(\"single-node\")) {\n    const nodesEl = context.panel.elements.find(el => el.id == \"config.nodes\");\n    if (nodesEl && nodesEl.value !== 1) {\n         context.panel.setFormValue({\"config.nodes\": 1});\n         context.grafana.notifyWarning(['Configuration', 'Single node recipes are restricted to 1 node.']);\n    }\n}",
+    "elementValueChanged": "const recipeEl = context.panel.elements.find(el => el.id == \"recipe_name\");\nconst recipe = recipeEl ? recipeEl.value : \"\";\n\n// Get session status directly from data (more reliable than element value)\nlet isSessionRunning = false;\nif (context.panel.data && context.panel.data.series) {\n  const statusSeries = context.panel.data.series.find(s => s.fields && s.fields.some(f => f.name === 'running'));\n  if (statusSeries) {\n    const runningField = statusSeries.fields.find(f => f.name === 'running');\n    isSessionRunning = runningField && runningField.values && runningField.values[0];\n  }\n}\n\n// 1. Handle Recipe Change (Load Defaults)\nif (context.panel.data.prevSelected !== recipe && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == recipe)\n    \n    // Safely parse resources\n    let parameters = {};\n    const resourceField = data.find(s => s.name == \"resources\");\n    if (resourceField) {\n      const rawVal = resourceField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          parameters = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse resources JSON\", e);\n        }\n      } else {\n        parameters = rawVal || {};\n      }\n    }\n\n    // Safely parse recipe parameters\n    let recipeParams = {};\n    const paramsField = data.find(s => s.name == \"parameters\");\n    if (paramsField) {\n      const rawVal = paramsField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          recipeParams = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse parameters JSON\", e);\n        }\n      } else {\n        recipeParams = rawVal || {};\n      }\n    }\n    \n    let defaultModel = \"\";\n    if (recipeParams && recipeParams[\"model\"]) {\n      defaultModel = recipeParams[\"model\"].default || \"\";\n    }\n\n    context.panel.setFormValue({\n      \"_session_running\": isSessionRunning,\n      \"recipe_name\": recipe,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\"),\n      \"config.time_limit\": parameters[\"time_limit\"] || 15,\n      \"config.model\": defaultModel,\n      \"config.replicas\": 1,\n      \"show_advanced\": false\n    })\n  }\n}\ncontext.panel.data.prevSelected = recipe;\n\n// 2. Handle Replicas Logic\nif (recipe.includes(\"replicas\")) {\n    const replicasEl = context.panel.elements.find(el => el.id == \"config.replicas\");\n    const replicas = replicasEl ? replicasEl.value : 1;\n    \n    // Only update if replicas changed\n    if (context.panel.data.prevReplicas !== replicas) {\n        const gpusPerNode = 4;\n        let nodes = Math.ceil(replicas / gpusPerNode);\n        let gpus = 4;\n        \n        if (nodes === 1) {\n            gpus = replicas;\n        }\n        \n        context.panel.setFormValue({\n            \"_session_running\": isSessionRunning,\n            \"recipe_name\": recipe,\n            \"config.nodes\": nodes,\n            \"config.gpus\": gpus\n        });\n    }\n    context.panel.data.prevReplicas = replicas;\n}\n\n// 3. Handle Single Node Logic\nif (recipe.includes(\"single-node\")) {\n    const nodesEl = context.panel.elements.find(el => el.id == \"config.nodes\");\n    if (nodesEl && nodesEl.value !== 1) {\n         context.panel.setFormValue({\"_session_running\": isSessionRunning, \"config.nodes\": 1});\n         context.grafana.notifyWarning(['Configuration', 'Single node recipes are restricted to 1 node.']);\n    }\n}",
     "elements": [
+      {
+        "hidden": false,
+        "id": "orchestrator_warning",
+        "labelWidth": 20,
+        "section": "",
+        "showIf": "const elements = context.panel.elements || [];\nconst statusEl = elements.find(el => el.id === '_session_running');\nreturn !(statusEl && statusEl.value === true);",
+        "title": "⚠️ Session not running. Please start a session first.",
+        "type": "disabled",
+        "value": ""
+      },
+      {
+        "hidden": true,
+        "id": "_session_running",
+        "section": "",
+        "showIf": "return false;",
+        "type": "disabled",
+        "value": false
+      },
       {
         "allowCustomValue": false,
         "background": "",
@@ -46,7 +64,7 @@
         "id": "recipe_name",
         "labelBackground": "#FFB357",
         "labelColor": "",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "options": [
           {
             "id": "3",
@@ -78,7 +96,7 @@
       {
         "allowCustomValue": true,
         "id": "config.model",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "optionsSource": "Query",
         "queryOptions": {
           "label": "label",
@@ -94,7 +112,7 @@
       },
       {
         "id": "config.replicas",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "max": 16,
         "min": 1,
         "section": "",
@@ -107,10 +125,10 @@
       },
       {
         "id": "show_advanced",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "section": "",
         "showIf": "const recipeEl = context.panel.elements.find(el => el.id == \"recipe_name\"); return recipeEl && recipeEl.value && recipeEl.value.includes(\"replicas\");",
-        "title": "Show Advanced Options",
+        "title": "Show Advanced",
         "tooltip": "Show advanced resource configuration (nodes, CPUs, GPUs, memory)",
         "type": "boolean",
         "value": false
@@ -118,7 +136,7 @@
       {
         "disableIf": "const recipe = context.panel.elements.find(el => el.id == \"recipe_name\").value; return recipe && recipe.includes(\"single-node\");",
         "id": "config.nodes",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "max": 4,
         "min": 1,
         "section": "",
@@ -133,7 +151,7 @@
       },
       {
         "id": "config.cpus",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "max": 32,
         "min": 1,
         "section": "",
@@ -148,7 +166,7 @@
       },
       {
         "id": "config.gpus",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "max": 4,
         "min": 0,
         "section": "",
@@ -164,7 +182,7 @@
       {
         "allowCustomValue": false,
         "id": "config.memory",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "options": [
           {
             "icon": "dashboard",
@@ -235,7 +253,7 @@
       },
       {
         "id": "config.time_limit",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "max": 120,
         "min": 5,
         "section": "",
@@ -248,14 +266,14 @@
       }
     ],
     "initial": {
-      "code": "context.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n  \"config.time_limit\": 15,\n  \"config.model\": \"\",\n})\ncontext.panel.data.prevSelected = null",
+      "code": "// Check session status from the status data series\nlet isRunning = false;\nif (context.panel.data && context.panel.data.series) {\n  const statusSeries = context.panel.data.series.find(s => s.fields && s.fields.some(f => f.name === 'running'));\n  if (statusSeries) {\n    const runningField = statusSeries.fields.find(f => f.name === 'running');\n    isRunning = runningField && runningField.values && runningField.values[0];\n  }\n}\ncontext.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"_session_running\": isRunning,\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n  \"config.time_limit\": 15,\n  \"config.model\": \"\",\n});\ncontext.panel.data.prevSelected = null;",
       "contentType": "application/json",
       "getPayload": "return {}",
       "highlight": false,
       "highlightColor": "red",
       "method": "query",
       "payload": {},
-      "url": "http://${server}:${port}/api/v1/recipes"
+      "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/recipes"
     },
     "layout": {
       "orientation": "horizontal",
@@ -298,7 +316,7 @@
       "method": "POST",
       "payload": {},
       "payloadMode": "custom",
-      "url": "http://${server}:${port}/api/v1/services"
+      "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/services"
     },
     "updateEnabled": "auto"
   },
@@ -351,6 +369,62 @@
       "source": "url",
       "type": "json",
       "url": "/api/v1/vllm/model-options",
+      "url_options": {
+        "data": "",
+        "method": "GET"
+      }
+    },
+    {
+      "columns": [
+        {
+          "selector": "running",
+          "text": "running",
+          "type": "boolean"
+        },
+        {
+          "selector": "job_id",
+          "text": "job_id",
+          "type": "string"
+        },
+        {
+          "selector": "remaining_seconds",
+          "text": "remaining_seconds",
+          "type": "number"
+        },
+        {
+          "selector": "job_state",
+          "text": "job_state",
+          "type": "string"
+        },
+        {
+          "selector": "time_limit_minutes",
+          "text": "time_limit_minutes",
+          "type": "number"
+        },
+        {
+          "selector": "orchestrator_url",
+          "text": "orchestrator_url",
+          "type": "string"
+        },
+        {
+          "selector": "last_error",
+          "text": "last_error",
+          "type": "string"
+        }
+      ],
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "filters": [],
+      "format": "table",
+      "global_query_id": "",
+      "parser": "backend",
+      "refId": "status",
+      "root_selector": "",
+      "source": "url",
+      "type": "json",
+      "url": "/api/v1/orchestrator/status",
       "url_options": {
         "data": "",
         "method": "GET"

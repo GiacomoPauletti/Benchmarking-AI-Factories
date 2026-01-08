@@ -289,14 +289,18 @@ def wait_for_orchestrator_url(ssh_manager, remote_env_file: str, timeout: int = 
     poll_interval = 2  # seconds
     
     while time.time() - start_time < timeout:
-        success, stdout, stderr = ssh_manager.execute_remote_command(f"cat {remote_env_file}")
+        success, stdout, stderr = ssh_manager.execute_remote_command(f"cat {remote_env_file} 2>/dev/null")
         
         if success and stdout:
             for line in stdout.splitlines():
                 if line.startswith("ORCHESTRATOR_URL="):
                     orchestrator_url = line.split("=", 1)[1].strip()
-                    logger.info(f"Found orchestrator URL: {orchestrator_url}")
-                    return orchestrator_url
+                    # Validate URL format
+                    if orchestrator_url and orchestrator_url.startswith("http"):
+                        logger.info(f"Found orchestrator URL: {orchestrator_url}")
+                        return orchestrator_url
+                    else:
+                        logger.debug(f"Invalid URL format in env file: {orchestrator_url}")
         
         time.sleep(poll_interval)
     

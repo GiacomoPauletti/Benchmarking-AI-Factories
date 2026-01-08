@@ -45,7 +45,7 @@ class VllmInferenceBuilder(InferenceRecipeBuilder):
         
         # Only set max_model_len if explicitly provided; gpt2 and similar models derive smaller limits
         max_len = config.get("max_model_len") or recipe.environment.get("VLLM_MAX_MODEL_LEN") or ""
-        max_len_flag = "--max-model-len $VLLM_MAX_MODEL_LEN \\\"" if max_len else ""
+        max_len_flag = f"--max-model-len {max_len}" if max_len else ""
         gpu_mem = config.get("gpu_memory_utilization", 0.9)
         
         # Get replica group configuration from resources and recipe
@@ -128,8 +128,7 @@ srun --nodes=1 --ntasks=1 --relative={node_idx} --exact --gpus-per-task={gpu_per
             --host 0.0.0.0 \\
             --port {port} \\
             --tensor-parallel-size {tensor_parallel} \\
-            {max_len_flag}
-            --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION
+            --gpu-memory-utilization $VLLM_GPU_MEMORY_UTILIZATION {max_len_flag}
             
         # Kill exporter when vLLM exits
         kill \$EXPORTER_PID

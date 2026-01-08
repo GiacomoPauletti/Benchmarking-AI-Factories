@@ -23,72 +23,215 @@
   "preload": false,
   "schemaVersion": 42,
   "tags": [],
-  "templating": {
-    "list": [
-      {
-        "current": {
-          "text": "localhost",
-          "value": "localhost"
-        },
-        "label": "Server url",
-        "name": "server",
-        "options": [
-          {
-            "selected": true,
-            "text": "localhost",
-            "value": "localhost"
-          }
-        ],
-        "query": "localhost",
-        "type": "custom"
-      },
-      {
-        "current": {
-          "text": "8001",
-          "value": "8001"
-        },
-        "label": "Server port number",
-        "name": "port",
-        "options": [
-          {
-            "selected": true,
-            "text": "8001",
-            "value": "8001"
-          }
-        ],
-        "query": "8001",
-        "type": "custom"
-      },
-      {
-        "current": {
-          "text": "8002",
-          "value": "8002"
-        },
-        "description": "",
-        "label": "Client port number",
-        "name": "client_port",
-        "options": [
-          {
-            "selected": true,
-            "text": "8002",
-            "value": "8002"
-          }
-        ],
-        "query": "8002",
-        "type": "custom"
-      }
-    ]
-  },
-  "time": {
-    "from": "now-30m",
-    "to": "now"
-  },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Administration",
-  "uid": "adjv7d8",
-  "version": 1,
   "panels": [
+    {
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "<div style=\"text-align:center; border-bottom: 2px solid blue; padding-bottom: 5px;\"><h1 style=\"color: blue; font-weight: 300; margin: 0;\">Benchmarking AI Factories Dashboard</h1></div>",
+        "mode": "html"
+      },
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "af28rrswju6m8c"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 100,
+      "options": {
+        "buttonGroup": {
+          "orientation": "center",
+          "size": "lg"
+        },
+        "confirmModal": {
+          "body": "Please confirm the action",
+          "cancel": "Cancel",
+          "columns": {
+            "include": [
+              "name",
+              "oldValue",
+              "newValue"
+            ],
+            "name": "Label",
+            "newValue": "New Value",
+            "oldValue": "Old Value"
+          },
+          "confirm": "Confirm",
+          "elementDisplayMode": "modified",
+          "title": "Confirm action"
+        },
+        "elementValueChanged": "",
+        "elements": [
+          {
+            "id": "time_limit_minutes",
+            "labelWidth": 18,
+            "max": 240,
+            "min": 5,
+            "section": "",
+            "showIf": "const status = context.panel.data && context.panel.data.series && context.panel.data.series[0];\nif (!status) return true;\nconst running = status.fields.find(f => f.name === 'running');\nif (!running) return true;\nreturn !running.values[0];",
+            "step": 5,
+            "title": "Session Duration",
+            "tooltip": "SLURM job time limit in minutes (5-240)",
+            "type": "slider",
+            "value": 60
+          },
+          {
+            "id": "status_display",
+            "labelWidth": 18,
+            "section": "",
+            "showIf": "return true;",
+            "title": "Session Status",
+            "type": "disabled",
+            "value": "Idle"
+          },
+          {
+            "id": "remaining_display",
+            "labelWidth": 18,
+            "section": "",
+            "showIf": "return true;",
+            "title": "Time Remaining",
+            "type": "disabled",
+            "value": "N/A"
+          }
+        ],
+        "initial": {
+          "code": "// Fetch orchestrator status and update display\nconst status = context.panel.data && context.panel.data.series && context.panel.data.series[0];\nlet isRunning = false;\nlet formValues = {};\n\nif (status) {\n  const runningField = status.fields.find(f => f.name === 'running');\n  isRunning = runningField && runningField.values[0];\n  \n  // Control submit button based on running state\n  if (isRunning) {\n    context.panel.disableSubmit();\n  } else {\n    context.panel.enableSubmit();\n  }\n  \n  // Time remaining\n  const remainingField = status.fields.find(f => f.name === 'remaining_seconds');\n  const remaining = remainingField ? remainingField.values[0] : null;\n  if (remaining !== null && remaining !== undefined && remaining > 0) {\n    const mins = Math.floor(remaining / 60);\n    const secs = remaining % 60;\n    formValues.remaining_display = `${mins}m ${secs}s`;\n  } else if (isRunning) {\n    formValues.remaining_display = 'Expired';\n  } else {\n    formValues.remaining_display = 'N/A';\n  }\n  \n  // Job status\n  const jobStateField = status.fields.find(f => f.name === 'job_state');\n  const jobState = jobStateField ? jobStateField.values[0] : null;\n  const jobIdField = status.fields.find(f => f.name === 'job_id');\n  const jobId = jobIdField ? jobIdField.values[0] : null;\n  if (jobId) {\n    formValues.status_display = `${jobState || 'PENDING'} (Job: ${jobId})`;\n  } else {\n    formValues.status_display = 'Idle';\n  }\n} else {\n  context.panel.enableSubmit();\n  formValues.status_display = 'Idle';\n  formValues.remaining_display = 'N/A';\n}\n\ncontext.panel.setFormValue(formValues);",
+          "contentType": "application/json",
+          "getPayload": "return {}",
+          "highlight": false,
+          "highlightColor": "red",
+          "method": "query",
+          "payload": {},
+          "url": ""
+        },
+        "layout": {
+          "orientation": "horizontal",
+          "padding": 10,
+          "sectionVariant": "default",
+          "variant": "single"
+        },
+        "reset": {
+          "backgroundColor": "red",
+          "foregroundColor": "white",
+          "icon": "times",
+          "showIf": "const status = context.panel.data && context.panel.data.series && context.panel.data.series[0];\nif (!status) return false;\nconst running = status.fields.find(f => f.name === 'running');\nreturn running && running.values[0];",
+          "text": "End Session",
+          "variant": "destructive"
+        },
+        "resetAction": {
+          "code": "// Make direct HTTP request to stop orchestrator\nfetch('/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/orchestrator/stop', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: '{}'\n}).then(response => {\n  if (response.ok) {\n    context.grafana.notifySuccess(['Session', 'Session ended successfully!']);\n    context.grafana.refresh();\n  } else {\n    context.grafana.notifyError(['Session', 'Failed to end session']);\n  }\n}).catch(err => {\n  context.grafana.notifyError(['Session', 'Error: ' + err.message]);\n});",
+          "confirm": true,
+          "contentType": "application/json",
+          "getPayload": "return {}",
+          "mode": "custom",
+          "payload": {}
+        },
+        "saveDefault": {
+          "icon": "save",
+          "text": "Save Default",
+          "variant": "hidden"
+        },
+        "submit": {
+          "backgroundColor": "green",
+          "foregroundColor": "white",
+          "icon": "play",
+          "text": "Start Session",
+          "variant": "primary"
+        },
+        "sync": true,
+        "update": {
+          "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Session', 'Session started successfully!']);\n  context.grafana.refresh();\n} else {\n  const errMsg = context.panel.response ? 'Failed to start session' : 'No response from server';\n  context.grafana.notifyError(['Session', errMsg]);\n}",
+          "confirm": false,
+          "contentType": "application/json",
+          "getPayload": "const timeLimitEl = context.panel.elements.find(el => el.id === 'time_limit_minutes');\nconst timeLimit = timeLimitEl ? parseInt(timeLimitEl.value) : 30;\nreturn { time_limit_minutes: timeLimit };",
+          "method": "POST",
+          "payload": {},
+          "payloadMode": "custom",
+          "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/orchestrator/start"
+        },
+        "updateEnabled": "manual"
+      },
+      "pluginVersion": "6.3.1",
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "running",
+              "text": "running",
+              "type": "boolean"
+            },
+            {
+              "selector": "job_id",
+              "text": "job_id",
+              "type": "string"
+            },
+            {
+              "selector": "remaining_seconds",
+              "text": "remaining_seconds",
+              "type": "number"
+            },
+            {
+              "selector": "job_state",
+              "text": "job_state",
+              "type": "string"
+            },
+            {
+              "selector": "time_limit_minutes",
+              "text": "time_limit_minutes",
+              "type": "number"
+            },
+            {
+              "selector": "orchestrator_url",
+              "text": "orchestrator_url",
+              "type": "string"
+            },
+            {
+              "selector": "last_error",
+              "text": "last_error",
+              "type": "string"
+            }
+          ],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "status",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/orchestrator/status",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
+        }
+      ],
+      "title": "Session Control",
+      "transformations": [],
+      "type": "volkovlabs-form-panel"
+    },
     {
       "datasource": {
         "type": "prometheus",
@@ -109,7 +252,7 @@
                 ],
                 "method": "POST",
                 "queryParams": [],
-                "url": "http://${server}:${port}/api/v1/services/${__field.labels.service_id}/status"
+                "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/services/${__field.labels.service_id}/status"
               },
               "style": {
                 "backgroundColor": "#F2495C"
@@ -223,7 +366,7 @@
             "uid": "prom"
           },
           "editorMode": "code",
-          "expr": "client_group_status_info",
+          "expr": "client_group_status_info and client_group_status_info <= 2",
           "instant": false,
           "legendFormat": "Benchmark {{group_id}}",
           "range": true,
@@ -244,7 +387,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 10,
         "x": 0,
         "y": 7
@@ -272,8 +415,26 @@
           "elementDisplayMode": "modified",
           "title": "Confirm update request"
         },
-        "elementValueChanged": "const recipeEl = context.panel.elements.find(el => el.id == \"recipe_name\");\nconst recipe = recipeEl ? recipeEl.value : \"\";\n\n// 1. Handle Recipe Change (Load Defaults)\nif (context.panel.data.prevSelected !== recipe && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == recipe)\n    \n    // Safely parse resources\n    let parameters = {};\n    const resourceField = data.find(s => s.name == \"resources\");\n    if (resourceField) {\n      const rawVal = resourceField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          parameters = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse resources JSON\", e);\n        }\n      } else {\n        parameters = rawVal || {};\n      }\n    }\n\n    // Safely parse recipe parameters\n    let recipeParams = {};\n    const paramsField = data.find(s => s.name == \"parameters\");\n    if (paramsField) {\n      const rawVal = paramsField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          recipeParams = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse parameters JSON\", e);\n        }\n      } else {\n        recipeParams = rawVal || {};\n      }\n    }\n    \n    let defaultModel = \"\";\n    if (recipeParams && recipeParams[\"model\"]) {\n      defaultModel = recipeParams[\"model\"].default || \"\";\n    }\n\n    context.panel.setFormValue({\n      \"recipe_name\": recipe,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\"),\n      \"config.time_limit\": parameters[\"time_limit\"] || 15,\n      \"config.model\": defaultModel,\n      \"config.replicas\": 1,\n      \"show_advanced\": false\n    })\n  }\n}\ncontext.panel.data.prevSelected = recipe;\n\n// 2. Handle Replicas Logic\nif (recipe.includes(\"replicas\")) {\n    const replicasEl = context.panel.elements.find(el => el.id == \"config.replicas\");\n    const replicas = replicasEl ? replicasEl.value : 1;\n    \n    // Only update if replicas changed\n    if (context.panel.data.prevReplicas !== replicas) {\n        const gpusPerNode = 4;\n        let nodes = Math.ceil(replicas / gpusPerNode);\n        let gpus = 4;\n        \n        if (nodes === 1) {\n            gpus = replicas;\n        }\n        \n        context.panel.setFormValue({\n            \"recipe_name\": recipe,\n            \"config.nodes\": nodes,\n            \"config.gpus\": gpus\n        });\n    }\n    context.panel.data.prevReplicas = replicas;\n}\n\n// 3. Handle Single Node Logic\nif (recipe.includes(\"single-node\")) {\n    const nodesEl = context.panel.elements.find(el => el.id == \"config.nodes\");\n    if (nodesEl && nodesEl.value !== 1) {\n         context.panel.setFormValue({\"config.nodes\": 1});\n         context.grafana.notifyWarning(['Configuration', 'Single node recipes are restricted to 1 node.']);\n    }\n}",
+        "elementValueChanged": "const recipeEl = context.panel.elements.find(el => el.id == \"recipe_name\");\nconst recipe = recipeEl ? recipeEl.value : \"\";\n\n// Get session status directly from data (more reliable than element value)\nlet isSessionRunning = false;\nif (context.panel.data && context.panel.data.series) {\n  const statusSeries = context.panel.data.series.find(s => s.fields && s.fields.some(f => f.name === 'running'));\n  if (statusSeries) {\n    const runningField = statusSeries.fields.find(f => f.name === 'running');\n    isSessionRunning = runningField && runningField.values && runningField.values[0];\n  }\n}\n\n// 1. Handle Recipe Change (Load Defaults)\nif (context.panel.data.prevSelected !== recipe && context.panel.data.series && context.panel.data.series[0]) {\n  const data = context.panel.data.series[0].fields;\n  if (data) {\n    const idx = data.find(s => s.name == \"name\").values.findIndex(el => el == recipe)\n    \n    // Safely parse resources\n    let parameters = {};\n    const resourceField = data.find(s => s.name == \"resources\");\n    if (resourceField) {\n      const rawVal = resourceField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          parameters = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse resources JSON\", e);\n        }\n      } else {\n        parameters = rawVal || {};\n      }\n    }\n\n    // Safely parse recipe parameters\n    let recipeParams = {};\n    const paramsField = data.find(s => s.name == \"parameters\");\n    if (paramsField) {\n      const rawVal = paramsField.values[idx];\n      if (typeof rawVal === 'string') {\n        try {\n          recipeParams = JSON.parse(rawVal);\n        } catch (e) {\n          console.error(\"Failed to parse parameters JSON\", e);\n        }\n      } else {\n        recipeParams = rawVal || {};\n      }\n    }\n    \n    let defaultModel = \"\";\n    if (recipeParams && recipeParams[\"model\"]) {\n      defaultModel = recipeParams[\"model\"].default || \"\";\n    }\n\n    context.panel.setFormValue({\n      \"_session_running\": isSessionRunning,\n      \"recipe_name\": recipe,\n      \"config.nodes\": parameters[\"nodes\"] || 1,\n      \"config.cpus\": parameters[\"cpu\"] || 1,\n      \"config.gpus\": parameters[\"gpu\"] || 0,\n      \"config.memory\": (parameters[\"memory\"] || \"4G\").replace(\"i\", \"\").replace(\" \", \"\"),\n      \"config.time_limit\": parameters[\"time_limit\"] || 15,\n      \"config.model\": defaultModel,\n      \"config.replicas\": 1,\n      \"show_advanced\": false\n    })\n  }\n}\ncontext.panel.data.prevSelected = recipe;\n\n// 2. Handle Replicas Logic\nif (recipe.includes(\"replicas\")) {\n    const replicasEl = context.panel.elements.find(el => el.id == \"config.replicas\");\n    const replicas = replicasEl ? replicasEl.value : 1;\n    \n    // Only update if replicas changed\n    if (context.panel.data.prevReplicas !== replicas) {\n        const gpusPerNode = 4;\n        let nodes = Math.ceil(replicas / gpusPerNode);\n        let gpus = 4;\n        \n        if (nodes === 1) {\n            gpus = replicas;\n        }\n        \n        context.panel.setFormValue({\n            \"_session_running\": isSessionRunning,\n            \"recipe_name\": recipe,\n            \"config.nodes\": nodes,\n            \"config.gpus\": gpus\n        });\n    }\n    context.panel.data.prevReplicas = replicas;\n}\n\n// 3. Handle Single Node Logic\nif (recipe.includes(\"single-node\")) {\n    const nodesEl = context.panel.elements.find(el => el.id == \"config.nodes\");\n    if (nodesEl && nodesEl.value !== 1) {\n         context.panel.setFormValue({\"_session_running\": isSessionRunning, \"config.nodes\": 1});\n         context.grafana.notifyWarning(['Configuration', 'Single node recipes are restricted to 1 node.']);\n    }\n}",
         "elements": [
+          {
+            "hidden": false,
+            "id": "orchestrator_warning",
+            "labelWidth": 20,
+            "section": "",
+            "showIf": "const elements = context.panel.elements || [];\nconst statusEl = elements.find(el => el.id === '_session_running');\nreturn !(statusEl && statusEl.value === true);",
+            "title": "\u26a0\ufe0f Session not running. Please start a session first.",
+            "type": "disabled",
+            "value": ""
+          },
+          {
+            "hidden": true,
+            "id": "_session_running",
+            "section": "",
+            "showIf": "return false;",
+            "type": "disabled",
+            "value": false
+          },
           {
             "allowCustomValue": false,
             "background": "",
@@ -282,7 +443,7 @@
             "id": "recipe_name",
             "labelBackground": "#FFB357",
             "labelColor": "",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "options": [
               {
                 "id": "3",
@@ -314,7 +475,7 @@
           {
             "allowCustomValue": true,
             "id": "config.model",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "optionsSource": "Query",
             "queryOptions": {
               "label": "label",
@@ -330,7 +491,7 @@
           },
           {
             "id": "config.replicas",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "max": 16,
             "min": 1,
             "section": "",
@@ -343,10 +504,10 @@
           },
           {
             "id": "show_advanced",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "section": "",
             "showIf": "const recipeEl = context.panel.elements.find(el => el.id == \"recipe_name\"); return recipeEl && recipeEl.value && recipeEl.value.includes(\"replicas\");",
-            "title": "Show Advanced Options",
+            "title": "Show Advanced",
             "tooltip": "Show advanced resource configuration (nodes, CPUs, GPUs, memory)",
             "type": "boolean",
             "value": false
@@ -354,7 +515,7 @@
           {
             "disableIf": "const recipe = context.panel.elements.find(el => el.id == \"recipe_name\").value; return recipe && recipe.includes(\"single-node\");",
             "id": "config.nodes",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "max": 4,
             "min": 1,
             "section": "",
@@ -369,7 +530,7 @@
           },
           {
             "id": "config.cpus",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "max": 32,
             "min": 1,
             "section": "",
@@ -384,7 +545,7 @@
           },
           {
             "id": "config.gpus",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "max": 4,
             "min": 0,
             "section": "",
@@ -400,7 +561,7 @@
           {
             "allowCustomValue": false,
             "id": "config.memory",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "options": [
               {
                 "icon": "dashboard",
@@ -471,7 +632,7 @@
           },
           {
             "id": "config.time_limit",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "max": 120,
             "min": 5,
             "section": "",
@@ -484,14 +645,14 @@
           }
         ],
         "initial": {
-          "code": "context.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n  \"config.time_limit\": 15,\n  \"config.model\": \"\",\n})\ncontext.panel.data.prevSelected = null",
+          "code": "// Check session status from the status data series\nlet isRunning = false;\nif (context.panel.data && context.panel.data.series) {\n  const statusSeries = context.panel.data.series.find(s => s.fields && s.fields.some(f => f.name === 'running'));\n  if (statusSeries) {\n    const runningField = statusSeries.fields.find(f => f.name === 'running');\n    isRunning = runningField && runningField.values && runningField.values[0];\n  }\n}\ncontext.panel.data.initial = context.panel.initial;\ncontext.panel.setFormValue({\n  \"_session_running\": isRunning,\n  \"config.cpus\": 1,\n  \"config.gpus\": 0,\n  \"config.memory\": \"4G\",\n  \"config.nodes\": 1,\n  \"config.time_limit\": 15,\n  \"config.model\": \"\",\n});\ncontext.panel.data.prevSelected = null;",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,
           "highlightColor": "red",
           "method": "query",
           "payload": {},
-          "url": "http://${server}:${port}/api/v1/recipes"
+          "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/recipes"
         },
         "layout": {
           "orientation": "horizontal",
@@ -534,7 +695,7 @@
           "method": "POST",
           "payload": {},
           "payloadMode": "custom",
-          "url": "http://${server}:${port}/api/v1/services"
+          "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/services"
         },
         "updateEnabled": "auto"
       },
@@ -591,6 +752,62 @@
             "data": "",
             "method": "GET"
           }
+        },
+        {
+          "columns": [
+            {
+              "selector": "running",
+              "text": "running",
+              "type": "boolean"
+            },
+            {
+              "selector": "job_id",
+              "text": "job_id",
+              "type": "string"
+            },
+            {
+              "selector": "remaining_seconds",
+              "text": "remaining_seconds",
+              "type": "number"
+            },
+            {
+              "selector": "job_state",
+              "text": "job_state",
+              "type": "string"
+            },
+            {
+              "selector": "time_limit_minutes",
+              "text": "time_limit_minutes",
+              "type": "number"
+            },
+            {
+              "selector": "orchestrator_url",
+              "text": "orchestrator_url",
+              "type": "string"
+            },
+            {
+              "selector": "last_error",
+              "text": "last_error",
+              "type": "string"
+            }
+          ],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "af28rrswju6m8c"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "status",
+          "root_selector": "",
+          "source": "url",
+          "type": "json",
+          "url": "/api/v1/orchestrator/status",
+          "url_options": {
+            "data": "",
+            "method": "GET"
+          }
         }
       ],
       "title": "Start service",
@@ -642,6 +859,7 @@
           },
           "links": [],
           "mappings": [],
+          "noValue": "Orchestrator down. Please start a session first.",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -670,16 +888,25 @@
         ]
       },
       "gridPos": {
-        "h": 16,
-        "w": 14,
-        "x": 10,
-        "y": 7
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 15
       },
       "id": 3,
       "options": {
         "cellHeight": "sm",
         "enablePagination": true,
+        "footer": {
+          "countRows": false,
+          "enablePagination": false,
+          "fields": [],
+          "reducer": [],
+          "show": false
+        },
+        "frameIndex": 0,
         "showHeader": true,
+        "showTypeIcons": false,
         "sortBy": [
           {
             "desc": true,
@@ -770,10 +997,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 10,
-        "x": 0,
-        "y": 15
+        "h": 10,
+        "w": 14,
+        "x": 10,
+        "y": 7
       },
       "id": 5,
       "options": {
@@ -802,9 +1029,9 @@
         "elements": [
           {
             "allowCustomValue": false,
-            "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst values = fields?.find(f => f.type === \"number\" && f.name !== \"Time\")?.values;\nif (!ids || !values) return [];\nconst runningIds = ids.filter((id, i) => id && values[i] === 2);\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
+            "getOptions": "if (!context.panel.data || !context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst values = fields?.find(f => f.type === \"number\" && f.name !== \"Time\")?.values;\nif (!ids || !values) return [];\nconst runningIds = ids.filter((id, i) => id && values[i] === 2);\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
             "id": "service_id",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "options": [],
             "optionsSource": "Code",
             "section": "",
@@ -817,7 +1044,7 @@
           },
           {
             "id": "num_clients",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "min": 1,
             "section": "",
             "title": "# of clients",
@@ -828,32 +1055,32 @@
             "value": 0
           },
           {
-            "id": "requests_per_second",
-            "labelWidth": 15,
+            "id": "requests_per_minute",
+            "labelWidth": 20,
             "min": 1,
             "section": "",
-            "title": "Req/s",
-            "tooltip": "",
+            "title": "Req/min",
+            "tooltip": "Requests per minute (converted to req/s for API)",
             "type": "number",
             "uid": "8d5d6ae7-ff03-4792-a561-769bf7be5324",
             "unit": "",
-            "value": 1
+            "value": 60
           },
           {
-            "id": "duration_seconds",
-            "labelWidth": 15,
+            "id": "duration_minutes",
+            "labelWidth": 20,
             "min": 1,
             "section": "",
-            "title": "Duration",
-            "tooltip": "",
+            "title": "Duration (min)",
+            "tooltip": "Duration of the benchmark in minutes",
             "type": "number",
             "uid": "124316ac-6d60-440d-b228-568b1e4582e0",
-            "unit": "s",
+            "unit": "",
             "value": 0
           },
           {
             "id": "max_tokens",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "min": 1,
             "section": "",
             "title": "Max tokens",
@@ -865,7 +1092,7 @@
           },
           {
             "id": "temperature",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "max": 1,
             "min": 0,
             "section": "",
@@ -880,7 +1107,7 @@
           {
             "allowCustomValue": true,
             "id": "prompts",
-            "labelWidth": 15,
+            "labelWidth": 20,
             "options": [],
             "optionsSource": "Custom",
             "section": "",
@@ -893,14 +1120,14 @@
           }
         ],
         "initial": {
-          "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_second: 1,\n  duration_seconds: 60,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
+          "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_minute: 60,\n  duration_minutes: 1,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
           "contentType": "application/json",
           "getPayload": "return {}",
           "highlight": false,
           "highlightColor": "red",
           "method": "query",
           "payload": {},
-          "url": "http://${server}:${port}/api/v1/recipes"
+          "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/recipes"
         },
         "layout": {
           "orientation": "horizontal",
@@ -939,11 +1166,11 @@
           "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
           "confirm": false,
           "contentType": "application/json",
-          "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+          "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (element.value === null || element.value === undefined || element.value === '') {\n    return;\n  }\n  if (element.id === 'requests_per_minute') {\n    payload.requests_per_second = element.value / 60;\n  } else if (element.id === 'duration_minutes') {\n    payload.duration_seconds = element.value * 60;\n  } else {\n    payload[element.id] = element.value;\n  }\n})\nreturn payload;",
           "method": "POST",
           "payload": {},
           "payloadMode": "all",
-          "url": "http://${server}:${client_port}/api/v1/client-groups"
+          "url": "/api/datasources/proxy/uid/client-infinity/api/v1/client-groups"
         },
         "updateEnabled": "auto"
       },
@@ -976,5 +1203,28 @@
       ],
       "type": "volkovlabs-form-panel"
     }
-  ]
+  ],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "1s",
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "Administration",
+  "uid": "adjv7d8",
+  "version": 1
 }

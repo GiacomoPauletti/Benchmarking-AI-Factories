@@ -8,10 +8,10 @@
     "overrides": []
   },
   "gridPos": {
-    "h": 8,
-    "w": 10,
-    "x": 0,
-    "y": 15
+    "h": 10,
+    "w": 14,
+    "x": 10,
+    "y": 7
   },
   "id": 5,
   "options": {
@@ -40,9 +40,9 @@
     "elements": [
       {
         "allowCustomValue": false,
-        "getOptions": "if (!context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst values = fields?.find(f => f.type === \"number\" && f.name !== \"Time\")?.values;\nif (!ids || !values) return [];\nconst runningIds = ids.filter((id, i) => id && values[i] === 2);\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
+        "getOptions": "if (!context.panel.data || !context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst values = fields?.find(f => f.type === \"number\" && f.name !== \"Time\")?.values;\nif (!ids || !values) return [];\nconst runningIds = ids.filter((id, i) => id && values[i] === 2);\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
         "id": "service_id",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "options": [],
         "optionsSource": "Code",
         "section": "",
@@ -55,7 +55,7 @@
       },
       {
         "id": "num_clients",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "min": 1,
         "section": "",
         "title": "# of clients",
@@ -66,32 +66,32 @@
         "value": 0
       },
       {
-        "id": "requests_per_second",
-        "labelWidth": 15,
+        "id": "requests_per_minute",
+        "labelWidth": 20,
         "min": 1,
         "section": "",
-        "title": "Req/s",
-        "tooltip": "",
+        "title": "Req/min",
+        "tooltip": "Requests per minute (converted to req/s for API)",
         "type": "number",
         "uid": "8d5d6ae7-ff03-4792-a561-769bf7be5324",
         "unit": "",
-        "value": 1
+        "value": 60
       },
       {
-        "id": "duration_seconds",
-        "labelWidth": 15,
+        "id": "duration_minutes",
+        "labelWidth": 20,
         "min": 1,
         "section": "",
-        "title": "Duration",
-        "tooltip": "",
+        "title": "Duration (min)",
+        "tooltip": "Duration of the benchmark in minutes",
         "type": "number",
         "uid": "124316ac-6d60-440d-b228-568b1e4582e0",
-        "unit": "s",
+        "unit": "",
         "value": 0
       },
       {
         "id": "max_tokens",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "min": 1,
         "section": "",
         "title": "Max tokens",
@@ -103,7 +103,7 @@
       },
       {
         "id": "temperature",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "max": 1,
         "min": 0,
         "section": "",
@@ -118,7 +118,7 @@
       {
         "allowCustomValue": true,
         "id": "prompts",
-        "labelWidth": 15,
+        "labelWidth": 20,
         "options": [],
         "optionsSource": "Custom",
         "section": "",
@@ -131,14 +131,14 @@
       }
     ],
     "initial": {
-      "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_second: 1,\n  duration_seconds: 60,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
+      "code": "context.panel.setFormValue({\n  num_clients: 10,\n  requests_per_minute: 60,\n  duration_minutes: 1,\n  max_tokens: 10,\n  temperature: 0.7,\n  prompts: [\n    \"Write a short poem about AI.\",\n    \"Explain what machine learning is.\",\n    \"Tell me a fun fact about computers.\",\n    \"What is Python programming?\"\n  ],\n})",
       "contentType": "application/json",
       "getPayload": "return {}",
       "highlight": false,
       "highlightColor": "red",
       "method": "query",
       "payload": {},
-      "url": "http://${server}:${port}/api/v1/recipes"
+      "url": "/api/datasources/proxy/uid/af28rrswju6m8c/api/v1/recipes"
     },
     "layout": {
       "orientation": "horizontal",
@@ -177,11 +177,11 @@
       "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
       "confirm": false,
       "contentType": "application/json",
-      "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (!element.value) {\n    return;\n  }\n  payload[element.id] = element.value;\n})\nreturn payload;",
+      "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (element.value === null || element.value === undefined || element.value === '') {\n    return;\n  }\n  if (element.id === 'requests_per_minute') {\n    payload.requests_per_second = element.value / 60;\n  } else if (element.id === 'duration_minutes') {\n    payload.duration_seconds = element.value * 60;\n  } else {\n    payload[element.id] = element.value;\n  }\n})\nreturn payload;",
       "method": "POST",
       "payload": {},
       "payloadMode": "all",
-      "url": "http://${server}:${client_port}/api/v1/client-groups"
+      "url": "/api/datasources/proxy/uid/client-infinity/api/v1/client-groups"
     },
     "updateEnabled": "auto"
   },

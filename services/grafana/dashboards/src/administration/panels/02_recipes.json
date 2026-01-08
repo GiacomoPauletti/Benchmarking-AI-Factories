@@ -23,6 +23,7 @@
       },
       "links": [],
       "mappings": [],
+      "noValue": "Orchestrator down. Please start a session first.",
       "thresholds": {
         "mode": "absolute",
         "steps": [
@@ -51,16 +52,25 @@
     ]
   },
   "gridPos": {
-    "h": 16,
-    "w": 14,
-    "x": 10,
-    "y": 7
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 15
   },
   "id": 3,
   "options": {
     "cellHeight": "sm",
     "enablePagination": true,
+    "footer": {
+      "countRows": false,
+      "enablePagination": false,
+      "fields": [],
+      "reducer": [],
+      "show": false
+    },
+    "frameIndex": 0,
     "showHeader": true,
+    "showTypeIcons": false,
     "sortBy": [
       {
         "desc": true,
