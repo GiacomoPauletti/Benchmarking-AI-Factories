@@ -87,7 +87,7 @@
         "type": "number",
         "uid": "124316ac-6d60-440d-b228-568b1e4582e0",
         "unit": "",
-        "value": 0
+        "value": 1
       },
       {
         "id": "max_tokens",
@@ -172,15 +172,15 @@
       "text": "Start benchmark",
       "variant": "primary"
     },
-    "sync": false,
+    "sync": true,
     "update": {
       "code": "if (context.panel.response && context.panel.response.ok) {\n  context.grafana.notifySuccess(['Benchmark started', 'Benchmark has been successfully started.']);\n  context.grafana.refresh();\n} else {\n  context.grafana.notifyError(['Unable to start benchmark', 'An error occurred starting the benchmark.']);\n}",
       "confirm": false,
       "contentType": "application/json",
-      "getPayload": "const payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (element.value === null || element.value === undefined || element.value === '') {\n    return;\n  }\n  if (element.id === 'requests_per_minute') {\n    payload.requests_per_second = element.value / 60;\n  } else if (element.id === 'duration_minutes') {\n    payload.duration_seconds = element.value * 60;\n  } else {\n    payload[element.id] = element.value;\n  }\n})\nreturn payload;",
+      "getPayload": "console.log('getPayload called - elements:', context.panel.elements.map(e => ({id: e.id, value: e.value})));\nconst payload = {};\ncontext.panel.elements.forEach((element) => {\n  if (element.value === null || element.value === undefined || element.value === '') {\n    return;\n  }\n  if (element.id === 'service_id') {\n    payload.service_id = element.value;\n  } else if (element.id === 'num_clients') {\n    payload.num_clients = parseInt(element.value, 10);\n  } else if (element.id === 'requests_per_minute') {\n    payload.requests_per_second = parseFloat(element.value) / 60;\n  } else if (element.id === 'duration_minutes') {\n    payload.duration_seconds = parseInt(element.value, 10) * 60;\n  } else if (element.id === 'max_tokens') {\n    payload.max_tokens = parseInt(element.value, 10);\n  } else if (element.id === 'temperature') {\n    payload.temperature = parseFloat(element.value);\n  } else if (element.id === 'prompts') {\n    payload.prompts = element.value;\n  }\n});\nconsole.log('Benchmark payload:', JSON.stringify(payload));\nreturn payload;",
       "method": "POST",
       "payload": {},
-      "payloadMode": "all",
+      "payloadMode": "custom",
       "url": "/api/datasources/proxy/uid/client-infinity/api/v1/client-groups"
     },
     "updateEnabled": "auto"
