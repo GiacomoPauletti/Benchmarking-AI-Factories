@@ -31,18 +31,51 @@ cp .env.example .env
 # Edit .env with your settings
 ```
 
-Required environment variables:
-- `SSH_HOST` - MeluXina hostname
-- `SSH_PORT` - SSH port (typically 8822)
-- `SSH_USER` - Your MeluXina username
-- `REMOTE_BASE_PATH` - Working directory on MeluXina
+#### Required environment variables:
 
-Example:
+#### SSH Configuration:
+
+- `SSH_HOST` - MeluXina hostname (e.g., `login.lxp.lu`)
+- `SSH_PORT` - SSH port (`8822` for MeluXina)
+- `SSH_USER` - Your MeluXina username (e.g., `u103056`)
+- `SSH_KEY_PATH` - Path to your SSH private key (e.g., `~/.ssh/id_ed25519`)
+
+#### Remote Paths:
+
+- `REMOTE_BASE_PATH` - Working directory on MeluXina (e.g., `~/ai-factory-benchmarks`)
+- `REMOTE_HF_CACHE_PATH` - HuggingFace model cache directory (e.g., `/project/scratch/p200981/u103056/huggingface_cache`)
+- `REMOTE_SIF_DIR` - Singularity image storage directory (e.g., `/project/scratch/p200981/u103056`)
+
+#### HuggingFace:
+
+- `HF_TOKEN` - HuggingFace API token for accessing gated models and higher rate limits
+
+#### SLURM Configuration:
+
+- `ORCHESTRATOR_ACCOUNT` - SLURM account (e.g., `p200981`)
+- `ORCHESTRATOR_PARTITION` - Default partition (e.g., `cpu`)
+- `ORCHESTRATOR_QOS` - Quality of Service (e.g., `default`)
+
+#### Example configuration:
+
 ```bash
-SSH_HOST=login.lxp.lu              # MeluXina login node
-SSH_PORT=8822                       # MeluXina SSH port
-SSH_USER=u123456                    # Your MeluXina username
-REMOTE_BASE_PATH=/project/home/p200981/u123456/path/to/temp/generated/files
+# MeluXina SSH Configuration
+SSH_HOST=login.lxp.lu
+SSH_PORT=8822
+SSH_USER=u103056
+SSH_KEY_PATH=~/.ssh/id_ed25519
+
+# HuggingFace Authentication
+HF_TOKEN=hf_your_token_here
+
+# Remote Paths
+REMOTE_BASE_PATH=~/ai-factory-benchmarks
+REMOTE_HF_CACHE_PATH=/project/scratch/p200981/u103056/huggingface_cache
+REMOTE_SIF_DIR=/project/scratch/p200981/u103056
+
+# SLURM Configuration
+ORCHESTRATOR_ACCOUNT=p200981
+ORCHESTRATOR_PARTITION=cpu
 ```
 
 ### 3. Configure SSH Agent
@@ -78,13 +111,25 @@ ssh-add -l
 
 The Docker containers will use the `SSH_AUTH_SOCK` environment variable to communicate with your host's SSH agent.
 
-### 4. Start the Microservice
-
-TODO: Later, this will be replaced by the actual app using the microservices.
+### 4. Start the Application
 
 ```bash
-docker compose up -d <microservice to launch>
+docker compose up -d 
 ```
+
+Once all services are running, you can access the Grafana dashboard at:
+
+**[http://localhost:3000](http://localhost:3000)**
+
+!!! tip "Available Services"
+    After starting the application, the following services will be available:
+    
+    - **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000)
+    - **Server API**: [http://localhost:8001/docs](http://localhost:8001/docs)
+    - **Client API**: [http://localhost:8002/docs](http://localhost:8002/docs)
+    - **Logs API**: [http://localhost:8004/docs](http://localhost:8004/docs)
+    - **Monitoring API**: [http://localhost:8005/docs](http://localhost:8005/docs)
+    - **Prometheus**: [http://localhost:9090](http://localhost:9090)
 
 ## Next Steps
 

@@ -1,0 +1,1346 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="A framework to evaluate performance of AI Factory components on MeluXina supercomputer" name="description"/>
+<meta content="EUMaster4HPC Challenge Team" name="author"/>
+<link href="../../architecture/overview/" rel="prev"/>
+<link href="../client/" rel="next"/>
+<link href="../../assets/images/favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.7.1" name="generator"/>
+<title>Server - AI Factory Benchmarking Framework</title>
+<link href="../../assets/stylesheets/main.484c7ddc.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.ab4e12ef.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<link href="../../stylesheets/extra.css" rel="stylesheet"/>
+<script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body data-md-color-accent="indigo" data-md-color-primary="indigo" data-md-color-scheme="default" dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#server-api-reference">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<header class="md-header" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="AI Factory Benchmarking Framework" class="md-header__button md-logo" data-md-component="logo" href="../.." title="AI Factory Benchmarking Framework">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            AI Factory Benchmarking Framework
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              Server
+            
+          </span>
+</div>
+</div>
+</div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Switch to dark mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="" data-md-color-primary="indigo" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Switch to dark mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+<input aria-label="Switch to light mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="" data-md-color-primary="indigo" data-md-color-scheme="slate" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Switch to light mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+</form>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<label class="md-header__button md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+</label>
+<div class="md-search" data-md-component="search" role="dialog">
+<label class="md-search__overlay" for="__search"></label>
+<div class="md-search__inner" role="search">
+<form class="md-search__form" name="search">
+<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
+<label class="md-search__icon md-icon" for="__search">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</label>
+<nav aria-label="Search" class="md-search__options">
+<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
+</button>
+</nav>
+<div class="md-search__suggest" data-md-component="search-suggest"></div>
+</form>
+<div class="md-search__output">
+<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
+<div class="md-search-result" data-md-component="search-result">
+<div class="md-search-result__meta">
+            Initializing search
+          </div>
+<ol class="md-search-result__list" role="presentation"></ol>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/GiacomoPauletti/Benchmarking-AI-Factories" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+</div>
+<div class="md-source__repository">
+    GiacomoPauletti/Benchmarking-AI-Factories
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
+<div class="md-grid">
+<ul class="md-tabs__list">
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../..">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../getting-started/overview/">
+          
+  
+  
+  Getting Started
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../architecture/overview/">
+          
+  
+  
+  Architecture
+
+        </a>
+</li>
+<li class="md-tabs__item md-tabs__item--active">
+<a class="md-tabs__link" href="./">
+          
+  
+  
+  Services
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../development/guidelines/">
+          
+  
+  
+  Development
+
+        </a>
+</li>
+<li class="md-tabs__item">
+<a class="md-tabs__link" href="../../api/server/">
+          
+  
+  
+  API Documentation
+
+        </a>
+</li>
+</ul>
+</div>
+</nav>
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="AI Factory Benchmarking Framework" class="md-nav__button md-logo" data-md-component="logo" href="../.." title="AI Factory Benchmarking Framework">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+    AI Factory Benchmarking Framework
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/GiacomoPauletti/Benchmarking-AI-Factories" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+</div>
+<div class="md-source__repository">
+    GiacomoPauletti/Benchmarking-AI-Factories
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../..">
+<span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_2" type="checkbox"/>
+<label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_2_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_2">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/overview/">
+<span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../getting-started/installation/">
+<span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_3" type="checkbox"/>
+<label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_3_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_3">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../architecture/overview/">
+<span class="md-ellipsis">
+    
+  
+    System Overview
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+<input checked="" class="md-nav__toggle md-toggle" id="__nav_4" type="checkbox"/>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+<span class="md-ellipsis">
+    
+  
+    Services
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="true" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_4">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Services
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    
+  
+    Server
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    
+  
+    Server
+  
+
+    
+  </span>
+</a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#interactive-api-documentation">
+<span class="md-ellipsis">
+      
+        Interactive API Documentation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#overview">
+<span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+</a>
+<nav aria-label="Overview" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#architecture">
+<span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#what-it-does">
+<span class="md-ellipsis">
+      
+        What it does
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#deployment-architecture">
+<span class="md-ellipsis">
+      
+        Deployment Architecture
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#server-gateway-components">
+<span class="md-ellipsis">
+      
+        Server (Gateway) Components
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#serviceorchestrator-components-on-meluxina">
+<span class="md-ellipsis">
+      
+        ServiceOrchestrator Components (on MeluXina)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#service-handlers-types">
+<span class="md-ellipsis">
+      
+        Service Handlers &amp; Types
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#how-recipe-yaml-files-work">
+<span class="md-ellipsis">
+      
+        How Recipe YAML Files Work
+      
+    </span>
+</a>
+<nav aria-label="How Recipe YAML Files Work" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-loading-flow">
+<span class="md-ellipsis">
+      
+        Recipe Loading Flow
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-yaml-structure">
+<span class="md-ellipsis">
+      
+        Recipe YAML Structure
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#example-vllm-recipe">
+<span class="md-ellipsis">
+      
+        Example: vLLM Recipe
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#multi-replica-configuration">
+<span class="md-ellipsis">
+      
+        Multi-Replica Configuration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#how-recipes-are-used">
+<span class="md-ellipsis">
+      
+        How Recipes Are Used
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-specific-builders">
+<span class="md-ellipsis">
+      
+        Recipe-Specific Builders
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-script-builders-orchestrator-component">
+<span class="md-ellipsis">
+      
+        Recipe Script Builders (Orchestrator Component)
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#further-reading">
+<span class="md-ellipsis">
+      
+        Further Reading
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../client/">
+<span class="md-ellipsis">
+    
+  
+    Client
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../monitoring/">
+<span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../logs/">
+<span class="md-ellipsis">
+    
+  
+    Logs
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_5" type="checkbox"/>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_5">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../development/guidelines/">
+<span class="md-ellipsis">
+    
+  
+    Guidelines
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item md-nav__item--nested">
+<input class="md-nav__toggle md-toggle md-toggle--indeterminate" id="__nav_6" type="checkbox"/>
+<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+<span class="md-ellipsis">
+    
+  
+    API Documentation
+  
+
+    
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
+<label class="md-nav__title" for="__nav_6">
+<span class="md-nav__icon md-icon"></span>
+            
+  
+    API Documentation
+  
+
+          </label>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api/server/">
+<span class="md-ellipsis">
+    
+  
+    Server API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api/client/">
+<span class="md-ellipsis">
+    
+  
+    Client API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api/monitoring/">
+<span class="md-ellipsis">
+    
+  
+    Monitoring API
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../api/logs/">
+<span class="md-ellipsis">
+    
+  
+    Logs API
+  
+
+    
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#interactive-api-documentation">
+<span class="md-ellipsis">
+      
+        Interactive API Documentation
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#overview">
+<span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+</a>
+<nav aria-label="Overview" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#architecture">
+<span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#what-it-does">
+<span class="md-ellipsis">
+      
+        What it does
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#deployment-architecture">
+<span class="md-ellipsis">
+      
+        Deployment Architecture
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#server-gateway-components">
+<span class="md-ellipsis">
+      
+        Server (Gateway) Components
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#serviceorchestrator-components-on-meluxina">
+<span class="md-ellipsis">
+      
+        ServiceOrchestrator Components (on MeluXina)
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#service-handlers-types">
+<span class="md-ellipsis">
+      
+        Service Handlers &amp; Types
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#how-recipe-yaml-files-work">
+<span class="md-ellipsis">
+      
+        How Recipe YAML Files Work
+      
+    </span>
+</a>
+<nav aria-label="How Recipe YAML Files Work" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-loading-flow">
+<span class="md-ellipsis">
+      
+        Recipe Loading Flow
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-yaml-structure">
+<span class="md-ellipsis">
+      
+        Recipe YAML Structure
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#example-vllm-recipe">
+<span class="md-ellipsis">
+      
+        Example: vLLM Recipe
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#multi-replica-configuration">
+<span class="md-ellipsis">
+      
+        Multi-Replica Configuration
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#how-recipes-are-used">
+<span class="md-ellipsis">
+      
+        How Recipes Are Used
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-specific-builders">
+<span class="md-ellipsis">
+      
+        Recipe-Specific Builders
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#recipe-script-builders-orchestrator-component">
+<span class="md-ellipsis">
+      
+        Recipe Script Builders (Orchestrator Component)
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#further-reading">
+<span class="md-ellipsis">
+      
+        Further Reading
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<nav aria-label="Navigation" class="md-path">
+<ol class="md-path__list">
+<li class="md-path__item">
+<a class="md-path__link" href="../..">
+<span class="md-ellipsis">
+    Home
+  </span>
+</a>
+</li>
+<li class="md-path__item">
+<a class="md-path__link" href="./">
+<span class="md-ellipsis">
+    Services
+  </span>
+</a>
+</li>
+</ol>
+</nav>
+<article class="md-content__inner md-typeset">
+<h1 id="server-api-reference">Server API Reference<a class="headerlink" href="#server-api-reference" title="Permanent link">¶</a></h1>
+<p>The Server Service provides REST API for managing AI services on the MeluXina supercomputer.</p>
+<h2 id="interactive-api-documentation">Interactive API Documentation<a class="headerlink" href="#interactive-api-documentation" title="Permanent link">¶</a></h2>
+<div class="admonition tip">
+<p class="admonition-title">Live API Explorer</p>
+<p>The best way to explore the API is here:</p>
+<p><strong><a class="md-button md-button--primary" href="../../api/server">Open Interactive API Docs</a></strong></p>
+</div>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">¶</a></h2>
+<p>A FastAPI gateway server that proxies AI workload orchestration requests to a ServiceOrchestrator running on MeluXina.</p>
+<h3 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">¶</a></h3>
+<p>The system consists of two main components:</p>
+<ol>
+<li><strong>Server (Gateway)</strong>: Runs locally (e.g., laptop/workstation), exposes REST API, forwards requests via SSH</li>
+<li><strong>ServiceOrchestrator</strong>: Runs on MeluXina, manages SLURM jobs, handles container deployment</li>
+</ol>
+<h3 id="what-it-does">What it does<a class="headerlink" href="#what-it-does" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>API Gateway</strong>: Provides a stable REST API endpoint for external clients</li>
+<li><strong>Request Proxying</strong>: Forwards all orchestration requests to the ServiceOrchestrator via SSH tunnels</li>
+<li><strong>Dual Access Pattern</strong>: </li>
+<li><strong>External clients</strong> → Server (localhost:8001) → SSH tunnel → Orchestrator (MeluXina)</li>
+<li><strong>Internal clients</strong> (on MeluXina) → Orchestrator API directly (orchestrator:8000)</li>
+</ul>
+<h3 id="deployment-architecture">Deployment Architecture<a class="headerlink" href="#deployment-architecture" title="Permanent link">¶</a></h3>
+<p>The system is split across two locations with clear separation of concerns:</p>
+<pre class="mermaid"><code>graph TB
+    subgraph Local["Local Machine (Laptop/Workstation)"]
+        Client["Client Application"]
+        Server["Server (Gateway)&lt;br/&gt;FastAPI&lt;br/&gt;Port 8001"]
+    end
+
+    subgraph MeluXina["MeluXina Supercomputer"]
+        Orchestrator["ServiceOrchestrator&lt;br/&gt;FastAPI&lt;br/&gt;Port 8000"]
+        SLURM["SLURM Cluster"]
+        Compute["Compute Nodes&lt;br/&gt;(vLLM, Qdrant, etc.)"]
+    end
+
+    Client --&gt;|"HTTP: localhost:8001"| Server
+    Server --&gt;|"SSH Tunnel&lt;br/&gt;(http_request_via_ssh)"| Orchestrator
+    Orchestrator --&gt;|"sbatch/scancel"| SLURM
+    SLURM --&gt;|"Job Control"| Compute
+    Orchestrator --&gt;|"HTTP&lt;br/&gt;(status, models, prompts)"| Compute
+
+    InternalClient["Internal Client&lt;br/&gt;(on MeluXina)"] -.-&gt;|"HTTP: orchestrator:8000&lt;br/&gt;(Direct Access)"| Orchestrator
+
+    style Server fill:#B3E5FC,stroke:#0288D1,stroke-width:2px
+    style Orchestrator fill:#C8E6C9,stroke:#388E3C,stroke-width:2px
+    style Client fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px
+    style InternalClient fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px,stroke-dasharray: 5 5</code></pre>
+<p><strong>Key Points:</strong></p>
+<ul>
+<li><strong>Server (Gateway)</strong>: Lightweight proxy running locally, provides stable API endpoint</li>
+<li><strong>ServiceOrchestrator</strong>: Heavy lifting component on MeluXina, manages SLURM and containers</li>
+<li><strong>SSH Tunnel</strong>: Secure communication channel between server and orchestrator</li>
+<li><strong>Dual Access</strong>: External clients use the gateway; internal MeluXina clients can bypass it</li>
+</ul>
+<h3 id="server-gateway-components">Server (Gateway) Components<a class="headerlink" href="#server-gateway-components" title="Permanent link">¶</a></h3>
+<p>The server component focuses on request proxying and client-facing API:</p>
+<pre class="mermaid"><code>classDiagram
+    class FastAPIApp:::api {
+        +root()
+        +health()
+    }
+
+    class APIRouter:::api {
+        +create_service()
+        +list_services()
+        +stop_service()
+        +get_service_status()
+        +update_service_status()
+        +vllm_endpoints()
+        +vector_db_endpoints()
+    }
+
+    class OrchestratorProxy:::proxy {
+        +start_service(recipe, config)
+        +stop_service(service_id)
+        +list_services()
+        +get_service_status(service_id)
+        +prompt_vllm_service(...)
+        +get_vllm_models(...)
+        +_make_request(method, endpoint)
+    }
+
+    class SSHManager:::ssh {
+        +http_request_via_ssh(host, port, method, path)
+        +execute_remote_command(cmd)
+        +setup_tunnel(local_port, remote_port)
+    }
+
+    FastAPIApp --&gt; APIRouter
+    APIRouter --&gt; OrchestratorProxy
+    OrchestratorProxy --&gt; SSHManager
+
+    classDef api fill:#B3E5FC,stroke:#0288D1,stroke-width:2px
+    classDef proxy fill:#FFE0B2,stroke:#F57C00,stroke-width:2px
+    classDef ssh fill:#E0E0E0,stroke:#9E9E9E,stroke-width:1px</code></pre>
+<p><strong>Server Layer Responsibilities:</strong></p>
+<ul>
+<li>Expose REST API on <code>localhost:8001</code> for external clients</li>
+<li>Parse and validate client requests</li>
+<li>Forward requests to orchestrator via SSH tunnels</li>
+<li>Handle SSH connection failures gracefully</li>
+<li>Return normalized responses to clients</li>
+</ul>
+<h3 id="serviceorchestrator-components-on-meluxina">ServiceOrchestrator Components (on MeluXina)<a class="headerlink" href="#serviceorchestrator-components-on-meluxina" title="Permanent link">¶</a></h3>
+<p>The orchestrator handles all the heavy lifting:</p>
+<pre class="mermaid"><code>classDiagram
+    class OrchestratorAPI:::api {
+        +start_service()
+        +stop_service()
+        +list_services()
+        +get_service_group()
+    }
+
+    class ServiceOrchestrator:::core {
+        +start_service(recipe_name, config)
+        +stop_service(service_id)
+        +update_service_status(service_id, status)
+        +stop_service_group(group_id)
+        +update_service_group_status(group_id, status)
+    }
+
+    class SlurmDeployer:::infra {
+        +submit_job()
+        +cancel_job()
+        +get_job_status()
+    }
+
+    class ServiceManager:::infra {
+        +register_service()
+        +get_service()
+        +update_service_status()
+    }
+
+    class RecipeLoader:::infra {
+        +load(recipe_name)
+        +list_all()
+    }
+
+    class BuilderRegistry:::infra {
+        +create_builder(category)
+    }
+
+    OrchestratorAPI --&gt; ServiceOrchestrator
+    ServiceOrchestrator *-- SlurmDeployer
+    ServiceOrchestrator *-- ServiceManager
+    ServiceOrchestrator *-- RecipeLoader
+    SlurmDeployer --&gt; BuilderRegistry
+
+    classDef api fill:#C8E6C9,stroke:#388E3C,stroke-width:2px
+    classDef core fill:#DCEDC8,stroke:#8BC34A,stroke-width:2px
+    classDef infra fill:#F5F5F5,stroke:#9E9E9E,stroke-width:1px</code></pre>
+<p><strong>Orchestrator Layer Responsibilities:</strong></p>
+<ul>
+<li>Expose internal API on <code>orchestrator:8000</code> (accessible from MeluXina network)</li>
+<li>Load and parse recipe YAML files</li>
+<li>Generate SLURM job scripts with appropriate resource allocations</li>
+<li>Submit jobs to SLURM via <code>sbatch</code></li>
+<li>Track service lifecycle (pending → configuring → running → cancelled)</li>
+<li>Resolve compute node endpoints for running services</li>
+<li>Query service health and models from compute nodes</li>
+<li>Handle service groups (replica sets) and load balancing</li>
+</ul>
+<h3 id="service-handlers-types">Service Handlers &amp; Types<a class="headerlink" href="#service-handlers-types" title="Permanent link">¶</a></h3>
+<pre class="mermaid"><code>graph TD
+    %% =========================================
+    %% Base / Abstract layer
+    %% =========================================
+    BaseService["BaseService"]
+
+    %% =========================================
+    %% Subgraphs / Layers
+    %% =========================================
+    subgraph InferenceLayer["Inference Layer"]
+        InferenceService["InferenceService"]
+        VllmService["VllmService"]
+    end
+
+    subgraph VectorDBLayer["VectorDB Layer"]
+        VectorDbService["VectorDbService"]
+        QdrantService["QdrantService"]
+    end
+
+    subgraph InfraLayer["Infrastructure Layer"]
+        SlurmDeployer["SlurmDeployer"]
+        EndpointResolver["EndpointResolver"]
+    end
+
+    %% =========================================
+    %% Inheritance / Composition
+    %% =========================================
+    BaseService --&gt; InferenceService
+    InferenceService --&gt; VllmService
+    BaseService --&gt; VectorDbService
+    VectorDbService --&gt; QdrantService
+
+    %% =========================================
+    %% Dependencies
+    %% =========================================
+    VllmService --&gt; EndpointResolver
+    QdrantService --&gt; EndpointResolver
+    VllmService --&gt; SlurmDeployer
+    QdrantService --&gt; SlurmDeployer
+
+    %% =========================================
+    %% Styling
+    %% =========================================
+    class BaseService base
+    class InferenceService inference
+    class VllmService inference
+    class VectorDbService vectordb
+    class QdrantService vectordb
+    class SlurmDeployer infra
+    class EndpointResolver infra
+
+    classDef base fill:#FFF9C4,stroke:#FBC02D,stroke-width:1px,color:#795548
+    classDef inference fill:#DCEDC8,stroke:#8BC34A,stroke-width:1px,color:#33691E
+    classDef vectordb fill:#E1BEE7,stroke:#8E24AA,stroke-width:1px,color:#4A148C
+    classDef infra fill:#E0E0E0,stroke:#9E9E9E,stroke-width:1px,color:#424242
+</code></pre>
+<p>The service-handlers diagram explains how domain-specific functionality is organized:</p>
+<ul>
+<li><code>BaseService</code> provides the shared plumbing (deployer access, service registry, endpoint resolution) used by concrete handlers.</li>
+<li><code>InferenceService</code> and <code>VectorDbService</code> define the operations expected by their domains; <code>VllmService</code> and <code>QdrantService</code> implement those operations against running jobs.</li>
+<li>These handlers consult <code>SlurmDeployer</code> for live job state and <code>EndpointResolver</code> to discover the compute-node HTTP endpoints used to reach the actual running services.</li>
+</ul>
+<p>Refer to this diagram when extending the system with a new service type (create a subclass of <code>BaseService</code> and implement the domain-specific API surface).</p>
+<h2 id="how-recipe-yaml-files-work">How Recipe YAML Files Work<a class="headerlink" href="#how-recipe-yaml-files-work" title="Permanent link">¶</a></h2>
+<p>Recipe YAML files define service configurations that are loaded and used to generate SLURM job scripts for deploying services on the cluster.</p>
+<h3 id="recipe-loading-flow">Recipe Loading Flow<a class="headerlink" href="#recipe-loading-flow" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>User Request → RecipeLoader.load(recipe_name) → YAML File Read → Recipe Object → SlurmDeployer
+<a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a>                                                                                         ↓
+<a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a>BuilderRegistry.create_builder() → RecipeScriptBuilder → Generated SLURM Script → sbatch
+</code></pre></div>
+<h3 id="recipe-yaml-structure">Recipe YAML Structure<a class="headerlink" href="#recipe-yaml-structure" title="Permanent link">¶</a></h3>
+<p>Each recipe YAML file contains:</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>Recipe identifier (e.g., <code>vllm</code>)</td>
+</tr>
+<tr>
+<td><code>category</code></td>
+<td>Service type: <code>inference</code>, <code>vector-db</code>, or <code>storage</code></td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>Human-readable service description</td>
+</tr>
+<tr>
+<td><code>image</code></td>
+<td>Singularity/Apptainer image filename (built from <code>.def</code>)</td>
+</tr>
+<tr>
+<td><code>container_def</code></td>
+<td>Singularity definition file for building the image</td>
+</tr>
+<tr>
+<td><code>ports</code></td>
+<td>Default ports the service exposes</td>
+</tr>
+<tr>
+<td><code>environment</code></td>
+<td>Environment variables passed to the container</td>
+</tr>
+<tr>
+<td><code>resources</code></td>
+<td>Default SLURM resource requests (can be overridden per job)</td>
+</tr>
+<tr>
+<td><code>distributed</code></td>
+<td>Configuration for multi-node/multi-GPU execution</td>
+</tr>
+<tr>
+<td><code>replicas</code></td>
+<td>Number of independent service instances for data parallelism (optional)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="example-vllm-recipe">Example: vLLM Recipe<a class="headerlink" href="#example-vllm-recipe" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm-single-node</span>
+<a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a><span class="nt">category</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inference</span>
+<a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">"vLLM</span><span class="nv"> </span><span class="s">high-performance</span><span class="nv"> </span><span class="s">inference</span><span class="nv"> </span><span class="s">server</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">large</span><span class="nv"> </span><span class="s">language</span><span class="nv"> </span><span class="s">models"</span>
+<a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="s">"0.2.0"</span>
+<a href="#__codelineno-1-5" id="__codelineno-1-5" name="__codelineno-1-5"></a><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="s">"vllm.sif"</span>
+<a href="#__codelineno-1-6" id="__codelineno-1-6" name="__codelineno-1-6"></a><span class="nt">container_def</span><span class="p">:</span><span class="w"> </span><span class="s">"vllm.def"</span>
+<a href="#__codelineno-1-7" id="__codelineno-1-7" name="__codelineno-1-7"></a>
+<a href="#__codelineno-1-8" id="__codelineno-1-8" name="__codelineno-1-8"></a><span class="nt">ports</span><span class="p">:</span>
+<a href="#__codelineno-1-9" id="__codelineno-1-9" name="__codelineno-1-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8001</span>
+<a href="#__codelineno-1-10" id="__codelineno-1-10" name="__codelineno-1-10"></a>
+<a href="#__codelineno-1-11" id="__codelineno-1-11" name="__codelineno-1-11"></a><span class="nt">environment</span><span class="p">:</span>
+<a href="#__codelineno-1-12" id="__codelineno-1-12" name="__codelineno-1-12"></a><span class="w">  </span><span class="nt">VLLM_HOST</span><span class="p">:</span><span class="w"> </span><span class="s">"0.0.0.0"</span>
+<a href="#__codelineno-1-13" id="__codelineno-1-13" name="__codelineno-1-13"></a><span class="w">  </span><span class="nt">VLLM_PORT</span><span class="p">:</span><span class="w"> </span><span class="s">"8001"</span>
+<a href="#__codelineno-1-14" id="__codelineno-1-14" name="__codelineno-1-14"></a><span class="w">  </span><span class="nt">VLLM_MODEL</span><span class="p">:</span><span class="w"> </span><span class="s">"Qwen/Qwen2.5-0.5B-Instruct"</span>
+<a href="#__codelineno-1-15" id="__codelineno-1-15" name="__codelineno-1-15"></a><span class="w">  </span><span class="nt">VLLM_WORKDIR</span><span class="p">:</span><span class="w"> </span><span class="s">"/workspace"</span>
+<a href="#__codelineno-1-16" id="__codelineno-1-16" name="__codelineno-1-16"></a><span class="w">  </span><span class="nt">VLLM_LOGGING_LEVEL</span><span class="p">:</span><span class="w"> </span><span class="s">"INFO"</span>
+<a href="#__codelineno-1-17" id="__codelineno-1-17" name="__codelineno-1-17"></a><span class="w">  </span><span class="nt">VLLM_TENSOR_PARALLEL_SIZE</span><span class="p">:</span><span class="w"> </span><span class="s">"4"</span><span class="w"> </span>
+<a href="#__codelineno-1-18" id="__codelineno-1-18" name="__codelineno-1-18"></a>
+<a href="#__codelineno-1-19" id="__codelineno-1-19" name="__codelineno-1-19"></a><span class="nt">resources</span><span class="p">:</span>
+<a href="#__codelineno-1-20" id="__codelineno-1-20" name="__codelineno-1-20"></a><span class="w">  </span><span class="nt">nodes</span><span class="p">:</span><span class="w"> </span><span class="s">"1"</span>
+<a href="#__codelineno-1-21" id="__codelineno-1-21" name="__codelineno-1-21"></a><span class="w">  </span><span class="nt">cpu</span><span class="p">:</span><span class="w"> </span><span class="s">"2"</span>
+<a href="#__codelineno-1-22" id="__codelineno-1-22" name="__codelineno-1-22"></a><span class="w">  </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="s">"32G"</span>
+<a href="#__codelineno-1-23" id="__codelineno-1-23" name="__codelineno-1-23"></a><span class="w">  </span><span class="nt">time_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
+<a href="#__codelineno-1-24" id="__codelineno-1-24" name="__codelineno-1-24"></a><span class="w">  </span><span class="nt">gpu</span><span class="p">:</span><span class="w"> </span><span class="s">"4"</span>
+</code></pre></div>
+<h3 id="multi-replica-configuration">Multi-Replica Configuration<a class="headerlink" href="#multi-replica-configuration" title="Permanent link">¶</a></h3>
+<p>The <code>vllm-replicas</code> recipe creates multiple replicas on a single node for high-throughput inference:</p>
+<div class="highlight"><pre><span></span><code><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm-replicas</span>
+<a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="nt">category</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">inference</span>
+<a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">"vLLM</span><span class="nv"> </span><span class="s">with</span><span class="nv"> </span><span class="s">multiple</span><span class="nv"> </span><span class="s">replicas</span><span class="nv"> </span><span class="s">-</span><span class="nv"> </span><span class="s">flexible</span><span class="nv"> </span><span class="s">GPU</span><span class="nv"> </span><span class="s">allocation</span><span class="nv"> </span><span class="s">per</span><span class="nv"> </span><span class="s">replica"</span>
+<a href="#__codelineno-2-4" id="__codelineno-2-4" name="__codelineno-2-4"></a>
+<a href="#__codelineno-2-5" id="__codelineno-2-5" name="__codelineno-2-5"></a><span class="nt">environment</span><span class="p">:</span>
+<a href="#__codelineno-2-6" id="__codelineno-2-6" name="__codelineno-2-6"></a><span class="w">  </span><span class="nt">VLLM_HOST</span><span class="p">:</span><span class="w"> </span><span class="s">"0.0.0.0"</span>
+<a href="#__codelineno-2-7" id="__codelineno-2-7" name="__codelineno-2-7"></a><span class="w">  </span><span class="nt">VLLM_MODEL</span><span class="p">:</span><span class="w"> </span><span class="s">"Qwen/Qwen2.5-0.5B-Instruct"</span>
+<a href="#__codelineno-2-8" id="__codelineno-2-8" name="__codelineno-2-8"></a><span class="w">  </span><span class="c1"># ... other settings ...</span>
+<a href="#__codelineno-2-9" id="__codelineno-2-9" name="__codelineno-2-9"></a>
+<a href="#__codelineno-2-10" id="__codelineno-2-10" name="__codelineno-2-10"></a><span class="nt">resources</span><span class="p">:</span><span class="w">  </span><span class="c1"># Per node (not per replica)</span>
+<a href="#__codelineno-2-11" id="__codelineno-2-11" name="__codelineno-2-11"></a><span class="w">  </span><span class="nt">nodes</span><span class="p">:</span><span class="w"> </span><span class="s">"1"</span><span class="w">  </span><span class="c1"># Number of nodes to allocate</span>
+<a href="#__codelineno-2-12" id="__codelineno-2-12" name="__codelineno-2-12"></a><span class="w">  </span><span class="nt">cpu</span><span class="p">:</span><span class="w"> </span><span class="s">"8"</span><span class="w">    </span><span class="c1"># CPUs per node</span>
+<a href="#__codelineno-2-13" id="__codelineno-2-13" name="__codelineno-2-13"></a><span class="w">  </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="s">"64G"</span><span class="w">  </span><span class="c1"># Memory per node</span>
+<a href="#__codelineno-2-14" id="__codelineno-2-14" name="__codelineno-2-14"></a><span class="w">  </span><span class="nt">time_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15</span>
+<a href="#__codelineno-2-15" id="__codelineno-2-15" name="__codelineno-2-15"></a><span class="w">  </span><span class="nt">gpu</span><span class="p">:</span><span class="w"> </span><span class="s">"4"</span><span class="w">    </span><span class="c1"># Total GPUs per node</span>
+<a href="#__codelineno-2-16" id="__codelineno-2-16" name="__codelineno-2-16"></a>
+<a href="#__codelineno-2-17" id="__codelineno-2-17" name="__codelineno-2-17"></a><span class="c1"># Replica group configuration</span>
+<a href="#__codelineno-2-18" id="__codelineno-2-18" name="__codelineno-2-18"></a><span class="c1"># System calculates: replicas_per_node = gpu / gpu_per_replica</span>
+<a href="#__codelineno-2-19" id="__codelineno-2-19" name="__codelineno-2-19"></a><span class="nt">gpu_per_replica</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span><span class="w">  </span><span class="c1"># Each replica uses 1 GPU (data parallel)</span>
+<a href="#__codelineno-2-20" id="__codelineno-2-20" name="__codelineno-2-20"></a><span class="nt">base_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8001</span><span class="w">     </span><span class="c1"># First replica uses 8001, second uses 8002, etc.</span>
+</code></pre></div>
+<p><strong>How it works:</strong>
+- With <code>gpu: 4</code> and <code>gpu_per_replica: 1</code>, you get 4 replicas
+- Each replica runs independently on separate GPUs (0, 1, 2, 3)
+- Replicas listen on consecutive ports (8001, 8002, 8003, 8004)
+- All replicas run in a single SLURM job
+- Load balancing distributes requests using round-robin with automatic failover</p>
+<h3 id="how-recipes-are-used">How Recipes Are Used<a class="headerlink" href="#how-recipes-are-used" title="Permanent link">¶</a></h3>
+<ol>
+<li><strong>Service Creation</strong>: User calls <code>/api/v1/services</code> with <code>recipe_name: "inference/vllm-single-node"</code></li>
+<li><strong>Recipe Loading</strong>: <code>RecipeLoader</code> reads <code>recipes/inference/vllm-single-node.yaml</code></li>
+<li><strong>Configuration Merge</strong>: User-provided config (e.g., <code>gpu: 8</code>) overrides recipe defaults</li>
+<li><strong>Replica Detection</strong>: If <code>gpu_per_replica</code> field is present, calculate replicas per node</li>
+<li><strong>Builder Selection</strong>: <code>BuilderRegistry</code> selects recipe-specific builder or category default</li>
+<li><strong>Script Generation</strong>: Builder generates SLURM script with replica configuration</li>
+<li><strong>Job Submission</strong>: Submit single SLURM job that launches all replicas on assigned GPUs</li>
+</ol>
+<h3 id="recipe-specific-builders">Recipe-Specific Builders<a class="headerlink" href="#recipe-specific-builders" title="Permanent link">¶</a></h3>
+<p>Some recipes have custom builders that override script generation behavior. For example:</p>
+<ul>
+<li><strong><code>VllmInferenceBuilder</code></strong>: Overrides <code>build_distributed_run_block()</code> to add tensor parallelism with <code>torchrun</code></li>
+<li><strong><code>QdrantVectorDbBuilder</code></strong>: Overrides <code>build_run_block()</code> to mount job-specific storage paths</li>
+</ul>
+<p>This allows recipes to customize script generation without modifying the core <code>SlurmDeployer</code>.</p>
+<h3 id="recipe-script-builders-orchestrator-component">Recipe Script Builders (Orchestrator Component)<a class="headerlink" href="#recipe-script-builders-orchestrator-component" title="Permanent link">¶</a></h3>
+<p>The following diagram shows the Recipe Builder architecture <strong>running on the ServiceOrchestrator</strong> (MeluXina side). It uses the Strategy pattern to generate SLURM job scripts for different recipe types. This modular design allows adding new services without modifying the core SLURM deployer.</p>
+<pre class="mermaid"><code>classDiagram
+    %% =========================================
+    %% Abstract Base
+    %% =========================================
+    class RecipeScriptBuilder:::base {
+        &lt;&lt;abstract&gt;&gt;
+        +build_environment_section()*
+        +build_container_build_block()*
+        +build_run_block()*
+        +supports_distributed()
+        +build_distributed_run_block()*
+    }
+
+    class BuilderRegistry:::registry {
+        +register(category, builder_class)
+        +register_recipe(recipe_name, builder_class)
+        +create_builder(category, recipe_name)
+        +list_categories()
+        +list_recipes()
+    }
+
+    %% =========================================
+    %% Category Builders (Generic)
+    %% =========================================
+    class InferenceRecipeBuilder:::inference {
+        +build_environment_section()
+        +build_container_build_block()
+        +build_run_block()
+        +supports_distributed() bool
+        +build_distributed_run_block()
+    }
+
+    class VectorDbRecipeBuilder:::vectordb {
+        +build_environment_section()
+        +build_container_build_block()
+        +build_run_block()
+        +supports_distributed() bool
+    }
+
+    %% =========================================
+    %% Recipe-Specific Builders
+    %% =========================================
+    class VllmInferenceBuilder:::inference {
+        +build_distributed_run_block()
+    }
+
+    class QdrantVectorDbBuilder:::vectordb {
+        +build_run_block()
+    }
+
+    %% =========================================
+    %% Client
+    %% =========================================
+    class SlurmDeployer:::client {
+        +_create_script(recipe, config)
+    }
+
+    %% =========================================
+    %% Relationships
+    %% =========================================
+    RecipeScriptBuilder &lt;|-- InferenceRecipeBuilder
+    RecipeScriptBuilder &lt;|-- VectorDbRecipeBuilder
+    InferenceRecipeBuilder &lt;|-- VllmInferenceBuilder
+    VectorDbRecipeBuilder &lt;|-- QdrantVectorDbBuilder
+
+    BuilderRegistry ..&gt; RecipeScriptBuilder : creates
+    SlurmDeployer --&gt; BuilderRegistry : uses
+
+    %% =========================================
+    %% Styling
+    %% =========================================
+    classDef base fill:#FFF9C4,stroke:#FBC02D,stroke-width:2px,color:#795548
+    classDef registry fill:#FFE0B2,stroke:#F57C00,stroke-width:2px,color:#E65100
+    classDef inference fill:#DCEDC8,stroke:#8BC34A,stroke-width:1px,color:#33691E
+    classDef vectordb fill:#E1BEE7,stroke:#8E24AA,stroke-width:1px,color:#4A148C
+    classDef client fill:#E0E0E0,stroke:#9E9E9E,stroke-width:1px,color:#424242</code></pre>
+<h2 id="further-reading">Further Reading<a class="headerlink" href="#further-reading" title="Permanent link">¶</a></h2>
+<ul>
+<li><a href="recipes.md">Service Recipes</a> - Available service templates</li>
+<li><a href="../../architecture/overview/">Architecture</a> - System design</li>
+<li><a href="../../development/guidelines/">Development Guide</a> - API development</li>
+</ul>
+<hr/>
+</article>
+</div>
+<script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+<button class="md-top md-icon" data-md-component="top" hidden="" type="button">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"></path></svg>
+  Back to top
+</button>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+<div class="md-social">
+<a class="md-social__link" href="https://github.com/GiacomoPauletti/Benchmarking-AI-Factories" rel="noopener" target="_blank" title="github.com">
+<svg viewbox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"></path></svg>
+</a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+</body>
+</html>

@@ -120,7 +120,7 @@ else
     MAX_ATTEMPTS=30
     ATTEMPT=0
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-        if curl -s http://localhost:8003/health > /dev/null 2>&1; then
+        if curl -s http://localhost:8002/health > /dev/null 2>&1; then
             echo "    Client is ready"
             break
         fi
@@ -136,7 +136,7 @@ fi
 
 # Fetch OpenAPI schema
 echo "    Fetching OpenAPI schema..."
-if curl -s http://localhost:8003/openapi.json > "$API_DIR/client-openapi.json"; then
+if curl -s http://localhost:8002/openapi.json > "$API_DIR/client-openapi.json"; then
     echo "    Successfully generated client-openapi.json"
 else
     echo "    Warning: Could not fetch OpenAPI schema"

@@ -4,13 +4,17 @@ This guide will help you set up and run the AI Factory Benchmarking Framework on
 
 ## Overview
 
-**TODO**: Project overview will be written here.
+The AI Factory Benchmarking Framework is a distributed system for deploying, benchmarking, and monitoring AI inference services on HPC clusters. Unlike simple tools that run sequentially, our framework lets you launch an arbitrary number of benchmarks in parallel, allowing you to scale your experiments without being limited to one benchmark at a time.
 
-This section will provide:
-- What is the AI Factory Benchmarking Framework
-- Key features and capabilities
-- Use cases and scenarios
-- Architecture at a glance
+**Features:**
+
+- Deploy dozens of vLLM replicas via SLURM with GPU allocation, automatically load balanced
+- Run distributed load tests with hundreds of clients performing load on the vLLM services
+- Collect GPU metrics (utilization, power, temperature) in real-time
+- Visualize performance through Grafana dashboards
+- Aggregate and query SLURM job logs
+
+All this through a simple, intuitive Grafana UI.
 
 ## Installation
 

@@ -45,10 +45,6 @@ graph LR
     style Storage fill:#FFF9C4,stroke:#FBC02D,stroke-width:2px
 ```
 
-## Key Features
-
-### Automatic Categorization
-
 Logs are automatically categorized into:
 
 - **server**: Service orchestrator logs

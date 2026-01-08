@@ -19,8 +19,11 @@
         <link rel="next" href="../../architecture/overview/">
       
       
+        
+      
+      
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.22">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
     
     
       
@@ -28,10 +31,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.84d31ad4.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -56,7 +59,6 @@
     
       
 
-    
     
     
   </head>
@@ -288,7 +290,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../services/server/api-reference/" class="md-tabs__link">
+        <a href="../../services/server/" class="md-tabs__link">
           
   
   
@@ -397,9 +399,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Home
+  
+
     
   </span>
+  
   
 
       </a>
@@ -440,9 +447,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Getting Started
+  
+
     
   </span>
+  
   
 
             <span class="md-nav__icon md-icon"></span>
@@ -451,7 +463,11 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
-            Getting Started
+            
+  
+    Getting Started
+  
+
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -467,9 +483,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Overview
+  
+
     
   </span>
+  
   
 
       </a>
@@ -499,9 +520,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Installation
+  
+
     
   </span>
+  
   
 
           <span class="md-nav__icon md-icon"></span>
@@ -512,9 +538,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Installation
+  
+
     
   </span>
+  
   
 
       </a>
@@ -537,7 +568,9 @@
         <li class="md-nav__item">
   <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
-      Prerequisites
+      
+        Prerequisites
+      
     </span>
   </a>
   
@@ -547,7 +580,9 @@
           <li class="md-nav__item">
   <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Requirements
+      
+        Requirements
+      
     </span>
   </a>
   
@@ -561,7 +596,9 @@
         <li class="md-nav__item">
   <a href="#installation-steps" class="md-nav__link">
     <span class="md-ellipsis">
-      Installation Steps
+      
+        Installation Steps
+      
     </span>
   </a>
   
@@ -571,7 +608,9 @@
           <li class="md-nav__item">
   <a href="#1-clone-the-repository" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Clone the Repository
+      
+        1. Clone the Repository
+      
     </span>
   </a>
   
@@ -580,16 +619,103 @@
           <li class="md-nav__item">
   <a href="#2-configure-environment" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Configure Environment
+      
+        2. Configure Environment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Configure Environment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#required-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required environment variables:
+      
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-start-the-microservice" class="md-nav__link">
+  <a href="#ssh-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Start the Microservice
+      
+        SSH Configuration:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remote-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote Paths:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#huggingface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HuggingFace:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slurm-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SLURM Configuration:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example configuration:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-configure-ssh-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Configure SSH Agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-start-the-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Start the Application
+      
     </span>
   </a>
   
@@ -603,7 +729,9 @@
         <li class="md-nav__item">
   <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
-      Next Steps
+      
+        Next Steps
+      
     </span>
   </a>
   
@@ -655,9 +783,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Architecture
+  
+
     
   </span>
+  
   
 
             <span class="md-nav__icon md-icon"></span>
@@ -666,7 +799,11 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
-            Architecture
+            
+  
+    Architecture
+  
+
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -682,32 +819,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     System Overview
+  
+
     
   </span>
   
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../architecture/microservices.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Microservices
-    
-  </span>
   
 
       </a>
@@ -753,9 +872,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Services
+  
+
     
   </span>
+  
   
 
             <span class="md-nav__icon md-icon"></span>
@@ -764,7 +888,11 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
-            Services
+            
+  
+    Services
+  
+
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -775,14 +903,19 @@
   
   
     <li class="md-nav__item">
-      <a href="../../services/server/api-reference/" class="md-nav__link">
+      <a href="../../services/server/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
+    
+  
     Server
+  
+
     
   </span>
+  
   
 
       </a>
@@ -803,9 +936,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Client
+  
+
     
   </span>
+  
   
 
       </a>
@@ -826,9 +964,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Monitoring
+  
+
     
   </span>
+  
   
 
       </a>
@@ -849,9 +992,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Logs
+  
+
     
   </span>
+  
   
 
       </a>
@@ -897,9 +1045,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Development
+  
+
     
   </span>
+  
   
 
             <span class="md-nav__icon md-icon"></span>
@@ -908,7 +1061,11 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
-            Development
+            
+  
+    Development
+  
+
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -924,9 +1081,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Guidelines
+  
+
     
   </span>
+  
   
 
       </a>
@@ -972,9 +1134,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     API Documentation
+  
+
     
   </span>
+  
   
 
             <span class="md-nav__icon md-icon"></span>
@@ -983,7 +1150,11 @@
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
-            API Documentation
+            
+  
+    API Documentation
+  
+
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
@@ -999,9 +1170,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Server API
+  
+
     
   </span>
+  
   
 
       </a>
@@ -1022,9 +1198,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Client API
+  
+
     
   </span>
+  
   
 
       </a>
@@ -1045,9 +1226,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Monitoring API
+  
+
     
   </span>
+  
   
 
       </a>
@@ -1068,9 +1254,14 @@
   
   
   <span class="md-ellipsis">
+    
+  
     Logs API
+  
+
     
   </span>
+  
   
 
       </a>
@@ -1115,7 +1306,9 @@
         <li class="md-nav__item">
   <a href="#prerequisites" class="md-nav__link">
     <span class="md-ellipsis">
-      Prerequisites
+      
+        Prerequisites
+      
     </span>
   </a>
   
@@ -1125,7 +1318,9 @@
           <li class="md-nav__item">
   <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      Requirements
+      
+        Requirements
+      
     </span>
   </a>
   
@@ -1139,7 +1334,9 @@
         <li class="md-nav__item">
   <a href="#installation-steps" class="md-nav__link">
     <span class="md-ellipsis">
-      Installation Steps
+      
+        Installation Steps
+      
     </span>
   </a>
   
@@ -1149,7 +1346,9 @@
           <li class="md-nav__item">
   <a href="#1-clone-the-repository" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Clone the Repository
+      
+        1. Clone the Repository
+      
     </span>
   </a>
   
@@ -1158,16 +1357,103 @@
           <li class="md-nav__item">
   <a href="#2-configure-environment" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Configure Environment
+      
+        2. Configure Environment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Configure Environment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#required-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required environment variables:
+      
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-start-the-microservice" class="md-nav__link">
+  <a href="#ssh-configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Start the Microservice
+      
+        SSH Configuration:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remote-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote Paths:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#huggingface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HuggingFace:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slurm-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SLURM Configuration:
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example configuration:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-configure-ssh-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Configure SSH Agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-start-the-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Start the Application
+      
     </span>
   </a>
   
@@ -1181,7 +1467,9 @@
         <li class="md-nav__item">
   <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
-      Next Steps
+      
+        Next Steps
+      
     </span>
   </a>
   
@@ -1197,6 +1485,55 @@
           
           
             <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../overview/" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Getting Started
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
               <article class="md-content__inner md-typeset">
                 
                   
@@ -1228,15 +1565,96 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cp<span class="w"> </span>.env.example<span class="w"> </span>.env
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="c1"># Edit .env with your settings</span>
 </code></pre></div>
-<p>Required environment variables:
-- <code>SSH_HOST</code> - MeluXina hostname
-- <code>SSH_PORT</code> - SSH port (typically 22)
-- <code>SSH_USER</code> - Your MeluXina username
-- <code>REMOTE_BASE_PATH</code> - Working directory on MeluXina</p>
-<h3 id="3-start-the-microservice">3. Start the Microservice<a class="headerlink" href="#3-start-the-microservice" title="Permanent link">&para;</a></h3>
-<p>TODO: Later, this will be replaced by the actual app using the microservices.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>&lt;microservice<span class="w"> </span>to<span class="w"> </span>launch&gt;
+<h4 id="required-environment-variables">Required environment variables:<a class="headerlink" href="#required-environment-variables" title="Permanent link">&para;</a></h4>
+<h4 id="ssh-configuration">SSH Configuration:<a class="headerlink" href="#ssh-configuration" title="Permanent link">&para;</a></h4>
+<ul>
+<li><code>SSH_HOST</code> - MeluXina hostname (e.g., <code>login.lxp.lu</code>)</li>
+<li><code>SSH_PORT</code> - SSH port (<code>8822</code> for MeluXina)</li>
+<li><code>SSH_USER</code> - Your MeluXina username (e.g., <code>u103056</code>)</li>
+<li><code>SSH_KEY_PATH</code> - Path to your SSH private key (e.g., <code>~/.ssh/id_ed25519</code>)</li>
+</ul>
+<h4 id="remote-paths">Remote Paths:<a class="headerlink" href="#remote-paths" title="Permanent link">&para;</a></h4>
+<ul>
+<li><code>REMOTE_BASE_PATH</code> - Working directory on MeluXina (e.g., <code>~/ai-factory-benchmarks</code>)</li>
+<li><code>REMOTE_HF_CACHE_PATH</code> - HuggingFace model cache directory (e.g., <code>/project/scratch/p200981/u103056/huggingface_cache</code>)</li>
+<li><code>REMOTE_SIF_DIR</code> - Singularity image storage directory (e.g., <code>/project/scratch/p200981/u103056</code>)</li>
+</ul>
+<h4 id="huggingface">HuggingFace:<a class="headerlink" href="#huggingface" title="Permanent link">&para;</a></h4>
+<ul>
+<li><code>HF_TOKEN</code> - HuggingFace API token for accessing gated models and higher rate limits</li>
+</ul>
+<h4 id="slurm-configuration">SLURM Configuration:<a class="headerlink" href="#slurm-configuration" title="Permanent link">&para;</a></h4>
+<ul>
+<li><code>ORCHESTRATOR_ACCOUNT</code> - SLURM account (e.g., <code>p200981</code>)</li>
+<li><code>ORCHESTRATOR_PARTITION</code> - Default partition (e.g., <code>cpu</code>)</li>
+<li><code>ORCHESTRATOR_QOS</code> - Quality of Service (e.g., <code>default</code>)</li>
+</ul>
+<h4 id="example-configuration">Example configuration:<a class="headerlink" href="#example-configuration" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># MeluXina SSH Configuration</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nv">SSH_HOST</span><span class="o">=</span>login.lxp.lu
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nv">SSH_PORT</span><span class="o">=</span><span class="m">8822</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nv">SSH_USER</span><span class="o">=</span>u103056
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nv">SSH_KEY_PATH</span><span class="o">=</span>~/.ssh/id_ed25519
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># HuggingFace Authentication</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="nv">HF_TOKEN</span><span class="o">=</span>hf_your_token_here
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Remote Paths</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="nv">REMOTE_BASE_PATH</span><span class="o">=</span>~/ai-factory-benchmarks
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="nv">REMOTE_HF_CACHE_PATH</span><span class="o">=</span>/project/scratch/p200981/u103056/huggingface_cache
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="nv">REMOTE_SIF_DIR</span><span class="o">=</span>/project/scratch/p200981/u103056
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="c1"># SLURM Configuration</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="nv">ORCHESTRATOR_ACCOUNT</span><span class="o">=</span>p200981
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="nv">ORCHESTRATOR_PARTITION</span><span class="o">=</span>cpu
 </code></pre></div>
+<h3 id="3-configure-ssh-agent">3. Configure SSH Agent<a class="headerlink" href="#3-configure-ssh-agent" title="Permanent link">&para;</a></h3>
+<p>The framework uses <strong>SSH agent forwarding</strong> for secure authentication without exposing private keys to containers.</p>
+<div class="admonition info">
+<p class="admonition-title">SSH Agent Security</p>
+<p>SSH agent forwarding is more secure than mounting raw SSH keys because:</p>
+<ul>
+<li>Private keys never enter the container filesystem</li>
+<li>Authentication happens via the agent on your host machine</li>
+<li>Supports multiple keys and respects your <code>~/.ssh/config</code></li>
+<li>Follows the principle of least privilege</li>
+</ul>
+</div>
+<p><strong>Ensure your SSH agent is running:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Check if SSH agent is running</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nb">echo</span><span class="w"> </span><span class="nv">$SSH_AUTH_SOCK</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># If empty, start the agent (usually automatic on desktop environments)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="nb">eval</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>ssh-agent<span class="w"> </span>-s<span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># Add your MeluXina SSH key to the agent</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>ssh-add<span class="w"> </span>~/.ssh/id_ed25519<span class="w">  </span><span class="c1"># Or your key file</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># Verify key is loaded</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>ssh-add<span class="w"> </span>-l
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Desktop Environments</p>
+<p>Most Linux desktop environments (GNOME, KDE, etc.) automatically start an SSH agent. You typically only need to run <code>ssh-add</code> once after login.</p>
+</div>
+<p>The Docker containers will use the <code>SSH_AUTH_SOCK</code> environment variable to communicate with your host's SSH agent.</p>
+<h3 id="4-start-the-application">4. Start the Application<a class="headerlink" href="#4-start-the-application" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>
+</code></pre></div>
+<p>Once all services are running, you can access the Grafana dashboard at:</p>
+<p><strong><a href="http://localhost:3000">http://localhost:3000</a></strong></p>
+<div class="admonition tip">
+<p class="admonition-title">Available Services</p>
+<p>After starting the application, the following services will be available:</p>
+<ul>
+<li><strong>Grafana Dashboard</strong>: <a href="http://localhost:3000">http://localhost:3000</a></li>
+<li><strong>Server API</strong>: <a href="http://localhost:8001/docs">http://localhost:8001/docs</a></li>
+<li><strong>Client API</strong>: <a href="http://localhost:8002/docs">http://localhost:8002/docs</a></li>
+<li><strong>Logs API</strong>: <a href="http://localhost:8004/docs">http://localhost:8004/docs</a></li>
+<li><strong>Monitoring API</strong>: <a href="http://localhost:8005/docs">http://localhost:8005/docs</a></li>
+<li><strong>Prometheus</strong>: <a href="http://localhost:9090">http://localhost:9090</a></li>
+</ul>
+</div>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../overview/">Overview</a> - Learn about the framework</li>
@@ -1247,6 +1665,7 @@
 <li><a href="../../api/monitoring/">Monitoring API Documentation</a> - Explore the Monitoring API endpoints</li>
 </ul>
 <hr />
+<p>Note: the repository uses <code>docker compose</code> for local development and testing. For realistic benchmarking and production deployments these services should run on a Kubernetes (K8s) cluster instead. The docker-compose setup is intended for local testing only.</p>
 
 
 
@@ -1319,10 +1738,11 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.path", "navigation.top", "search.suggest", "search.highlight", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

@@ -72,7 +72,6 @@ nav:
       - Installation: getting-started/installation.md
   - Architecture:
       - System Overview: architecture/overview.md
-      - Microservices: architecture/microservices.md
   - Services:
       - Server: services/server.md
       - Client: services/client.md
