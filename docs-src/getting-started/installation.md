@@ -18,7 +18,7 @@ This page provides detailed installation instructions for the AI Factory Benchma
 
 ```bash
 cd $HOME
-git clone https://github.com/GiacomoPauletti/Benchmarking-AI-Factories.git
+git clone https://github.com/janmarxen/Benchmarking-AI-Factories.git
 cd Benchmarking-AI-Factories
 ```
 
