@@ -9,6 +9,8 @@ EUMaster4HPC challenge a.y. 2025-2026
    cp .env.example .env
    ```
 
+   Set this file with your keys/opens according to the documentation. 
+
 2. **Launch Services:**
    Start the application with Docker Compose:
    ```bash
@@ -20,6 +22,6 @@ EUMaster4HPC challenge a.y. 2025-2026
 
 ## Documentation
 
-**[View Full Documentation →](https://giacomopauletti.github.io/Benchmarking-AI-Factories/)**
+**[View Full Documentation →](https://janmarxen.github.io/Benchmarking-AI-Factories/)**
 
 

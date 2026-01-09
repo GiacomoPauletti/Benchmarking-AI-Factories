@@ -53,13 +53,13 @@ This will build the HTML files to the `docs/` directory.
    ```
 
 3. **One-time GitHub setup:**
-   - Go to: https://github.com/GiacomoPauletti/Benchmarking-AI-Factories/settings/pages
+   - Go to: https://github.com/janmarxen/Benchmarking-AI-Factories/settings/pages
    - Under **Source**, select the branch (`main` or `dev`)
    - Under **Folder**, select `/docs`
    - Click **Save**
 
 4. Documentation will be live at:
-   **https://giacomopauletti.github.io/Benchmarking-AI-Factories/**
+   **https://janmarxen.github.io/Benchmarking-AI-Factories/**
 
 ## Generate OpenAPI Schemas
 

@@ -23,7 +23,7 @@ To install and set up the framework, see the [Installation Guide](installation.m
 ## Getting Help
 
 - Check API documentations
-- **GitHub Issues**: [Report a bug](https://github.com/GiacomoPauletti/Benchmarking-AI-Factories/issues)
+- **GitHub Issues**: [Report a bug](https://github.com/janmarxen/Benchmarking-AI-Factories/issues)
 
 ---
 
