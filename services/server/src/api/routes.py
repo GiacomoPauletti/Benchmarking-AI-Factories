@@ -39,6 +39,13 @@ _HF_MODELS_CACHE_TTL_SECONDS = float(
 )
 _HF_MODELS_CACHE: Optional[Tuple[float, List[Dict[str, str]]]] = None
 
+# Service targets cache - prevents gaps in Grafana when orchestrator is slow
+# Cache targets for 30s to handle temporary communication issues
+_SERVICE_TARGETS_CACHE_TTL_SECONDS = float(
+    os.environ.get("SERVICE_TARGETS_CACHE_TTL_SECONDS", "30")
+)
+_SERVICE_TARGETS_CACHE: Optional[Tuple[float, List[Dict[str, Any]]]] = None
+
 
 def _clear_service_metrics_cache() -> None:
     """Test helper to reset cached metrics between test cases."""
@@ -164,13 +171,17 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
     ]
     ```
     """
+    global _SERVICE_TARGETS_CACHE
+    now = time.monotonic()
+    
     try:
         targets = []
         # Add service groups first so they are discoverable immediately.
         # Prometheus should scrape ONLY the group_id for replica deployments.
         try:
             groups = orchestrator.list_service_groups() or []
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to list service groups: {e}")
             groups = []
 
         for group in groups:
@@ -202,77 +213,93 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
             services_list = services_response
         
         for service in services_list:
-            discovered_id = service["id"]
+            try:
+                discovered_id = service["id"]
 
-            # For replica-group deployments, do not expose individual replica targets.
-            # Replica IDs are composite "<job_id>:<port>".
-            if isinstance(discovered_id, str) and ":" in discovered_id:
-                continue
-            
-            # Get full service details to resolve endpoint
-            service_details = orchestrator.get_service(discovered_id)
-            if not service_details:
-                continue
-            
-            # Include services early so the dashboard shows them immediately.
-            # We keep terminal states too so they remain visible for a while.
-            status = (service_details.get("status") or "").lower()
-            allowed_statuses = {
-                "submitted",
-                "pending",
-                "building",
-                "starting",
-                "running",
-                "completed",
-                "failed",
-                "cancelled",
-                "unknown",
-            }
-            if status not in allowed_statuses:
-                continue
-            
-            # Extract endpoint - it's in format "http://host:port"
-            endpoint = service_details.get("endpoint")
-            if not endpoint:
-                # If pending, we might not have an endpoint yet.
-                # Use a placeholder so Prometheus still discovers it.
-                if status in ["submitted", "pending", "building", "starting", "unknown"]:
-                    target = f"pending-{discovered_id}"
-                else:
+                # For replica-group deployments, do not expose individual replica targets.
+                # Replica IDs are composite "<job_id>:<port>".
+                if isinstance(discovered_id, str) and ":" in discovered_id:
                     continue
-            else:
-                # Strip protocol to get "host:port" format for Prometheus
-                target = endpoint.replace("http://", "").replace("https://", "")
-
-            # Replica/service-group labeling:
-            # - Prometheus needs the raw identifier for __metrics_path__ substitution.
-            # - Grafana needs stable grouping across all nodes of a replica group.
-            # We add:
-            #   group_id: replica group's id (or fallback to node job id for single services)
-            #   replica_id: the raw identifier used for scraping (e.g. "<job>:<port>"), unique across nodes
-            #   node_job_id: the SLURM job id portion (useful for legends)
-            replica_id = discovered_id
-            node_job_id = discovered_id.split(":", 1)[0] if ":" in discovered_id else discovered_id
-            group_id = service_details.get("group_id") or service_details.get("id")
-            if not group_id or not isinstance(group_id, str) or not group_id.strip():
-                group_id = node_job_id
-            
-            targets.append({
-                "targets": [target],
-                "labels": {
-                    "job": f"service-{discovered_id}",
-                    "service_id": discovered_id,
-                    "recipe_name": service["recipe_name"],
-                    "group_id": group_id,
-                    "replica_id": replica_id,
-                    "node_job_id": node_job_id,
+                
+                # Get full service details to resolve endpoint
+                service_details = orchestrator.get_service(discovered_id)
+                if not service_details:
+                    continue
+                
+                # Include services early so the dashboard shows them immediately.
+                # We keep terminal states too so they remain visible for a while.
+                status = (service_details.get("status") or "").lower()
+                allowed_statuses = {
+                    "submitted",
+                    "pending",
+                    "building",
+                    "starting",
+                    "running",
+                    "completed",
+                    "failed",
+                    "cancelled",
+                    "unknown",
                 }
-            })
+                if status not in allowed_statuses:
+                    continue
+                
+                # Extract endpoint - it's in format "http://host:port"
+                endpoint = service_details.get("endpoint")
+                if not endpoint:
+                    # If pending, we might not have an endpoint yet.
+                    # Use a placeholder so Prometheus still discovers it.
+                    if status in ["submitted", "pending", "building", "starting", "unknown"]:
+                        target = f"pending-{discovered_id}"
+                    else:
+                        continue
+                else:
+                    # Strip protocol to get "host:port" format for Prometheus
+                    target = endpoint.replace("http://", "").replace("https://", "")
+
+                # Replica/service-group labeling:
+                # - Prometheus needs the raw identifier for __metrics_path__ substitution.
+                # - Grafana needs stable grouping across all nodes of a replica group.
+                # We add:
+                #   group_id: replica group's id (or fallback to node job id for single services)
+                #   replica_id: the raw identifier used for scraping (e.g. "<job>:<port>"), unique across nodes
+                #   node_job_id: the SLURM job id portion (useful for legends)
+                replica_id = discovered_id
+                node_job_id = discovered_id.split(":", 1)[0] if ":" in discovered_id else discovered_id
+                group_id = service_details.get("group_id") or service_details.get("id")
+                if not group_id or not isinstance(group_id, str) or not group_id.strip():
+                    group_id = node_job_id
+                
+                targets.append({
+                    "targets": [target],
+                    "labels": {
+                        "job": f"service-{discovered_id}",
+                        "service_id": discovered_id,
+                        "recipe_name": service["recipe_name"],
+                        "group_id": group_id,
+                        "replica_id": replica_id,
+                        "node_job_id": node_job_id,
+                    }
+                })
+            except Exception as e:
+                # Log but don't fail - continue processing other services
+                logger.warning(f"Error processing service {service.get('id', 'unknown')}: {e}")
+                continue
+        
+        # Update cache with successful result
+        _SERVICE_TARGETS_CACHE = (now, targets)
         return targets
             
     except HTTPException:
+        # Fall back to cached targets if available
+        if _SERVICE_TARGETS_CACHE and (now - _SERVICE_TARGETS_CACHE[0]) <= _SERVICE_TARGETS_CACHE_TTL_SECONDS:
+            logger.warning("Using cached targets due to HTTPException")
+            return _SERVICE_TARGETS_CACHE[1]
         raise
     except Exception as e:
+        # Fall back to cached targets if available
+        if _SERVICE_TARGETS_CACHE and (now - _SERVICE_TARGETS_CACHE[0]) <= _SERVICE_TARGETS_CACHE_TTL_SECONDS:
+            logger.warning(f"Using cached targets due to exception: {e}")
+            return _SERVICE_TARGETS_CACHE[1]
         raise HTTPException(status_code=500, detail=str(e))
 
 

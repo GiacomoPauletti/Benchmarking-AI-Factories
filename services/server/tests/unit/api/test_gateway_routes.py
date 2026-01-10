@@ -407,6 +407,78 @@ class TestGatewayAPI:
         assert targets[0]["labels"]["group_id"] == "sg-123"
         assert targets[0]["targets"] == ["pending-sg-123"]
 
+    def test_get_service_targets_cache_fallback(self, mock_proxy, client):
+        """Service targets should fall back to cached targets on failure"""
+        import api.routes as api_routes
+        
+        # First call succeeds and populates cache
+        mock_proxy.list_service_groups.return_value = []
+        mock_proxy.list_services.return_value = [
+            {"id": "cached-svc", "recipe_name": "inference/vllm", "status": "running"}
+        ]
+        mock_proxy.get_service.return_value = {
+            "id": "cached-svc",
+            "recipe_name": "inference/vllm",
+            "status": "running",
+            "endpoint": "http://mel2079:8001"
+        }
+        
+        response = client.get("/api/v1/services/targets")
+        assert response.status_code == 200
+        targets = response.json()
+        assert len(targets) == 1
+        assert targets[0]["labels"]["service_id"] == "cached-svc"
+        
+        # Second call fails but should return cached targets
+        mock_proxy.list_services.side_effect = Exception("SSH connection failed")
+        
+        response = client.get("/api/v1/services/targets")
+        assert response.status_code == 200
+        cached_targets = response.json()
+        assert len(cached_targets) == 1
+        assert cached_targets[0]["labels"]["service_id"] == "cached-svc"
+        
+        # Clean up
+        api_routes._SERVICE_TARGETS_CACHE = None
+        mock_proxy.list_services.side_effect = None
+
+    def test_get_service_targets_individual_service_error(self, mock_proxy, client):
+        """Individual service errors should not fail the entire targets request"""
+        import api.routes as api_routes
+        
+        # First service works, second service fails
+        mock_proxy.list_service_groups.return_value = []
+        mock_proxy.list_services.return_value = [
+            {"id": "svc-good", "recipe_name": "inference/vllm", "status": "running"},
+            {"id": "svc-bad", "recipe_name": "inference/vllm", "status": "running"}
+        ]
+        
+        def get_service_side_effect(service_id):
+            if service_id == "svc-good":
+                return {
+                    "id": "svc-good",
+                    "recipe_name": "inference/vllm",
+                    "status": "running",
+                    "endpoint": "http://mel2079:8001"
+                }
+            else:
+                raise Exception("Error fetching service details")
+        
+        mock_proxy.get_service.side_effect = get_service_side_effect
+        
+        response = client.get("/api/v1/services/targets")
+        
+        assert response.status_code == 200
+        targets = response.json()
+        # Should have at least the good service
+        assert len(targets) >= 1
+        service_ids = [t["labels"]["service_id"] for t in targets]
+        assert "svc-good" in service_ids
+        
+        # Clean up
+        api_routes._SERVICE_TARGETS_CACHE = None
+        mock_proxy.get_service.side_effect = None
+
 
     def test_get_service_group_status(self, mock_proxy, client):
         """Service-group status should proxy orchestrator summary"""
