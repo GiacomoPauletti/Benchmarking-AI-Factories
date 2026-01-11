@@ -295,3 +295,38 @@ class TestServiceOrchestratorCore:
         assert result["overall_status"] == "degraded"
         assert result["healthy_replicas"] == 1
         assert result["failed_replicas"] == 1
+
+    def test_get_batch_metrics(self, orchestrator, mock_service_manager):
+        """Batch metrics should return results for all requested services"""
+        # Setup mock for two services
+        mock_service_manager.is_group.return_value = False
+        mock_service_manager.get_service.side_effect = [
+            {"id": "svc-1", "recipe_name": "inference/vllm", "status": "pending"},
+            {"id": "svc-2", "recipe_name": "inference/vllm", "status": "pending"}
+        ]
+        
+        result = orchestrator.get_batch_metrics(["svc-1", "svc-2"], timeout=5)
+        
+        # Both services should have results
+        assert "svc-1" in result
+        assert "svc-2" in result
+        # Since status is pending, both should fail gracefully
+        assert result["svc-1"]["success"] is False
+        assert result["svc-2"]["success"] is False
+
+    def test_get_batch_metrics_handles_errors_individually(self, orchestrator, mock_service_manager):
+        """Batch metrics should handle individual service errors without failing entire batch"""
+        mock_service_manager.is_group.return_value = False
+        # First service returns normally, second raises an exception
+        mock_service_manager.get_service.side_effect = [
+            {"id": "svc-1", "recipe_name": "inference/vllm", "status": "pending"},
+            Exception("Service not found")
+        ]
+        
+        result = orchestrator.get_batch_metrics(["svc-1", "svc-bad"], timeout=5)
+        
+        # Both should have results, bad one should have error
+        assert "svc-1" in result
+        assert "svc-bad" in result
+        assert result["svc-bad"]["success"] is False
+        assert "Service not found" in result["svc-bad"]["error"]

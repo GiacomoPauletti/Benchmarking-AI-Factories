@@ -40,7 +40,7 @@
     "elements": [
       {
         "allowCustomValue": false,
-        "getOptions": "if (!context.panel.data || !context.panel.data.series || !context.panel.data.series[0]) return [];\nconst fields = context.panel.data.series[0].fields;\nconst ids = fields?.find(f => f.name === \"service_id\")?.values;\nconst values = fields?.find(f => f.type === \"number\" && f.name !== \"Time\")?.values;\nif (!ids || !values) return [];\nconst runningIds = ids.filter((id, i) => id && values[i] === 2);\nconst uniques = [...new Set(runningIds)].map(id => ({ label: id, value: id }));\nreturn uniques;",
+        "getOptions": "if (!context.panel.data || !context.panel.data.series) return [];\nconst runningIds = [];\n// Iterate over ALL series to find running services\nfor (const series of context.panel.data.series) {\n  if (!series.fields) continue;\n  const idField = series.fields.find(f => f.name === 'service_id');\n  const valueField = series.fields.find(f => f.type === 'number' && f.name !== 'Time');\n  if (!idField || !valueField) continue;\n  const ids = idField.values || [];\n  const values = valueField.values || [];\n  for (let i = 0; i < ids.length; i++) {\n    if (ids[i] && values[i] === 2) runningIds.push(ids[i]);\n  }\n}\nreturn [...new Set(runningIds)].map(id => ({ label: id, value: id }));",
         "id": "service_id",
         "labelWidth": 20,
         "options": [],

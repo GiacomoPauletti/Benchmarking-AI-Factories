@@ -26,6 +26,10 @@ EUMaster4HPC challenge a.y. 2025-2026
 4. **Access the Dashboard:**
    Open your browser and navigate to `http://localhost:3000` to access the Grafana Dashboard.
 
+## Demo
+
+**[Application UI Demo Video →](https://youtu.be/TOudtlfvbzo)**
+
 ## Documentation
 
 **[View Full Documentation →](https://janmarxen.github.io/Benchmarking-AI-Factories/)**

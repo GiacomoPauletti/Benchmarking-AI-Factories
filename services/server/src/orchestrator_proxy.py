@@ -324,6 +324,30 @@ class OrchestratorProxy:
             _retries=3,
         )
 
+    def get_batch_metrics(self, service_ids: List[str], timeout: int = 5) -> Dict[str, Dict[str, Any]]:
+        """Get metrics for multiple services in a single request.
+        
+        This method reduces SSH tunnel contention by fetching metrics for
+        multiple services in one HTTP request to the orchestrator.
+        
+        Args:
+            service_ids: List of service or service group IDs
+            timeout: Timeout per service in seconds (default: 5)
+            
+        Returns:
+            Dict mapping service_id to metrics result:
+            - On success: {"success": True, "metrics": "<prometheus text>"}
+            - On failure: {"success": False, "error": "<error message>"}
+        """
+        return self._make_request(
+            "POST",
+            "/api/services/metrics/batch",
+            json={"service_ids": service_ids, "timeout": timeout},
+            # Total timeout = number of services * per-service timeout + overhead
+            timeout=max(30, len(service_ids) * timeout + 10),
+            _retries=2,
+        )
+
     def stop_orchestrator(self) -> bool:
         """Stop the orchestrator job via SLURM."""
         if not self.orchestrator_job_id:
