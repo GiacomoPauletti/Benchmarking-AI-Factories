@@ -2,9 +2,11 @@
 API route definitions for SLURM-based service orchestration.
 """
 
+import asyncio
 import logging
 import os
 import time
+import threading
 from fastapi import APIRouter, HTTPException, Body, Depends, Query, Request
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -31,6 +33,15 @@ _SERVICE_METRICS_CACHE_TTL_SECONDS = float(
     os.environ.get("SERVICE_METRICS_CACHE_TTL_SECONDS", "60")
 )
 _SERVICE_METRICS_CACHE: Dict[str, Tuple[float, str]] = {}
+_SERVICE_METRICS_CACHE_LOCK = threading.Lock()
+
+# Background batch metrics fetcher configuration
+# This fetcher proactively refreshes metrics cache to reduce SSH tunnel contention
+_BATCH_METRICS_REFRESH_INTERVAL_SECONDS = float(
+    os.environ.get("BATCH_METRICS_REFRESH_INTERVAL_SECONDS", "10")
+)
+_BATCH_METRICS_ENABLED = os.environ.get("BATCH_METRICS_ENABLED", "true").lower() == "true"
+_batch_metrics_task: Optional[asyncio.Task] = None
 
 # HuggingFace model options cache - avoid hitting HF API rate limits
 # Cache for 1 hour (3600 seconds) by default
@@ -49,7 +60,8 @@ _SERVICE_TARGETS_CACHE: Optional[Tuple[float, List[Dict[str, Any]]]] = None
 
 def _clear_service_metrics_cache() -> None:
     """Test helper to reset cached metrics between test cases."""
-    _SERVICE_METRICS_CACHE.clear()
+    with _SERVICE_METRICS_CACHE_LOCK:
+        _SERVICE_METRICS_CACHE.clear()
 
 
 def _parse_prometheus_scrape_timeout_seconds(request: Request) -> Optional[float]:
@@ -78,6 +90,113 @@ def get_orchestrator_proxy():
             detail="Orchestrator not running. Start it via POST /api/v1/orchestrator/start"
         )
     return _orchestrator_proxy_instance
+
+
+async def _batch_metrics_fetcher():
+    """Background task that proactively fetches metrics for all services.
+    
+    This reduces SSH tunnel contention by:
+    1. Making a single batch request instead of N individual requests
+    2. Populating the cache so Prometheus scrapes hit cache instead of tunnel
+    3. Running on a fixed interval independent of Prometheus scrape timing
+    """
+    logger.info("Background batch metrics fetcher started")
+    
+    while True:
+        try:
+            await asyncio.sleep(_BATCH_METRICS_REFRESH_INTERVAL_SECONDS)
+            
+            orchestrator = _orchestrator_proxy_instance
+            if orchestrator is None:
+                continue
+            
+            # Get service IDs to fetch - try to get from targets cache first,
+            # otherwise fetch service groups directly from orchestrator
+            service_ids = []
+            
+            cached_targets = _SERVICE_TARGETS_CACHE
+            if cached_targets and cached_targets[1]:
+                for target in cached_targets[1]:
+                    labels = target.get("labels", {})
+                    service_id = labels.get("service_id")
+                    if service_id and service_id not in service_ids:
+                        service_ids.append(service_id)
+            
+            # If no targets cached, try to get service groups directly
+            if not service_ids:
+                try:
+                    groups = await asyncio.get_event_loop().run_in_executor(
+                        None, orchestrator.list_service_groups
+                    )
+                    for group in (groups or []):
+                        group_id = group.get("id")
+                        if group_id and group_id not in service_ids:
+                            service_ids.append(group_id)
+                except Exception as e:
+                    logger.debug(f"Batch metrics fetcher: failed to list service groups: {e}")
+            
+            if not service_ids:
+                continue
+            
+            logger.info(f"Batch metrics fetcher: fetching metrics for {len(service_ids)} services: {service_ids}")
+            
+            # Fetch metrics in batch via orchestrator
+            try:
+                batch_results = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: orchestrator.get_batch_metrics(service_ids, timeout=5)
+                )
+                
+                # Update cache with results
+                now = time.monotonic()
+                cached_count = 0
+                with _SERVICE_METRICS_CACHE_LOCK:
+                    for service_id, result in batch_results.items():
+                        if result.get("success") and result.get("metrics"):
+                            _SERVICE_METRICS_CACHE[service_id] = (now, result["metrics"])
+                            cached_count += 1
+                
+                logger.info(f"Batch metrics fetcher: cached {cached_count}/{len(service_ids)} services")
+                
+            except Exception as e:
+                logger.warning(f"Batch metrics fetcher: failed to fetch batch metrics: {e}")
+                
+        except asyncio.CancelledError:
+            logger.info("Batch metrics fetcher cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Batch metrics fetcher error: {e}")
+            # Continue running even on error
+
+
+def start_batch_metrics_fetcher():
+    """Start the background batch metrics fetcher task."""
+    global _batch_metrics_task
+    
+    if not _BATCH_METRICS_ENABLED:
+        logger.info("Batch metrics fetcher disabled via BATCH_METRICS_ENABLED=false")
+        return
+    
+    if _batch_metrics_task is not None:
+        logger.warning("Batch metrics fetcher already running")
+        return
+    
+    try:
+        loop = asyncio.get_event_loop()
+        _batch_metrics_task = loop.create_task(_batch_metrics_fetcher())
+        logger.info(f"Started batch metrics fetcher (interval: {_BATCH_METRICS_REFRESH_INTERVAL_SECONDS}s)")
+    except Exception as e:
+        logger.error(f"Failed to start batch metrics fetcher: {e}")
+
+
+def stop_batch_metrics_fetcher():
+    """Stop the background batch metrics fetcher task."""
+    global _batch_metrics_task
+    
+    if _batch_metrics_task is not None:
+        _batch_metrics_task.cancel()
+        _batch_metrics_task = None
+        logger.info("Stopped batch metrics fetcher")
 
 
 @router.post("/services", response_model=ServiceResponse, summary="Create and start a new service")
@@ -146,11 +265,14 @@ async def list_services(orchestrator = Depends(get_orchestrator_proxy)):
 
 
 @router.get("/services/targets")
-async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
+async def get_service_targets():
     """Get Prometheus scrape targets for all managed services.
 
     This endpoint returns a list of Prometheus scrape targets for running services.
     This allows to dynamically configure Prometheus to monitor all services managed by this server.
+    
+    NOTE: This endpoint does NOT use the standard orchestrator dependency to allow
+    returning cached targets when the orchestrator is temporarily unavailable.
 
     **Returns:**
     - Content-Type: `application/json`
@@ -173,6 +295,17 @@ async def get_service_targets(orchestrator = Depends(get_orchestrator_proxy)):
     """
     global _SERVICE_TARGETS_CACHE
     now = time.monotonic()
+    
+    # Check orchestrator availability manually (not via Depends) to allow cache fallback
+    orchestrator = _orchestrator_proxy_instance
+    if orchestrator is None:
+        # Orchestrator not running - return cached targets if available
+        if _SERVICE_TARGETS_CACHE and (now - _SERVICE_TARGETS_CACHE[0]) <= _SERVICE_TARGETS_CACHE_TTL_SECONDS:
+            logger.warning("Orchestrator not running, using cached targets")
+            return _SERVICE_TARGETS_CACHE[1]
+        # No cache available - return empty list (Prometheus will retry)
+        logger.warning("Orchestrator not running and no cached targets available")
+        return []
     
     try:
         targets = []
@@ -458,11 +591,29 @@ async def get_service_metrics(
     """**[Proxy]** Get Prometheus-compatible metrics from any service.
     
     This endpoint proxies to the orchestrator's unified metrics API.
+    When batch metrics fetcher is enabled, this endpoint primarily serves
+    from cache (populated by the background fetcher) to reduce SSH tunnel contention.
     
     For detailed documentation, supported service types, metric formats, and Prometheus integration examples, see the orchestrator API documentation at:
     **GET /api/services/{service_id}/metrics** on the orchestrator service.
     """
     from fastapi.responses import PlainTextResponse
+
+    now = time.monotonic()
+    
+    # Check cache first - if we have fresh data, return it immediately
+    # This is the primary path when batch metrics fetcher is running
+    with _SERVICE_METRICS_CACHE_LOCK:
+        cached = _SERVICE_METRICS_CACHE.get(service_id)
+    
+    # If cache is fresh (less than half TTL), return immediately without hitting tunnel
+    # This drastically reduces SSH tunnel contention during Prometheus scrapes
+    cache_fresh_threshold = _SERVICE_METRICS_CACHE_TTL_SECONDS / 2
+    if cached and (now - cached[0]) <= cache_fresh_threshold:
+        return PlainTextResponse(
+            content=cached[1],
+            media_type="text/plain; version=0.0.4",
+        )
 
     # Prefer using Prometheus' declared scrape timeout as our total budget.
     # This prevents the proxy from blocking longer than Prometheus is willing
@@ -476,9 +627,6 @@ async def get_service_metrics(
         # Round down to ensure we stay within the declared budget.
         safe_budget = max(1.0, scrape_budget_seconds - 0.25)
         proxy_timeout_seconds = max(1, int(safe_budget))
-
-    cached = _SERVICE_METRICS_CACHE.get(service_id)
-    now = time.monotonic()
 
     try:
         # Route to appropriate service-specific metrics endpoint
@@ -501,7 +649,8 @@ async def get_service_metrics(
         else:
             metrics_text = str(result)
 
-        _SERVICE_METRICS_CACHE[service_id] = (now, metrics_text)
+        with _SERVICE_METRICS_CACHE_LOCK:
+            _SERVICE_METRICS_CACHE[service_id] = (now, metrics_text)
         return PlainTextResponse(
             content=metrics_text,
             media_type="text/plain; version=0.0.4",

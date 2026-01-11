@@ -17,7 +17,7 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 # Clean package imports
-from api.routes import router, set_orchestrator_proxy
+from api.routes import router, set_orchestrator_proxy, start_batch_metrics_fetcher, stop_batch_metrics_fetcher
 from api.orchestrator_routes import router as orchestrator_router, set_orchestrator_control_functions
 from logging_setup import setup_logging
 from orchestrator_initializer import (
@@ -189,6 +189,9 @@ async def _start_orchestrator_async(time_limit_minutes: int) -> dict:
         if orchestrator_monitor_task is None or orchestrator_monitor_task.done():
             orchestrator_monitor_task = asyncio.create_task(_orchestrator_monitor_loop())
 
+        # Start batch metrics fetcher to reduce SSH tunnel contention
+        start_batch_metrics_fetcher()
+
         if logger:
             logger.info(f"✓ Orchestrator started successfully (job_id: {job_id})")
 
@@ -212,6 +215,9 @@ async def _stop_orchestrator_async() -> dict:
     global orchestrator_proxy, orchestrator_session, orchestrator_monitor_task, logger
 
     try:
+        # Stop batch metrics fetcher first
+        stop_batch_metrics_fetcher()
+        
         # Stop the orchestrator via proxy
         if orchestrator_proxy:
             try:
@@ -493,6 +499,12 @@ async def on_startup():
             start_fn=_start_orchestrator_async,
             stop_fn=_stop_orchestrator_async,
         )
+        
+        # Start batch metrics fetcher immediately on startup
+        # It will handle gracefully when orchestrator is not yet available
+        start_batch_metrics_fetcher()
+        if logger:
+            logger.info("✓ Background batch metrics fetcher started")
         
         if logger:
             logger.info("✓ Server is ready - orchestrator control available via /api/v1/orchestrator/start")

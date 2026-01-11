@@ -35,8 +35,14 @@ class TestGatewayAPI:
     @pytest.fixture
     def client(self, mock_proxy):
         """Create a test client for the FastAPI app with mocked proxy."""
+        import api.routes as api_routes
+        
         app.dependency_overrides[get_orchestrator_proxy] = lambda: mock_proxy
         app.dependency_overrides[get_orchestrator_proxy_optional] = lambda: mock_proxy
+        
+        # Also set the global proxy instance for endpoints that bypass dependency injection
+        original_proxy = api_routes._orchestrator_proxy_instance
+        api_routes._orchestrator_proxy_instance = mock_proxy
         
         # Mock orchestrator health state for health endpoint tests
         with patch('main.orchestrator_proxy', mock_proxy), \
@@ -48,6 +54,8 @@ class TestGatewayAPI:
             client = TestClient(app)
             yield client
             
+        # Restore original proxy
+        api_routes._orchestrator_proxy_instance = original_proxy
         app.dependency_overrides.clear()
     
     def test_health_endpoint(self, client):
@@ -479,6 +487,64 @@ class TestGatewayAPI:
         api_routes._SERVICE_TARGETS_CACHE = None
         mock_proxy.get_service.side_effect = None
 
+    def test_get_service_targets_no_orchestrator(self, mock_proxy, client):
+        """Service targets should return cached targets when orchestrator is unavailable"""
+        import api.routes as api_routes
+        import time
+        
+        # Populate cache manually (simulating a previous successful call)
+        cached_targets = [
+            {
+                "targets": ["mel2079:8001"],
+                "labels": {
+                    "job": "service-cached-svc",
+                    "service_id": "cached-svc",
+                    "recipe_name": "inference/vllm",
+                    "group_id": "cached-svc",
+                    "replica_id": "cached-svc",
+                    "node_job_id": "cached-svc"
+                }
+            }
+        ]
+        api_routes._SERVICE_TARGETS_CACHE = (time.monotonic(), cached_targets)
+        
+        # Temporarily set orchestrator proxy to None
+        original_proxy = api_routes._orchestrator_proxy_instance
+        api_routes._orchestrator_proxy_instance = None
+        
+        try:
+            response = client.get("/api/v1/services/targets")
+            
+            assert response.status_code == 200
+            targets = response.json()
+            assert len(targets) == 1
+            assert targets[0]["labels"]["service_id"] == "cached-svc"
+        finally:
+            # Restore orchestrator proxy
+            api_routes._orchestrator_proxy_instance = original_proxy
+            api_routes._SERVICE_TARGETS_CACHE = None
+
+    def test_get_service_targets_no_orchestrator_no_cache(self, mock_proxy, client):
+        """Service targets should return empty list when orchestrator is unavailable and no cache"""
+        import api.routes as api_routes
+        
+        # Clear cache
+        api_routes._SERVICE_TARGETS_CACHE = None
+        
+        # Temporarily set orchestrator proxy to None
+        original_proxy = api_routes._orchestrator_proxy_instance
+        api_routes._orchestrator_proxy_instance = None
+        
+        try:
+            response = client.get("/api/v1/services/targets")
+            
+            assert response.status_code == 200
+            targets = response.json()
+            assert targets == []
+        finally:
+            # Restore orchestrator proxy
+            api_routes._orchestrator_proxy_instance = original_proxy
+
 
     def test_get_service_group_status(self, mock_proxy, client):
         """Service-group status should proxy orchestrator summary"""
@@ -502,6 +568,61 @@ class TestGatewayAPI:
         assert response.status_code == 404
         assert "sg-missing" in response.json()["detail"]
 
+    def test_get_service_metrics_returns_cached_when_fresh(self, mock_proxy, client):
+        """Service metrics should return cached data when fresh (reduces SSH tunnel contention)"""
+        import api.routes as api_routes
+        import time
+        
+        # Populate cache with fresh data
+        fresh_metrics = "# HELP cached_metric\ncached_metric 42"
+        with api_routes._SERVICE_METRICS_CACHE_LOCK:
+            api_routes._SERVICE_METRICS_CACHE["cached-svc"] = (time.monotonic(), fresh_metrics)
+        
+        try:
+            response = client.get("/api/v1/services/cached-svc/metrics")
+            
+            assert response.status_code == 200
+            assert "cached_metric 42" in response.text
+            # Should NOT have called orchestrator since cache was fresh
+            mock_proxy.get_service_metrics.assert_not_called()
+        finally:
+            with api_routes._SERVICE_METRICS_CACHE_LOCK:
+                api_routes._SERVICE_METRICS_CACHE.clear()
+
+    def test_get_batch_metrics_populates_cache(self, mock_proxy, client):
+        """Batch metrics fetcher should populate the metrics cache"""
+        import api.routes as api_routes
+        import time
+        
+        mock_proxy.get_batch_metrics.return_value = {
+            "sg-1": {"success": True, "metrics": "# HELP svc1\nmetric1 100"},
+            "sg-2": {"success": True, "metrics": "# HELP svc2\nmetric2 200"}
+        }
+        
+        # Clear cache
+        with api_routes._SERVICE_METRICS_CACHE_LOCK:
+            api_routes._SERVICE_METRICS_CACHE.clear()
+        
+        try:
+            # Simulate what the batch fetcher does
+            batch_results = mock_proxy.get_batch_metrics(["sg-1", "sg-2"], timeout=5)
+            
+            now = time.monotonic()
+            with api_routes._SERVICE_METRICS_CACHE_LOCK:
+                for service_id, result in batch_results.items():
+                    if result.get("success") and result.get("metrics"):
+                        api_routes._SERVICE_METRICS_CACHE[service_id] = (now, result["metrics"])
+            
+            # Verify cache was populated
+            with api_routes._SERVICE_METRICS_CACHE_LOCK:
+                assert "sg-1" in api_routes._SERVICE_METRICS_CACHE
+                assert "sg-2" in api_routes._SERVICE_METRICS_CACHE
+                assert "metric1 100" in api_routes._SERVICE_METRICS_CACHE["sg-1"][1]
+                assert "metric2 200" in api_routes._SERVICE_METRICS_CACHE["sg-2"][1]
+        finally:
+            with api_routes._SERVICE_METRICS_CACHE_LOCK:
+                api_routes._SERVICE_METRICS_CACHE.clear()
+
     def test_get_service_metrics_vllm(self, mock_proxy, client):
         """Service metrics route should return text when vLLM metrics succeed"""
         mock_proxy.get_service.return_value = {
@@ -518,7 +639,11 @@ class TestGatewayAPI:
         mock_proxy.get_service_metrics.assert_called_once_with("svc-1")
 
     def test_get_service_metrics_uses_cache_on_failure(self, mock_proxy, client):
-        """Service metrics should fall back to cached metrics on transient failures."""
+        """Service metrics should fall back to cached metrics on transient failures.
+        
+        This test simulates the cache becoming stale (> TTL/2) so the endpoint
+        attempts to fetch fresh metrics, fails, and falls back to cache.
+        """
         from api import routes as api_routes
 
         api_routes._clear_service_metrics_cache()
@@ -537,10 +662,48 @@ class TestGatewayAPI:
             "error": "boom",
         }
 
-        second = client.get("/api/v1/services/svc-1/metrics")
+        # Make cache stale by advancing time beyond cache_fresh_threshold (TTL/2 = 30s)
+        # This forces the endpoint to try fetching fresh metrics
+        import time
+        original_monotonic = time.monotonic
+        time.monotonic = lambda: original_monotonic() + 35  # 35 seconds later
+
+        try:
+            second = client.get("/api/v1/services/svc-1/metrics")
+            assert second.status_code == 200
+            assert "foo 1" in second.text
+            assert "service_metrics_proxy_stale" in second.text
+        finally:
+            time.monotonic = original_monotonic
+
+    def test_get_service_metrics_cache_first_skips_proxy(self, mock_proxy, client):
+        """When cache is fresh (< TTL/2), should return cached data without calling proxy.
+        
+        This tests the cache-first behavior that reduces SSH tunnel contention.
+        """
+        from api import routes as api_routes
+
+        api_routes._clear_service_metrics_cache()
+
+        # First call populates the cache
+        mock_proxy.get_service_metrics.return_value = {
+            "success": True,
+            "metrics": "# HELP cached\ncached_metric 1\n",
+        }
+
+        first = client.get("/api/v1/services/svc-cached/metrics")
+        assert first.status_code == 200
+        assert "cached_metric 1" in first.text
+        
+        # Reset call count
+        mock_proxy.get_service_metrics.reset_mock()
+
+        # Second call should use cache and not call proxy
+        second = client.get("/api/v1/services/svc-cached/metrics")
         assert second.status_code == 200
-        assert "foo 1" in second.text
-        assert "service_metrics_proxy_stale" in second.text
+        assert "cached_metric 1" in second.text
+        # Proxy should NOT have been called because cache is fresh
+        mock_proxy.get_service_metrics.assert_not_called()
 
     def test_get_service_metrics_qdrant(self, mock_proxy, client):
         """Service metrics route should handle vector DB recipes"""
