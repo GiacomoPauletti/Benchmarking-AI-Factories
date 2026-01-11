@@ -714,6 +714,38 @@ class ServiceOrchestrator:
                 "metrics": ""
             }
     
+    def get_batch_metrics(self, service_ids: List[str], timeout: int = 5) -> Dict[str, Dict[str, Any]]:
+        """Get Prometheus metrics for multiple services in a single call.
+        
+        This method reduces SSH tunnel contention by batching metrics collection.
+        Metrics are fetched sequentially but in a single SSH tunnel session,
+        avoiding the overhead of multiple tunnel connections.
+        
+        Args:
+            service_ids: List of service or service group IDs
+            timeout: Timeout per service in seconds (default: 5)
+            
+        Returns:
+            Dict mapping service_id to metrics result:
+            - On success: {"success": True, "metrics": "<prometheus text>"}
+            - On failure: {"success": False, "error": "<error message>"}
+        """
+        results = {}
+        
+        for service_id in service_ids:
+            try:
+                result = self.get_service_metrics(service_id, timeout=timeout)
+                results[service_id] = result
+            except Exception as e:
+                logger.warning(f"Batch metrics failed for {service_id}: {e}")
+                results[service_id] = {
+                    "success": False,
+                    "error": str(e),
+                    "metrics": ""
+                }
+        
+        return results
+    
     def _determine_service_status(self, service_id: str, service_info: Dict[str, Any]) -> str:
         """Centralized method to determine current service status.
         

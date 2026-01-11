@@ -372,4 +372,46 @@ def create_router(orchestrator):
             # Return error info (service not ready, not found, etc.)
             return result
     
+    @router.post("/metrics/batch")
+    async def get_batch_metrics(request: Request):
+        """Get Prometheus metrics for multiple services in a single request.
+        
+        This endpoint reduces SSH tunnel contention by fetching metrics for
+        multiple services in one HTTP request, instead of making separate
+        requests per service.
+        
+        **Request Body:**
+        - `service_ids` (required): List of service IDs to fetch metrics for
+        - `timeout` (optional): Timeout per service in seconds (default: 5)
+        
+        **Returns:**
+        - Dict mapping service_id to metrics result:
+          - On success: {"success": true, "metrics": "<prometheus text>"}
+          - On failure: {"success": false, "error": "<error message>"}
+        
+        **Example Request:**
+        ```json
+        {
+          "service_ids": ["sg-3941996", "sg-3941997"],
+          "timeout": 5
+        }
+        ```
+        
+        **Example Response:**
+        ```json
+        {
+          "sg-3941996": {"success": true, "metrics": "# HELP..."},
+          "sg-3941997": {"success": true, "metrics": "# HELP..."}
+        }
+        ```
+        """
+        body = await request.json()
+        service_ids = body.get("service_ids", [])
+        timeout = body.get("timeout", 5)
+        
+        if not service_ids:
+            return {}
+        
+        return orchestrator.get_batch_metrics(service_ids, timeout=timeout)
+    
     return router

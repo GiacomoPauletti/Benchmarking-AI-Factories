@@ -113,7 +113,7 @@
       {
         "id": "config.replicas",
         "labelWidth": 20,
-        "max": 16,
+        "max": 80,
         "min": 1,
         "section": "",
         "showIf": "const recipe = context.panel.elements.find(el => el.id == \"recipe_name\").value; return recipe && recipe.includes(\"replicas\");",
