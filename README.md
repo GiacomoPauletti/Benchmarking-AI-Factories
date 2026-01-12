@@ -30,8 +30,17 @@ EUMaster4HPC challenge a.y. 2025-2026
 
 **[Application UI Demo Video →](https://youtu.be/TOudtlfvbzo)**
 
+**[Project Presentation (PPTX) →](AI_Factories_Benchmarking_Presentation.pptx)**
+
 ## Documentation
 
 **[View Full Documentation →](https://janmarxen.github.io/Benchmarking-AI-Factories/)**
+
+## Contributors (Team 4)
+
+- **Jan Marxen**
+- **Xavier L'Heureux**
+- **Vittorio Cozzoli**
+- **Giacomo Pauletti**
 
 
