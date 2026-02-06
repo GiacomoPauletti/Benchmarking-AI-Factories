@@ -1,2 +1,0 @@
-run_id,session_id,from,to,throughput_qps,cpu_util_avg_pct,gpu_util_avg_pct,latency_p50_ms,latency_p95_ms,latency_p99_ms
-run-1762727931,benchmark-1762727355,2025-11-09T22:33:51.343956Z,2025-11-09T22:38:51.343956Z,0.12316365740740742,,,293.1981391231095,703.1772500000001,780.63545
